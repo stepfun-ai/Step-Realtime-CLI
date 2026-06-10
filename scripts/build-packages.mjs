@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { resolvePnpmCommand } from "./package-manager-command.mjs";
+import {
+  resolveCommandInvocation,
+  resolvePnpmCommand,
+} from "./package-manager-command.mjs";
 
 const repoRoot = process.cwd();
 const ignoredDirNames = new Set([
@@ -116,7 +119,9 @@ if (dryRun) {
 
 async function readNewestInputMtimeMs(packageDirPath) {
   let newest = await readFileMtimeMs(path.join(packageDirPath, "package.json"));
-  const srcNewest = await readNewestFileMtimeMs(path.join(packageDirPath, "src"));
+  const srcNewest = await readNewestFileMtimeMs(
+    path.join(packageDirPath, "src"),
+  );
   if (srcNewest !== null && (newest === null || srcNewest > newest)) {
     newest = srcNewest;
   }
@@ -165,7 +170,8 @@ async function readNewestFileMtimeMs(entryPath) {
 
 async function runCommand(command, commandArgs) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, commandArgs, {
+    const invocation = resolveCommandInvocation(command, commandArgs);
+    const child = spawn(invocation.command, invocation.args, {
       cwd: repoRoot,
       env: process.env,
       stdio: "inherit",

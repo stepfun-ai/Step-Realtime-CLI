@@ -157,6 +157,9 @@ if ((Test-Path $UserConfig) -and (-not $ForceConfig)) {
 
 Write-Section "[3/7] Silero VAD"
 pnpm setup:silero
+if ($LASTEXITCODE -ne 0) {
+  throw "setup:silero failed with exit code $LASTEXITCODE"
+}
 Invoke-StepCli vad set silero
 Invoke-StepCli vad status
 Write-Ok "Silero enabled (voice.defaults.vad = silero)"
