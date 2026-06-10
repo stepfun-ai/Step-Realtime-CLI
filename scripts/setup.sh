@@ -5,8 +5,8 @@
 #   3) Silero VAD   (avr-vad + onnxruntime-node, then write voice.defaults.vad=silero)
 #   4) AEC          (ensure Chrome/Chromium is available, then write voice.defaults.aec=true)
 #   5) Build        (pnpm build — workspace bundle in dist/)
-#   6) Build binary (pnpm build:bin — bun-compile dist/bin/step)
-#   7) Install      (copy binary + runtime tree to ~/.step-cli/bin/; append PATH block to shell rc)
+#   6) Launcher     (native binary when Bun exists; otherwise Node launcher)
+#   7) Install      (copy launcher + runtime tree to ~/.step-cli/bin/; append PATH block to shell rc)
 #
 # After this finishes you only need to fill in the two apiKey placeholders
 # in ~/.step-cli/config.json (model.apiKey and voice.realtime.apiKey),
@@ -18,7 +18,7 @@
 #   pnpm init:all                                 # equivalent, if pnpm is already on PATH
 #   bash scripts/setup.sh --skip-chrome-install   # don't auto brew-install Chrome
 #   bash scripts/setup.sh --skip-install          # skip the pnpm install step
-#   bash scripts/setup.sh --skip-build            # skip pnpm build + build:bin (reuse existing dist/bin/step)
+#   bash scripts/setup.sh --skip-build            # skip build (reuse existing dist/ or dist/bin/step)
 #   bash scripts/setup.sh --force-config          # overwrite existing config.json
 #   bash scripts/setup.sh --uninstall             # delegate to scripts/uninstall.sh and exit
 #   STEP_CHROME_PATH=/path/to/chrome bash scripts/setup.sh   # use an existing Chrome binary
