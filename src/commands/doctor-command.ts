@@ -49,8 +49,10 @@ export interface DoctorReport {
 export interface CreateDoctorReportOptions {
   workspaceRoot: string;
   explicitConfigPath?: string;
+  platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   commandExists?: (name: string) => Promise<boolean>;
+  findChrome?: () => Promise<string | undefined> | string | undefined;
 }
 
 export async function runDoctorCommand(argv: string[]): Promise<void> {
@@ -94,7 +96,10 @@ export async function createDoctorReport(
   options: CreateDoctorReportOptions,
 ): Promise<DoctorReport> {
   const env = options.env ?? process.env;
-  const commandExists = options.commandExists ?? defaultCommandExists;
+  const platform = options.platform ?? process.platform;
+  const commandExists =
+    options.commandExists ??
+    ((name: string) => defaultCommandExists(name, platform));
   const config = await inspectConfig(options);
   const voiceApiKey = await readVoiceApiKey(config.loadedPath);
 
@@ -115,10 +120,7 @@ export async function createDoctorReport(
       "Voice realtime API key is configured",
       "Voice realtime API key is missing or still uses the template placeholder",
     ),
-    chrome: await inspectCommand("google-chrome", commandExists, {
-      ok: "Chrome/Chromium command was found",
-      warn: "Chrome/Chromium was not found; AEC voice mode may need setup",
-    }),
+    chrome: await inspectChrome(options.findChrome ?? defaultFindChrome),
   };
 
   return {
@@ -217,6 +219,23 @@ async function inspectCommand(
     : { status: "warn", message: messages.warn };
 }
 
+async function inspectChrome(
+  findChrome: () => Promise<string | undefined> | string | undefined,
+): Promise<DoctorCheck> {
+  const chromePath = await findChrome();
+  if (chromePath) {
+    return {
+      status: "ok",
+      message: `Chrome/Chromium found (${chromePath})`,
+    };
+  }
+
+  return {
+    status: "warn",
+    message: "Chrome/Chromium was not found; AEC voice mode may need setup",
+  };
+}
+
 function inspectApiKey(
   apiKey: string | undefined,
   okMessage: string,
@@ -252,11 +271,29 @@ function readFirstEnvFrom(
   return undefined;
 }
 
-async function defaultCommandExists(name: string): Promise<boolean> {
+export function resolveCommandLookupExecutable(
+  platform: NodeJS.Platform,
+): string {
+  return platform === "win32" ? "where" : "which";
+}
+
+async function defaultCommandExists(
+  name: string,
+  platform: NodeJS.Platform,
+): Promise<boolean> {
   try {
-    await execFileAsync("which", [name]);
+    await execFileAsync(resolveCommandLookupExecutable(platform), [name]);
     return true;
   } catch {
     return false;
+  }
+}
+
+async function defaultFindChrome(): Promise<string | undefined> {
+  try {
+    const aec = await import("@step-cli/realtime-aec");
+    return aec.findChrome();
+  } catch {
+    return undefined;
   }
 }

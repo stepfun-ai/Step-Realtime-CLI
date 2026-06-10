@@ -6,6 +6,7 @@ import { test } from "node:test";
 import {
   createDoctorReport,
   renderDoctorReport,
+  resolveCommandLookupExecutable,
 } from "../src/commands/doctor-command.js";
 
 test("createDoctorReport flags placeholder API keys without network calls", async () => {
@@ -47,4 +48,25 @@ test("renderDoctorReport includes actionable check names", async () => {
   assert.match(rendered, /Node.js/);
   assert.match(rendered, /Config/);
   assert.match(rendered, /Model API key/);
+});
+
+test("resolveCommandLookupExecutable uses Windows command discovery", () => {
+  assert.equal(resolveCommandLookupExecutable("win32"), "where");
+  assert.equal(resolveCommandLookupExecutable("darwin"), "which");
+  assert.equal(resolveCommandLookupExecutable("linux"), "which");
+});
+
+test("createDoctorReport accepts Chrome discovered from Windows install paths", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "step-doctor-"));
+  const report = await createDoctorReport({
+    workspaceRoot: dir,
+    platform: "win32",
+    commandExists: async (name) => name === "pnpm",
+    findChrome: async () =>
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    env: { STEP_API_KEY: "sk-test" },
+  });
+
+  assert.equal(report.checks.chrome.status, "ok");
+  assert.match(report.checks.chrome.message, /Chrome\/Chromium found/);
 });
