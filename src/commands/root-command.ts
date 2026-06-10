@@ -54,6 +54,7 @@ export async function runRootCommand(argv: string[]): Promise<void> {
         "  step aec                   Enable/disable browser-helper echo cancellation",
         "",
         "Config commands:",
+        "  step doctor                Check local installation and config health",
         "  step config path           Show user/workspace config paths",
         "  step config show           Show merged config and resolved defaults",
         "  step config init           Create a step-cli config template",
