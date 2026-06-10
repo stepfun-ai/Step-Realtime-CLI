@@ -13,6 +13,7 @@ import { createLocalCliClientApp } from "../runtime/local-cli-app.js";
 import {
   isOpenTuiEnabledInCurrentBuild,
   loadOpenTuiClientAppFactoryAtRuntime,
+  shouldAutoStartOpenTui,
 } from "../runtime/open-tui-capability.js";
 
 // Keep this build flag in the command module so rolldown can fold the bundle's
@@ -42,12 +43,16 @@ export async function runResumeCommand(argv: string[]): Promise<void> {
       actionCommand: Command,
     ) => {
       const cliOptionSources = readSharedRuntimeCliOptionSources(actionCommand);
-      const shouldUseTui =
-        OPEN_TUI_COMPILE_TIME_ENABLED &&
-        isOpenTuiEnabledInCurrentBuild() &&
-        !options.json &&
-        process.stdin.isTTY === true &&
-        process.stdout.isTTY === true;
+      const shouldUseTui = shouldAutoStartOpenTui({
+        buildEnabled:
+          OPEN_TUI_COMPILE_TIME_ENABLED && isOpenTuiEnabledInCurrentBuild(),
+        json: Boolean(options.json),
+        hasPrompt: false,
+        hasAttachments: false,
+        stdinIsTty: process.stdin.isTTY === true,
+        stdoutIsTty: process.stdout.isTTY === true,
+        openTuiEnvValue: process.env.STEP_CLI_ENABLE_OPENTUI,
+      });
       const { stepCliConfig } = await resolveStepCliRuntimeConfig({
         options,
         cliOptionSources,

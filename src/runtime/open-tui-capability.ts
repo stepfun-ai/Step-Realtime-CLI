@@ -17,6 +17,40 @@ export function isOpenTuiEnabledInCurrentBuild(): boolean {
   return OPEN_TUI_ENABLED_IN_CURRENT_BUILD;
 }
 
+export interface ShouldAutoStartOpenTuiInput {
+  buildEnabled: boolean;
+  json: boolean;
+  hasPrompt: boolean;
+  hasAttachments: boolean;
+  stdinIsTty: boolean;
+  stdoutIsTty: boolean;
+  platform?: NodeJS.Platform;
+  openTuiEnvValue?: string;
+}
+
+export function shouldAutoStartOpenTui(
+  input: ShouldAutoStartOpenTuiInput,
+): boolean {
+  if (
+    !input.buildEnabled ||
+    input.json ||
+    input.hasPrompt ||
+    input.hasAttachments ||
+    !input.stdinIsTty ||
+    !input.stdoutIsTty
+  ) {
+    return false;
+  }
+
+  const platform = input.platform ?? process.platform;
+  if (platform !== "win32") {
+    return true;
+  }
+
+  const configured = input.openTuiEnvValue?.trim().toLowerCase();
+  return configured === "1" || configured === "true";
+}
+
 const loadOpenTuiRuntimeModule = OPEN_TUI_ENABLED_IN_CURRENT_BUILD
   ? async () => await import("./local-tui-app.js")
   : null;
