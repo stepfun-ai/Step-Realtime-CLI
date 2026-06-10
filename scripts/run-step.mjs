@@ -1,6 +1,7 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 const repoRoot = process.cwd();
 const scriptArgs = process.argv.slice(2);
@@ -46,7 +47,7 @@ async function main() {
 
   return runCommand(bunBin, [
     "--import",
-    require.resolve("tsx"),
+    pathToFileURL(require.resolve("tsx")).href,
     entrypoint,
     ...scriptArgs,
   ]);
