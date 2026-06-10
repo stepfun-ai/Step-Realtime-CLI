@@ -9,14 +9,16 @@ git clone <your-fork-url>
 cd step-realtime-cli
 pnpm install
 pnpm step --help          # run locally without building
+pnpm test                 # run the automated test suite
 pnpm check                # required before opening a PR
 ```
 
-`pnpm check` runs `oxlint`, the dependency guardrails (`dependency-cruiser` +
-`scripts/check-dependency-guardrails.mjs`), `knip` dead-code analysis,
-`tsc --noEmit`, and `prettier --check`. There is no automated test suite yet —
-verify behavior manually with `pnpm step` / `pnpm gateway:watch` /
-`pnpm tui:dev` / `pnpm ui:dev` as appropriate for the change.
+`pnpm check` runs `pnpm test`, `oxlint`, the dependency guardrails
+(`dependency-cruiser` + `scripts/check-dependency-guardrails.mjs`), `knip`
+dead-code analysis, `tsc --noEmit`, and `prettier --check`. For UI, voice, or
+service-facing changes, also verify behavior manually with `pnpm step` /
+`pnpm gateway:watch` / `pnpm tui:dev` / `pnpm ui:dev` as appropriate for the
+change.
 
 ## Architecture
 

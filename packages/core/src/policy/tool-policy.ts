@@ -18,7 +18,9 @@ export interface ToolPolicyConfig {
 }
 
 const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
-  /\brm\s+-rf\s+\//i,
+  /\brm\s+-(?:[^\s-]*r[^\s-]*f|[^\s-]*f[^\s-]*r)\s+(?:\/|~|\$HOME|\.)(?:\s|$)/i,
+  /\bfind\s+(?:\.|~|\$HOME|\/)(?:\s|$)[\s\S]*\s-delete(?:\s|$)/i,
+  /\bgit\s+clean\s+-[^\s]*f[^\s]*d/i,
   /\bshutdown\b/i,
   /\breboot\b/i,
   /\bmkfs\b/i,
@@ -176,7 +178,21 @@ export class ToolPolicy implements ToolPermissionPolicy {
 
 function isDangerousCommand(command: string): boolean {
   const normalized = command.trim();
-  return DANGEROUS_COMMAND_PATTERNS.some((pattern) => pattern.test(normalized));
+  if (DANGEROUS_COMMAND_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  return extractBase64Candidates(normalized).some((candidate) => {
+    try {
+      const decoded = Buffer.from(candidate, "base64").toString("utf8").trim();
+      return (
+        decoded.length > 0 &&
+        DANGEROUS_COMMAND_PATTERNS.some((pattern) => pattern.test(decoded))
+      );
+    } catch {
+      return false;
+    }
+  });
 }
 
 function shorten(text: string, maxChars: number): string {
@@ -184,4 +200,8 @@ function shorten(text: string, maxChars: number): string {
     return text;
   }
   return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
+function extractBase64Candidates(command: string): string[] {
+  return command.match(/[A-Za-z0-9+/]{8,}={0,2}/g) ?? [];
 }

@@ -1,6 +1,7 @@
 import { runArtifactsCommand } from "./artifacts-command.js";
 import { runAecCommand } from "./aec-command.js";
 import { runConfigCommand } from "./config-command.js";
+import { runDoctorCommand } from "./doctor-command.js";
 import { runExecCommand } from "./exec-command.js";
 import { runGoalCommand } from "./goal-command.js";
 import { runResumeCommand } from "./resume-command.js";
@@ -13,6 +14,10 @@ import { runVoiceCommand } from "./voice-command.js";
 export async function runCli(argv: string[]): Promise<void> {
   if (argv[0] === "config") {
     await runConfigCommand(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "doctor") {
+    await runDoctorCommand(argv.slice(1));
     return;
   }
   if (argv[0] === "serve") {
