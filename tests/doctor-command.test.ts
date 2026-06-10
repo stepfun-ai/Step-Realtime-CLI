@@ -8,6 +8,11 @@ import {
   renderDoctorReport,
   resolveCommandLookupExecutable,
 } from "../src/commands/doctor-command.js";
+import {
+  resolveVoiceAudioDriverPlan,
+  type VoiceAudioDriverPlanInput,
+} from "../src/runtime/build-voice-runtime.js";
+import { shouldAutoStartOpenTui } from "../src/runtime/open-tui-capability.js";
 
 test("createDoctorReport flags placeholder API keys without network calls", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "step-doctor-"));
@@ -69,4 +74,50 @@ test("createDoctorReport accepts Chrome discovered from Windows install paths", 
 
   assert.equal(report.checks.chrome.status, "ok");
   assert.match(report.checks.chrome.message, /Chrome\/Chromium found/);
+});
+
+test("Windows does not auto-start OpenTUI unless explicitly enabled", () => {
+  const base = {
+    buildEnabled: true,
+    json: false,
+    hasPrompt: false,
+    hasAttachments: false,
+    stdinIsTty: true,
+    stdoutIsTty: true,
+    platform: "win32" as NodeJS.Platform,
+  };
+
+  assert.equal(shouldAutoStartOpenTui(base), false);
+  assert.equal(
+    shouldAutoStartOpenTui({
+      ...base,
+      openTuiEnvValue: "1",
+    }),
+    true,
+  );
+});
+
+test("Windows voice audio does not fall back to system arecord/aplay drivers", () => {
+  const base: VoiceAudioDriverPlanInput = {
+    platform: "win32",
+    aecEnabled: false,
+    browserAudioAvailable: false,
+  };
+
+  assert.equal(resolveVoiceAudioDriverPlan(base), "unsupported");
+  assert.equal(
+    resolveVoiceAudioDriverPlan({
+      ...base,
+      aecEnabled: true,
+    }),
+    "unsupported",
+  );
+  assert.equal(
+    resolveVoiceAudioDriverPlan({
+      ...base,
+      aecEnabled: true,
+      browserAudioAvailable: true,
+    }),
+    "browser",
+  );
 });

@@ -26,6 +26,8 @@
 - macOS / Linux, Node.js 20+
 - A StepFun API key (a single key may be used for both the coding model and realtime voice; a different provider's key may be configured for the coding side if preferred)
 
+Windows is currently supported for one-shot text commands such as `step "..."` and `step exec`. The interactive OpenTUI screen is disabled by default on Windows because terminal rendering is still experimental there; set `STEP_CLI_ENABLE_OPENTUI=1` to opt in while testing.
+
 ### Choose your region
 
 StepFun operates two independent sites; pick the one that matches where your API key was issued. The two sites do **not** share accounts or keys.
@@ -119,6 +121,8 @@ step aec status        # show AEC status (also verifies Chrome availability)
 ```
 
 AEC requires Chrome to be installed locally. On macOS, the CLI will suggest `brew install --cask google-chrome` if Chrome is not detected. AEC is not required when using headphones.
+
+On Windows, voice mode requires the Chrome-backed AEC driver. Install Chrome or set `STEP_CHROME_PATH` to `chrome.exe`; the command-line `sox`/ALSA fallback is only available on macOS/Linux.
 
 ### Speech rate
 

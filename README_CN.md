@@ -26,6 +26,8 @@
 - macOS / Linux，Node.js 20+
 - StepFun API Key（同一密钥可同时用于编程模型与实时语音；如需接入其他模型服务，可分别配置）
 
+Windows 当前支持 `step "..."`、`step exec` 等一次性文字命令。交互式 OpenTUI 在 Windows 上仍属实验能力，默认不会自动启动；如需测试，可设置 `STEP_CLI_ENABLE_OPENTUI=1` 显式启用。
+
 ### 选择站点
 
 StepFun 提供两个相互独立的站点，请按 API Key 的发放来源选择对应安装方式。两个站点的账号与密钥**不互通**。
@@ -119,6 +121,8 @@ step aec status        # 查看 AEC 状态（同时检测 Chrome 可用性）
 ```
 
 AEC 依赖本机安装 Chrome；macOS 用户如未安装，可通过 `brew install --cask google-chrome` 进行安装。佩戴耳机时无需启用。
+
+Windows 语音模式需要 Chrome 提供的 AEC 驱动。请安装 Chrome，或将 `STEP_CHROME_PATH` 指向 `chrome.exe`；命令行 `sox`/ALSA fallback 仅适用于 macOS/Linux。
 
 ### 调整语速
 

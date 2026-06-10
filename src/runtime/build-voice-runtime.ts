@@ -25,6 +25,28 @@ import type {
 
 export type { VoiceRuntimeBundle };
 
+export type VoiceAudioDriverPlan = "browser" | "system" | "unsupported";
+
+export interface VoiceAudioDriverPlanInput {
+  platform: NodeJS.Platform;
+  aecEnabled: boolean;
+  browserAudioAvailable: boolean;
+}
+
+export function resolveVoiceAudioDriverPlan(
+  input: VoiceAudioDriverPlanInput,
+): VoiceAudioDriverPlan {
+  if (input.browserAudioAvailable) {
+    return "browser";
+  }
+
+  if (input.platform === "win32") {
+    return "unsupported";
+  }
+
+  return "system";
+}
+
 export async function buildVoiceRuntime(
   voice: VoiceBootstrapConfig,
   stepCliConfig: StepCliConfig,
@@ -163,24 +185,46 @@ export async function buildVoiceRuntime(
   // echo. Falls back to sox if no Chrome found.
   const aecEnabled = voice.aec === true || process.env.STEP_VOICE_AEC === "1";
   let audioDriver: AudioDriver;
+  let browserAudioAvailable = false;
   if (aecEnabled) {
     const aec = await import("@step-cli/realtime-aec");
     const probe = await new aec.BrowserAudioDriver().probe().catch(() => null);
-    if (probe?.captureAvailable) {
+    browserAudioAvailable = Boolean(probe?.captureAvailable);
+    const audioPlan = resolveVoiceAudioDriverPlan({
+      platform: process.platform,
+      aecEnabled,
+      browserAudioAvailable,
+    });
+    if (audioPlan === "browser") {
       audioDriver = new aec.BrowserAudioDriver();
       rt.logger.info(
         {},
         "voice AEC enabled: BrowserAudioDriver (headless Chrome)",
       );
-    } else {
+    } else if (audioPlan === "system") {
       audioDriver = new rv.SoxAudioDriver();
       rt.logger.warn(
         {},
         "AEC requested but no Chrome found; falling back to SoxAudioDriver",
       );
+    } else {
+      throw new Error(
+        "voice audio on Windows requires Chrome/Chromium AEC. Install Chrome or set STEP_CHROME_PATH to chrome.exe.",
+      );
     }
   } else {
-    audioDriver = new rv.SoxAudioDriver();
+    const audioPlan = resolveVoiceAudioDriverPlan({
+      platform: process.platform,
+      aecEnabled,
+      browserAudioAvailable,
+    });
+    if (audioPlan === "system") {
+      audioDriver = new rv.SoxAudioDriver();
+    } else {
+      throw new Error(
+        "voice audio on Windows requires Chrome/Chromium AEC. Run `step aec on` after installing Chrome, or set STEP_CHROME_PATH to chrome.exe.",
+      );
+    }
   }
 
   const voiceUi: VoiceUiPlugin = {
