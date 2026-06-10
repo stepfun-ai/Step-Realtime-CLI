@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { resolvePnpmCommand } from "./package-manager-command.mjs";
 
 const repoRoot = process.cwd();
 const ignoredDirNames = new Set([
@@ -94,7 +95,14 @@ for (const decision of decisions) {
   }
 
   process.stderr.write(`build ${decision.name} (${reason})\n`);
-  await runCommand("pnpm", ["--filter", decision.name, "run", "build"]);
+  const pnpm = resolvePnpmCommand();
+  await runCommand(pnpm.command, [
+    ...pnpm.prefixArgs,
+    "--filter",
+    decision.name,
+    "run",
+    "build",
+  ]);
 }
 
 if (dryRun) {
