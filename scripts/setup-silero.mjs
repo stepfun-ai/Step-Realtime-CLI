@@ -30,6 +30,10 @@
 
 import { spawn } from "node:child_process";
 import process from "node:process";
+import {
+  resolveCommandInvocation,
+  resolvePnpmCommand,
+} from "./package-manager-command.mjs";
 
 const repoRoot = process.cwd();
 const passthrough = process.argv.slice(2); // e.g. --registry ... / --https-proxy ...
@@ -37,7 +41,8 @@ const passthrough = process.argv.slice(2); // e.g. --registry ... / --https-prox
 function run(cmd, args) {
   return new Promise((resolve) => {
     process.stdout.write(`\n$ ${cmd} ${args.join(" ")}\n`);
-    const child = spawn(cmd, args, {
+    const invocation = resolveCommandInvocation(cmd, args);
+    const child = spawn(invocation.command, invocation.args, {
       cwd: repoRoot,
       env: process.env,
       stdio: "inherit",
@@ -63,8 +68,7 @@ function verifyBinary() {
 }
 
 async function main() {
-  // Invoked via `pnpm setup:silero`, so the pnpm shim is on PATH for subprocesses.
-  const pnpm = "pnpm";
+  const pnpm = resolvePnpmCommand();
 
   process.stdout.write(
     "Installing the Silero plugin subtree (avr-vad / onnxruntime-node)…\n" +
@@ -76,14 +80,26 @@ async function main() {
   // their per-platform optional packages, which looks alarming and is not what
   // "setup:silero" should do.
   const filter = ["--filter", "@step-cli/realtime-vad-silero..."];
-  if ((await run(pnpm, ["install", ...filter, ...passthrough])) !== 0) {
+  if (
+    (await run(pnpm.command, [
+      ...pnpm.prefixArgs,
+      "install",
+      ...filter,
+      ...passthrough,
+    ])) !== 0
+  ) {
     fail("pnpm install (silero subtree) failed.");
     return 1;
   }
 
   // Force onnxruntime-node's blocked install script to run and fetch the binary.
   if (
-    (await run(pnpm, ["rebuild", "onnxruntime-node", ...passthrough])) !== 0
+    (await run(pnpm.command, [
+      ...pnpm.prefixArgs,
+      "rebuild",
+      "onnxruntime-node",
+      ...passthrough,
+    ])) !== 0
   ) {
     fail("pnpm rebuild onnxruntime-node failed.");
     return 1;

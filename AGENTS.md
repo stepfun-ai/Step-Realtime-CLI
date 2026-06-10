@@ -320,6 +320,8 @@ TUI / UI / CLI / Desktop 默认通过 `packages/sdk` 调用 gateway：
 
 Windows 语音模式必须使用 `BrowserAudioDriver`（Chrome / Edge / Chromium）；`SoxAudioDriver` 仅作为 macOS / Linux 的命令行音频 fallback，不得在 Windows 上回退到 `arecord` / `aplay` / `sox`。
 
+Windows 脚本不得直接假设 `pnpm` 可被 `spawn("pnpm")` 找到；需要从 Node 脚本调用 pnpm 时，统一使用 `scripts/package-manager-command.mjs` 解析命令和 Windows shim 包装。
+
 ## 7. 开发与协作规范
 
 - 使用 `tsx` 进行开发热重载，`tsdown` 进行生产构建。
