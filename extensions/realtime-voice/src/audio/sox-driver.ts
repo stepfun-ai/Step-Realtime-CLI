@@ -11,8 +11,25 @@ const SAMPLE_RATE = 24000;
 const CHANNELS = 1;
 const BIT_DEPTH = 16;
 
-function getCaptureCommand(): { cmd: string; args: string[] } {
-  if (platform() === "darwin") {
+type AudioCommand = { cmd: string; args: string[] };
+
+export type SoxAudioCommandOptions = {
+  platform?: NodeJS.Platform | string;
+};
+
+export function resolveSoxAudioCommands(options: SoxAudioCommandOptions = {}): {
+  capture: AudioCommand;
+  playback: AudioCommand;
+} {
+  const currentPlatform = options.platform ?? platform();
+
+  if (currentPlatform === "win32") {
+    throw new Error(
+      "SoxAudioDriver is not supported on Windows; use BrowserAudioDriver instead.",
+    );
+  }
+
+  if (currentPlatform === "darwin") {
     // Some sox builds (notably the conda/micromamba coreaudio backend) fail to
     // resolve the default device via `-d` ("no default audio device
     // configured") and silently capture silence. STEP_SOX_INPUT_DEVICE lets
@@ -21,72 +38,80 @@ function getCaptureCommand(): { cmd: string; args: string[] } {
     const dev = process.env.STEP_SOX_INPUT_DEVICE;
     const input = dev ? ["-t", "coreaudio", dev] : ["-d"];
     return {
-      cmd: "sox",
-      args: [
-        ...input,
-        "-t",
-        "raw",
-        "-r",
-        String(SAMPLE_RATE),
-        "-e",
-        "signed",
-        "-b",
-        String(BIT_DEPTH),
-        "-c",
-        String(CHANNELS),
-        "-",
-      ],
+      capture: {
+        cmd: "sox",
+        args: [
+          ...input,
+          "-t",
+          "raw",
+          "-r",
+          String(SAMPLE_RATE),
+          "-e",
+          "signed",
+          "-b",
+          String(BIT_DEPTH),
+          "-c",
+          String(CHANNELS),
+          "-",
+        ],
+      },
+      playback: {
+        cmd: "sox",
+        args: [
+          "-t",
+          "raw",
+          "-r",
+          String(SAMPLE_RATE),
+          "-e",
+          "signed",
+          "-b",
+          String(BIT_DEPTH),
+          "-c",
+          String(CHANNELS),
+          "-",
+          "-d",
+        ],
+      },
     };
   }
+
   return {
-    cmd: "arecord",
-    args: [
-      "-f",
-      "S16_LE",
-      "-r",
-      String(SAMPLE_RATE),
-      "-c",
-      String(CHANNELS),
-      "-t",
-      "raw",
-      "-",
-    ],
+    capture: {
+      cmd: "arecord",
+      args: [
+        "-f",
+        "S16_LE",
+        "-r",
+        String(SAMPLE_RATE),
+        "-c",
+        String(CHANNELS),
+        "-t",
+        "raw",
+        "-",
+      ],
+    },
+    playback: {
+      cmd: "aplay",
+      args: [
+        "-f",
+        "S16_LE",
+        "-r",
+        String(SAMPLE_RATE),
+        "-c",
+        String(CHANNELS),
+        "-t",
+        "raw",
+      ],
+    },
   };
 }
 
-function getPlaybackCommand(): { cmd: string; args: string[] } {
-  if (platform() === "darwin") {
-    return {
-      cmd: "sox",
-      args: [
-        "-t",
-        "raw",
-        "-r",
-        String(SAMPLE_RATE),
-        "-e",
-        "signed",
-        "-b",
-        String(BIT_DEPTH),
-        "-c",
-        String(CHANNELS),
-        "-",
-        "-d",
-      ],
-    };
-  }
-  return {
-    cmd: "aplay",
-    args: [
-      "-f",
-      "S16_LE",
-      "-r",
-      String(SAMPLE_RATE),
-      "-c",
-      String(CHANNELS),
-      "-t",
-      "raw",
-    ],
-  };
+function getCaptureCommand(): AudioCommand {
+  return resolveSoxAudioCommands().capture;
+}
+
+function getPlaybackCommand(): AudioCommand {
+  return resolveSoxAudioCommands().playback;
 }
 
 export class SoxAudioDriver implements AudioDriver {

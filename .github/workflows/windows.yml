@@ -1,0 +1,71 @@
+name: Windows
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  windows-smoke:
+    name: Windows install and runtime smoke
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.17.0 --activate
+
+      - name: Install dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Parse PowerShell installer
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "scripts/setup.ps1",
+            [ref] $tokens,
+            [ref] $errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+
+      - name: Run tests
+        shell: pwsh
+        run: pnpm test
+
+      - name: Type check
+        shell: pwsh
+        run: pnpm exec tsc --noEmit
+
+      - name: Build
+        shell: pwsh
+        run: pnpm build
+
+      - name: Install with Windows script
+        shell: pwsh
+        run: ./scripts/setup.ps1 -SkipInstall -SkipBuild
+
+      - name: Smoke installed launcher
+        shell: pwsh
+        run: |
+          $env:Path = "$HOME\.step-cli\bin;$env:Path"
+          step --version
+          step aec status
+          step vad status
+          step voice --help

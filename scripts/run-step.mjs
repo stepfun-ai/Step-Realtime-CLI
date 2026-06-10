@@ -1,9 +1,11 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 
 const repoRoot = process.cwd();
 const scriptArgs = process.argv.slice(2);
 const bunBin = process.env.STEP_BUN_BIN || process.execPath;
+const require = createRequire(import.meta.url);
 
 try {
   const exitCode = await main();
@@ -37,7 +39,17 @@ async function main() {
     return buildExitCode;
   }
 
-  return runCommand(bunBin, [path.join(repoRoot, "src", "index.ts"), ...scriptArgs]);
+  const entrypoint = path.join(repoRoot, "src", "index.ts");
+  if (path.basename(bunBin).startsWith("bun")) {
+    return runCommand(bunBin, [entrypoint, ...scriptArgs]);
+  }
+
+  return runCommand(bunBin, [
+    "--import",
+    require.resolve("tsx"),
+    entrypoint,
+    ...scriptArgs,
+  ]);
 }
 
 async function runCommand(command, commandArgs) {

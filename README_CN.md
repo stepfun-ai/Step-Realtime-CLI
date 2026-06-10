@@ -30,21 +30,25 @@
 
 StepFun 提供两个相互独立的站点，请按 API Key 的发放来源选择对应安装方式。两个站点的账号与密钥**不互通**。
 
-| 站点         | 控制台                        | API 域名                  | 安装脚本                         |
-| ------------ | ----------------------------- | ------------------------- | -------------------------------- |
-| 国内（默认） | https://platform.stepfun.com/ | `https://api.stepfun.com` | `bash scripts/setup.sh`          |
-| 海外         | https://platform.stepfun.ai/  | `https://api.stepfun.ai`  | `bash scripts/setup-overseas.sh` |
+| 站点         | 控制台                        | API 域名                  | macOS / Linux 安装脚本           | Windows 安装脚本                                                       |
+| ------------ | ----------------------------- | ------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| 国内（默认） | https://platform.stepfun.com/ | `https://api.stepfun.com` | `bash scripts/setup.sh`          | `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`           |
+| 海外         | https://platform.stepfun.ai/  | `https://api.stepfun.ai`  | `bash scripts/setup-overseas.sh` | `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Overseas` |
 
 `scripts/setup-overseas.sh` 会先复用 `scripts/setup.sh` 的全部流程，再把 `~/.step-cli/config.json` 中实时语音的 WebSocket 端点与 models-proxy 基础地址改写为 `api.stepfun.ai`。所有其他参数（`--skip-build`、`--force-config`、`--uninstall` 等）均会原样转发。
+Windows 下可通过 `scripts/setup.ps1 -Overseas` 完成同样的海外端点改写。
 
 ### 音频依赖
 
 `scripts/setup.sh`（以及 `scripts/setup-overseas.sh`）默认启用 AEC，并会自动检测或安装 Chrome；该模式下语音的采集与播放由 Chrome（`BrowserAudioDriver`）提供，无需额外安装系统级音频工具。
 
+Windows 下语音模式始终使用 `BrowserAudioDriver`，需要安装 Chrome、Edge 或 Chromium；如果浏览器安装在自定义位置，可设置 `STEP_CHROME_PATH`。
+
 仅当通过 `step aec off` 关闭 AEC（或 Chrome 不可用导致回落）时，实时语音会切换至系统命令行驱动，此时需要：
 
 - macOS：`sox`，通过 `brew install sox` 安装
 - Linux：ALSA 工具集 `arecord` / `aplay`，通常由 `alsa-utils` 提供，例如 `sudo apt install alsa-utils`
+- Windows：不使用命令行音频回退，请保持浏览器音频启用
 
 ### 一键安装
 
@@ -54,12 +58,15 @@ cd step-realtime-cli
 
 # 国内（platform.stepfun.com）
 bash scripts/setup.sh
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1   # Windows
 
 # 海外（platform.stepfun.ai）
 # bash scripts/setup-overseas.sh
+# powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Overseas
 ```
 
 安装脚本将自动安装依赖、构建可执行文件、将 `step` 命令注册至全局 PATH，并完成语音相关的 VAD / AEC 组件初始化。
+Windows 安装脚本会注册基于 Node.js 的 `step.cmd` 启动器，不要求安装 Bun 或执行原生编译。
 
 安装完成后，请执行以下两步：
 
@@ -81,6 +88,7 @@ step "帮我读一下 src/index.ts"    # 一次性任务
 
 ```bash
 bash scripts/uninstall.sh
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Uninstall   # Windows
 ```
 
 该脚本将清理已安装的可执行文件与 PATH 配置，并**保留** `~/.step-cli/config.json` 及历史会话记录。
@@ -158,6 +166,7 @@ step config show        # 查看合并后实际生效的配置
 ```bash
 git pull
 bash scripts/setup.sh           # 国内；海外站点请改用 scripts/setup-overseas.sh
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1   # Windows
 step config sync --write
 ```
 

@@ -318,6 +318,8 @@ TUI / UI / CLI / Desktop 默认通过 `packages/sdk` 调用 gateway：
 
 如果某个能力会被多个扩展、多个客户端或多个运行时复用，应优先上移到 `packages/*`，而不是留在 app 层。
 
+Windows 语音模式必须使用 `BrowserAudioDriver`（Chrome / Edge / Chromium）；`SoxAudioDriver` 仅作为 macOS / Linux 的命令行音频 fallback，不得在 Windows 上回退到 `arecord` / `aplay` / `sox`。
+
 ## 7. 开发与协作规范
 
 - 使用 `tsx` 进行开发热重载，`tsdown` 进行生产构建。
