@@ -62,7 +62,7 @@
     "@opentui/core-win32-x64": "0.1.90",
     "@types/node": "^25.5.0",
     "@types/react": "^18.3.12",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^3.2.6",
     "concurrently": "^9.2.1",
     "dependency-cruiser": "^17.3.9",
     "knip": "^6.0.4",
