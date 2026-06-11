@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  getToolSecurityIssue,
-  validateToolSecurity,
-} from "./security.js";
+import { getToolSecurityIssue, validateToolSecurity } from "./security.js";
 
 describe("security", () => {
   // -- getToolSecurityIssue ----------------------------------------------

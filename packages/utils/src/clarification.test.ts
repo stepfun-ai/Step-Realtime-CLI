@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type { UserClarificationRequest, UserClarificationOption } from "@step-cli/protocol";
+import type {
+  UserClarificationRequest,
+  UserClarificationOption,
+} from "@step-cli/protocol";
 import {
   parseClarificationAnswer,
   formatClarificationOption,

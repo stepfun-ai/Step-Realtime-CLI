@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type {
-  CompletionRequest,
-} from "@step-cli/protocol";
+import type { CompletionRequest } from "@step-cli/protocol";
 import { createChatCompletionClient } from "./factory.js";
 import { AnthropicMessagesClient } from "./anthropic-client.js";
 import { OpenAICompatibleClient } from "./openai-client.js";

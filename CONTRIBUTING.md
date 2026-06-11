@@ -9,6 +9,7 @@ git clone <your-fork-url>
 cd step-realtime-cli
 pnpm install
 pnpm step --help          # run locally without building
+pnpm test                 # run the automated test suite
 pnpm check                # required before opening a PR
 ```
 
@@ -35,6 +36,10 @@ CI runs the full test matrix on **Ubuntu, Windows, and macOS**. For
 platform-specific code (audio drivers, Chrome finder, etc.), use
 `vi.skipIf` / `describe.runIf` rather than hardcoded platform skips so that
 every test file still loads on every platform.
+
+For UI, voice, or service-facing changes, also verify behavior manually with
+`pnpm step` / `pnpm gateway:watch` / `pnpm tui:dev` / `pnpm ui:dev` as
+appropriate for the change.
 
 ## Architecture
 

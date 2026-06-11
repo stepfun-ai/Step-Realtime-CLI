@@ -203,6 +203,89 @@ describe("ToolPolicy", () => {
     expect(decision.mode).toBe("deny");
   });
 
+  it("denies encoded destructive shell commands", () => {
+    const policy = new ToolPolicy({
+      mode: "confirm",
+      nonInteractiveApproval: "deny",
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+    const inspection: ToolCallInspection = {
+      command: "bash -c 'cm0gLXJmIC8= | base64 -d | sh'",
+    };
+
+    const decision = policy.evaluate("bash", "{}", spec, inspection);
+    expect(decision.mode).toBe("deny");
+    expect(decision.reason).toMatch(/dangerous command/i);
+  });
+
+  it("allows benign encoded text", () => {
+    const policy = new ToolPolicy({
+      mode: "confirm",
+      nonInteractiveApproval: "deny",
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+    const inspection: ToolCallInspection = { command: "echo SGVsbG8=" };
+
+    const decision = policy.evaluate("bash", "{}", spec, inspection);
+    expect(decision.mode).toBe("confirm");
+  });
+
+  it("denies destructive rm paths beyond filesystem root", () => {
+    const policy = new ToolPolicy({
+      mode: "auto",
+      nonInteractiveApproval: "allow",
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+    const inspection: ToolCallInspection = { command: "rm -rf /tmp/test" };
+
+    const decision = policy.evaluate("bash", "{}", spec, inspection);
+    expect(decision.mode).toBe("deny");
+    expect(decision.reason).toMatch(/dangerous command/i);
+  });
+
+  it("denies destructive find delete variants", () => {
+    const policy = new ToolPolicy({
+      mode: "auto",
+      nonInteractiveApproval: "allow",
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+    const inspection: ToolCallInspection = {
+      command: "find / -mindepth 1 -delete",
+    };
+
+    const decision = policy.evaluate("bash", "{}", spec, inspection);
+    expect(decision.mode).toBe("deny");
+    expect(decision.reason).toMatch(/dangerous command/i);
+  });
+
+  it("denies destructive workspace wipe variants", () => {
+    const policy = new ToolPolicy({
+      mode: "auto",
+      nonInteractiveApproval: "allow",
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+    const inspection: ToolCallInspection = {
+      command: "find . -mindepth 1 -delete",
+    };
+
+    const decision = policy.evaluate("bash", "{}", spec, inspection);
+    expect(decision.mode).toBe("deny");
+    expect(decision.reason).toMatch(/dangerous command/i);
+  });
+
+  it("denies git clean forced delete variants", () => {
+    const policy = new ToolPolicy({
+      mode: "auto",
+      nonInteractiveApproval: "allow",
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+    const inspection: ToolCallInspection = { command: "git clean -fdx" };
+
+    const decision = policy.evaluate("bash", "{}", spec, inspection);
+    expect(decision.mode).toBe("deny");
+    expect(decision.reason).toMatch(/dangerous command/i);
+  });
+
   // -- Per-tool override precedence --
 
   it("per-tool override takes precedence over mode-based decision", () => {
