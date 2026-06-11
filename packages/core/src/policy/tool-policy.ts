@@ -18,9 +18,9 @@ export interface ToolPolicyConfig {
 }
 
 const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
-  /\brm\s+-(?:[^\s-]*r[^\s-]*f|[^\s-]*f[^\s-]*r)\s+(?:--\s+)?(?:\/(?:\S*)?|~(?:\/\S*)?|\$HOME(?:\/\S*)?|\.\.?(?:\/\S*)?)(?:\s|$)/i,
+  /\brm\b(?=[^;&|\n\r]*?(?:\s-[^\s-]*r[^\s-]*|--recursive)(?:\s|$))(?=[^;&|\n\r]*?(?:\s-[^\s-]*f[^\s-]*|--force)(?:\s|$))[^;&|\n\r]*?\s(?:--\s+)?(?:\/(?:\S*)?|~(?:\/\S*)?|\$HOME(?:\/\S*)?|\.\.?(?:\/\S*)?)(?:\s|$)/i,
   /\bfind\s+(?:\/(?:\S*)?|~(?:\/\S*)?|\$HOME(?:\/\S*)?|\.\.?(?:\/\S*)?)(?:\s|$)[\s\S]*\s-delete(?:\s|$)/i,
-  /\bgit\s+clean\s+-[^\s]*f[^\s]*d/i,
+  /\bgit\s+clean\b(?=[^;&|\n\r]*?(?:\s-[^\s-]*f[^\s-]*|--force)(?:\s|$))(?=[^;&|\n\r]*?(?:\s-[^\s-]*d[^\s-]*|--dir)(?:\s|$))/i,
   /\bshutdown\b/i,
   /\breboot\b/i,
   /\bmkfs\b/i,
