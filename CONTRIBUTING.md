@@ -12,11 +12,29 @@ pnpm step --help          # run locally without building
 pnpm check                # required before opening a PR
 ```
 
-`pnpm check` runs `oxlint`, the dependency guardrails (`dependency-cruiser` +
-`scripts/check-dependency-guardrails.mjs`), `knip` dead-code analysis,
-`tsc --noEmit`, and `prettier --check`. There is no automated test suite yet —
-verify behavior manually with `pnpm step` / `pnpm gateway:watch` /
-`pnpm tui:dev` / `pnpm ui:dev` as appropriate for the change.
+`pnpm check` runs tests, `oxlint`, the dependency guardrails
+(`dependency-cruiser` + `scripts/check-dependency-guardrails.mjs`), `knip`
+dead-code analysis, `tsc --noEmit`, and `prettier --check`.
+
+## Testing
+
+```bash
+pnpm test                # run all tests
+pnpm test:watch          # watch mode
+pnpm test:coverage       # run with coverage report
+```
+
+The test suite uses [vitest](https://vitest.dev/) and covers `packages/utils`,
+`packages/core`, `packages/agent-sdk`, `extensions/llm`, `extensions/mcp`,
+`skills/builtin`, and `src` (config). See [`docs/TESTING.md`](./docs/TESTING.md)
+for the full test structure and guidelines for writing new tests.
+
+Coverage thresholds are enforced: **statements ≥ 70%**, **branches ≥ 60%**.
+
+CI runs the full test matrix on **Ubuntu, Windows, and macOS**. For
+platform-specific code (audio drivers, Chrome finder, etc.), use
+`vi.skipIf` / `describe.runIf` rather than hardcoded platform skips so that
+every test file still loads on every platform.
 
 ## Architecture
 
