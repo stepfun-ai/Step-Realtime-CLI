@@ -35,6 +35,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "src/**/*.test.ts",
+      "scripts/**/*.test.ts",
       "packages/**/src/**/*.test.ts",
       "extensions/**/src/**/*.test.ts",
       "skills/**/src/**/*.test.ts",

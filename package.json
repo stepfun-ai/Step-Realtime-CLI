@@ -17,7 +17,6 @@
     "ui:dev": "cd ui && pnpm dev",
     "gateway:watch": "tsx watch --no-clear-screen src/gateway/index.ts",
     "tui:dev": "tsx watch src/index.ts",
-    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "lint": "oxlint -c .oxlintrc.json --format stylish .",
     "check": "pnpm test && pnpm lint && pnpm dep-guard && pnpm deadcode && pnpm exec tsc --noEmit && pnpm format:check",
     "check:staged-files": "node scripts/check-staged-files.mjs",

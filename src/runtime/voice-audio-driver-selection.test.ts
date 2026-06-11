@@ -1,9 +1,8 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, expect } from "vitest";
 import {
   resolveVoiceAudioDriverPlan,
   type VoiceAudioDriverPlan,
-} from "../src/runtime/voice-audio-driver-selection.js";
+} from "./voice-audio-driver-selection.js";
 
 describe("resolveVoiceAudioDriverPlan", () => {
   it("uses the browser audio driver on Windows even when AEC is not explicitly enabled", () => {
@@ -14,7 +13,7 @@ describe("resolveVoiceAudioDriverPlan", () => {
       browserAvailable: true,
     });
 
-    assert.deepEqual(plan, {
+    expect(plan).toEqual({
       kind: "browser",
       reason: "windows_requires_browser_audio",
     } satisfies VoiceAudioDriverPlan);
@@ -28,9 +27,10 @@ describe("resolveVoiceAudioDriverPlan", () => {
       browserAvailable: false,
     });
 
-    assert.equal(plan.kind, "unavailable");
-    assert.match(
-      plan.message,
+    if (plan.kind !== "unavailable") {
+      throw new Error(`Expected unavailable plan, got ${plan.kind}`);
+    }
+    expect(plan.message).toMatch(
       /Chrome\/Chromium is required for voice mode on Windows/,
     );
   });
@@ -43,7 +43,7 @@ describe("resolveVoiceAudioDriverPlan", () => {
       browserAvailable: false,
     });
 
-    assert.deepEqual(plan, {
+    expect(plan).toEqual({
       kind: "sox",
       reason: "browser_aec_unavailable_fallback",
     } satisfies VoiceAudioDriverPlan);

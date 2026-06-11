@@ -27,6 +27,42 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Parse Windows PowerShell installer
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "scripts/setup.ps1",
+            [ref] $tokens,
+            [ref] $errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+
       - run: pnpm lint
       - run: pnpm exec tsc --noEmit
       - run: pnpm test
+
+      - name: Build on Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: pnpm build
+
+      - name: Install with Windows script
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/setup.ps1 -SkipInstall -SkipBuild
+
+      - name: Smoke installed Windows launcher
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $env:Path = "$HOME\.step-cli\bin;$env:Path"
+          step --version
+          step aec status
+          step vad status
+          step voice --help
