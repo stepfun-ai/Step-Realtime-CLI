@@ -47,8 +47,7 @@
     "packages/*/src",
     "apps/*/src",
     "extensions/*/src",
-    "skills/*/src",
-    "tests"
+    "skills/*/src"
   ],
   "exclude": ["dist", "node_modules"]
 }
