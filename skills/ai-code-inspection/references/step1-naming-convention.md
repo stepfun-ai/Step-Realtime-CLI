@@ -27,10 +27,10 @@
 
 ## 导出与类型命名
 
-- 公共导出名使用 PascalCase（类、接口、类型、枚举）。
+- 公共导出名使用 PascalCase（类、接口、类型）。
 - 内部/私有符号使用 camelCase。
 - 常量使用 SCREAMING_SNAKE_CASE。
-- TypeScript 接口以 `I` 前缀或名词命名，保持项目内部一致。
+- TypeScript 接口使用 PascalCase 名词命名，**不使用 `I` 前缀**。
 - 泛型参数使用简短 PascalCase（如 `TValue`、`TContext`）。
 
 ## 路径别名检查
@@ -52,18 +52,17 @@
 
 当 ui/ 文件在范围内时执行：
 
-- React component 使用 PascalCase 命名（`.tsx` 文件与导出名一致）。
+- React component 使用 PascalCase 命名。
 - Hook 使用 camelCase 并以 `use` 开头。
 - 共享类型应放在 `ui/src` 内已有 type 目录中。
-- CSS/style 相关文件应与组件相邻或按约定放在统一目录。
 
 ## TUI (OpenTUI) 检查
 
 当 src/tui/ 文件在范围内时执行：
 
-- 组件文件使用 PascalCase 命名。
+- 新增 TUI 组件时应使用 PascalCase 命名。
 - composable/store 使用 camelCase。
-- 保留在现有 tui 组件结构下，不随意新增顶层目录。
+- 保留在现有 tui 目录结构下，不随意新增顶层目录。
 
 ## CLI 检查
 
@@ -77,5 +76,7 @@
 
 当 src/gateway/ 文件在范围内时执行：
 
-- 模块按职责划分（session、memory、plugins、logging、storage 等）。
+- 文件使用 kebab-case 命名（如 `session-store.ts`、`http-server.ts`、`session-event-bus.ts`）。
+- 子目录按职责划分（session、memory、plugins、logging、storage、service、team、worktree、artifacts、restore）。
 - 新增文件放入已有子目录；只有全新职责时才新建目录。
+- 不使用 NestJS 风格的 `*.module.ts`、`*.controller.ts`、`*.service.ts` 后缀。

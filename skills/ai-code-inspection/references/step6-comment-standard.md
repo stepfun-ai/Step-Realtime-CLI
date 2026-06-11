@@ -36,7 +36,7 @@
 当 src/gateway/ 或 extensions/* 文件在范围内时执行：
 
 - service 注释应解释业务规则或编排约束，而不是复述函数名。
-- repository/provider 注释可以解释 mapping、transaction、migration 或外部 IO 意图。
+- store/persistence layer 注释可以解释 mapping、transaction、migration 或外部 IO 意图。
 - extension 注释应说明外部系统交互的关键约定。
 - 复杂类型定义可以使用 JSDoc 说明用途。
 

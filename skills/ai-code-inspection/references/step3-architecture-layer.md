@@ -17,20 +17,23 @@ packages/realtime  ← 实时音频/语音协议与运行时抽象
        ↓
 packages/sdk       ← 客户端 SDK（依赖 gateway 协议，不依赖 gateway 源码）
        ↓
-src/bootstrap      ← 启动/配置/prompt 辅助（旁路依赖 core）
+src/bootstrap      ← 启动/配置/prompt 辅助
        ↓
 src/gateway        ← 应用组装层（session/workspace/plugin/memory/service）
        ↓
-extensions/*       ← 外部系统适配（可依赖 core 或 gateway）
-skills/*           ← Skill 插件（仅可依赖 core 抽象）
+extensions/*       ← 外部系统适配
+skills/*           ← Skill 插件
+       ↓
+src/runtime        ← 编排层（粘合 gateway、bootstrap、commands、cli、tui、extensions）
        ↓
 src/commands       ← CLI 命令
-src/runtime        ← 运行时
 src/tui            ← TUI 客户端（OpenTUI）
 src/cli            ← CLI 客户端
 apps/*             ← 独立端侧应用
 ui/                ← React + Vite 前端
 ```
+
+注意：`src/runtime` 是 **composition root**，位于分层图最上方，而非底部。它依赖下层所有子系统，但下层不得反向依赖 runtime。
 
 ## 核心规则（违反 = 架构错误）
 
@@ -45,9 +48,10 @@ ui/                ← React + Vite 前端
 
 ### 2. 旁路依赖约束
 
-- `src/bootstrap` 仅可依赖 `packages/core`；不得依赖 `src/gateway`、`src/commands`、`src/runtime`
+- `src/bootstrap` 仅可依赖 `packages/core` 及其下层（即 `packages/utils`、`packages/protocol`）；不得依赖 `src/gateway`、`src/commands`、`src/runtime`
 - `src/gateway` 不得依赖 `src/bootstrap` 的配置文件
 - `src/gateway` 不得依赖客户端实现（src/cli、src/tui、apps/*、ui/）
+- `src/runtime` 作为编排层，可依赖 `src/gateway`、`src/bootstrap`、`src/commands`、`src/cli`、`src/tui`、`extensions/*`；但 `src/gateway` 和 `src/bootstrap` 不得反向依赖 `src/runtime`，且 `src/runtime` 内部不得形成循环依赖
 
 ### 3. Clients 隔离规则
 

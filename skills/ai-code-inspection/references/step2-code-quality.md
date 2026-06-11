@@ -10,6 +10,7 @@
 - 不要静默吞掉 API、SDK、filesystem 或外部 IO 失败；错误应向上传递或显式处理。
 - `tsconfig.json` 已开启 `strict: true`，范围内代码不得使用 `any` 类型。
 - 已有 union/interface/type 时，不要把窄契约放宽成 `unknown` 或无类型 object。
+  `as unknown as` 双写用于可选动态导入（optional dependency 的 `import()`）或 union 类型安全 narrowed 时，视为合理例外，不标记为放宽契约。
 - async loading/error 状态在成功和失败路径都应复位。
 - 对可能为 `null` / `undefined` / 空数组的数据，先做保护再访问集合方法或深层属性。
 - 校验和 normalization 应靠近输入边界。
@@ -46,12 +47,12 @@
 
 当 src/gateway/ 文件在范围内时执行：
 
-- service 负责业务编排，不直接处理 transport 细节。
-- repository/provider 负责 data access 和外部 IO 边界。
-- controller/handler 只处理 route、params、body 和 auth。
-- invalid ID、missing record、unauthorized 应使用一致的错误处理策略。
-- 不要把内部 persistence shape 泄漏到 public API response。
-- session/memory/storage 的边界应清晰。
+- 业务逻辑按职责分散在对应子目录的 service 文件中（如 `session-service.ts`），不混淆 transport 细节。
+- store（如 `session-store.ts`、`session-event-store.ts`）负责数据读写和持久化边界。
+- handler（如 `http-server.ts`）只处理 route、params、body 和响应。
+- invalid ID、missing record、unauthorized 应使用一致的 error 类型或 domain error。
+- 不要把内部 store 或 persistence shape 泄漏到 public API response。
+- session/memory/storage/team 的边界应清晰。
 
 ## Extension 检查
 
