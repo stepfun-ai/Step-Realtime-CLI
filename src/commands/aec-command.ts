@@ -125,6 +125,14 @@ async function reportAecStatus(
   ];
   if (chrome) {
     lines.push(`Chrome helper: found (${chrome})`);
+  } else if (os.platform() === "win32") {
+    lines.push(
+      "Chrome helper: NOT found — Windows voice mode requires BrowserAudioDriver.",
+      "  Install Chrome/Chromium, then re-run `step aec status`:",
+      ...chromeInstallHint().map((l) => `    ${l}`),
+      "  Or point STEP_CHROME_PATH at an existing binary:",
+      "    $env:STEP_CHROME_PATH = 'C:\\Path\\To\\chrome.exe'",
+    );
   } else {
     lines.push(
       "Chrome helper: NOT found — AEC cannot run, will fall back to sox (no echo cancellation).",

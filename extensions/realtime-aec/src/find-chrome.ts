@@ -22,16 +22,49 @@ const CANDIDATES: Record<string, string[]> = {
   win32: [
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   ],
 };
+
+export function getChromeCandidates(
+  targetPlatform: NodeJS.Platform | string = platform(),
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const candidates = [...(CANDIDATES[targetPlatform] ?? [])];
+  if (targetPlatform === "win32") {
+    const programFiles = env.ProgramFiles;
+    const programFilesX86 = env["ProgramFiles(x86)"];
+    const localAppData = env.LOCALAPPDATA;
+
+    if (programFiles) {
+      candidates.push(
+        `${programFiles}\\Google\\Chrome\\Application\\chrome.exe`,
+        `${programFiles}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      );
+    }
+    if (programFilesX86) {
+      candidates.push(
+        `${programFilesX86}\\Google\\Chrome\\Application\\chrome.exe`,
+        `${programFilesX86}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      );
+    }
+    if (localAppData) {
+      candidates.push(
+        `${localAppData}\\Google\\Chrome\\Application\\chrome.exe`,
+        `${localAppData}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      );
+    }
+  }
+  return [...new Set(candidates)];
+}
 
 /** Resolve a Chrome/Chromium executable path, or undefined if none found.
  *  Honors CHROME_PATH / STEP_CHROME_PATH overrides first. */
 export function findChrome(): string | undefined {
   const envPath = process.env.STEP_CHROME_PATH || process.env.CHROME_PATH;
   if (envPath && fs.existsSync(envPath)) return envPath;
-  const list = CANDIDATES[platform()] ?? [];
+  const list = getChromeCandidates();
   for (const p of list) {
     if (fs.existsSync(p)) return p;
   }

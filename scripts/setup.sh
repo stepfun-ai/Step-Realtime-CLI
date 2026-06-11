@@ -5,8 +5,8 @@
 #   3) Silero VAD   (avr-vad + onnxruntime-node, then write voice.defaults.vad=silero)
 #   4) AEC          (ensure Chrome/Chromium is available, then write voice.defaults.aec=true)
 #   5) Build        (pnpm build — workspace bundle in dist/)
-#   6) Build binary (pnpm build:bin — bun-compile dist/bin/step)
-#   7) Install      (copy binary + runtime tree to ~/.step-cli/bin/; append PATH block to shell rc)
+#   6) Launcher     (native binary when Bun exists; otherwise Node launcher)
+#   7) Install      (copy launcher + runtime tree to ~/.step-cli/bin/; append PATH block to shell rc)
 #
 # After this finishes you only need to fill in the two apiKey placeholders
 # in ~/.step-cli/config.json (model.apiKey and voice.realtime.apiKey),
@@ -18,7 +18,7 @@
 #   pnpm init:all                                 # equivalent, if pnpm is already on PATH
 #   bash scripts/setup.sh --skip-chrome-install   # don't auto brew-install Chrome
 #   bash scripts/setup.sh --skip-install          # skip the pnpm install step
-#   bash scripts/setup.sh --skip-build            # skip pnpm build + build:bin (reuse existing dist/bin/step)
+#   bash scripts/setup.sh --skip-build            # skip build (reuse existing dist/ or dist/bin/step)
 #   bash scripts/setup.sh --force-config          # overwrite existing config.json
 #   bash scripts/setup.sh --uninstall             # delegate to scripts/uninstall.sh and exit
 #   STEP_CHROME_PATH=/path/to/chrome bash scripts/setup.sh   # use an existing Chrome binary
@@ -56,6 +56,7 @@ info() { printf "  %s\n" "$*"; }
 ok()   { printf "  \033[32m✓ %s\033[0m\n" "$*"; }
 warn() { printf "  \033[33m! %s\033[0m\n" "$*"; }
 err()  { printf "  \033[31m✗ %s\033[0m\n" "$*"; }
+step_cli() { node scripts/run-step.mjs --stale-only "$@"; }
 
 # ── 0. pre-flight ─────────────────────────────────────────────────────────
 # pnpm may be missing on a fresh clone. Try to bootstrap it via corepack
@@ -94,9 +95,9 @@ if [[ -f "$USER_CONFIG" && "$FORCE_CONFIG" != 1 ]]; then
   ok "Config already exists at $USER_CONFIG (use --force-config to overwrite)"
 else
   if [[ "$FORCE_CONFIG" == 1 ]]; then
-    pnpm step config init --scope user --force
+    step_cli config init --scope user --force
   else
-    pnpm step config init --scope user
+    step_cli config init --scope user
   fi
   ok "Config written to $USER_CONFIG"
 fi
@@ -104,8 +105,8 @@ fi
 # ── 3. Silero VAD ─────────────────────────────────────────────────────────
 bold "[3/7] Silero VAD"
 pnpm setup:silero
-pnpm step vad set silero
-pnpm step vad status
+step_cli vad set silero
+step_cli vad status
 ok "Silero enabled (voice.defaults.vad = silero)"
 
 # ── 4. AEC (echo cancellation via headless Chrome) ────────────────────────
@@ -159,8 +160,8 @@ else
   esac
 fi
 
-pnpm step aec on
-pnpm step aec status
+step_cli aec on
+step_cli aec status
 ok "AEC enabled (voice.defaults.aec = true)"
 
 # ── 5. Build production bundle ────────────────────────────────────────────
@@ -172,17 +173,25 @@ else
   ok "dist/ built"
 fi
 
-# ── 6. Build binary ───────────────────────────────────────────────────────
-bold "[6/7] Building bun-compiled binary (dist/bin/step)"
+# ── 6. Prepare launcher ───────────────────────────────────────────────────
+bold "[6/7] Preparing CLI launcher"
+INSTALL_NATIVE_BINARY=0
 if [[ "$SKIP_BUILD" == 1 ]]; then
-  warn "Skipped (--skip-build). Will reuse existing dist/bin/step."
-  if [[ ! -x "dist/bin/step" ]]; then
-    err "No existing dist/bin/step found; cannot continue with --skip-build."
+  warn "Skipped (--skip-build). Will reuse existing dist/."
+  if [[ ! -f "dist/index.js" && ! -x "dist/bin/step" ]]; then
+    err "No existing dist/index.js or dist/bin/step found; cannot continue with --skip-build."
     exit 1
   fi
-else
+  if [[ -x "dist/bin/step" ]]; then
+    INSTALL_NATIVE_BINARY=1
+  fi
+elif command -v "${STEP_BUN_BIN:-bun}" >/dev/null 2>&1; then
+  info "Bun found; building native binary (dist/bin/step)."
   pnpm build:bin
   ok "dist/bin/step built"
+  INSTALL_NATIVE_BINARY=1
+else
+  warn "Bun not found; installing a Node-based launcher instead of a native binary."
 fi
 
 # ── 7. Install to ~/.step-cli/bin/ + ensure PATH ──────────────────────────
@@ -191,10 +200,21 @@ bold "[7/7] Installing to \$HOME/.step-cli/bin/"
 INSTALL_DIR="${HOME}/.step-cli/bin"
 mkdir -p "$INSTALL_DIR"
 
-install -m 755 dist/bin/step "$INSTALL_DIR/step"
-ok "Installed binary: $INSTALL_DIR/step"
+if [[ "$INSTALL_NATIVE_BINARY" == 1 ]]; then
+  install -m 755 dist/bin/step "$INSTALL_DIR/step"
+  ok "Installed binary: $INSTALL_DIR/step"
+else
+  cat > "$INSTALL_DIR/step" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec node "$SCRIPT_DIR/bin/step-cli.js" "$@"
+SH
+  chmod 755 "$INSTALL_DIR/step"
+  ok "Installed Node launcher: $INSTALL_DIR/step"
+fi
 
-for d in dist packages extensions skills node_modules; do
+for d in package.json bin dist packages extensions skills node_modules; do
   if [[ ! -e "$d" ]]; then
     warn "Skipping missing source dir: $d"
     continue
@@ -202,7 +222,7 @@ for d in dist packages extensions skills node_modules; do
   rm -rf "$INSTALL_DIR/$d"
   cp -R "$d" "$INSTALL_DIR/$d"
 done
-ok "Runtime tree copied (dist, packages, extensions, skills, node_modules)"
+ok "Runtime tree copied (package.json, bin, dist, packages, extensions, skills, node_modules)"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   if command -v codesign >/dev/null 2>&1; then

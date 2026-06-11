@@ -27,7 +27,8 @@ export async function resolveStepCliEntrypoint(options = {}) {
   const stderr = options.stderr ?? process.stderr;
   const packageResolver = options.packageResolver ?? defaultPackageResolver;
   const sourceRoots = options.sourceRoots ?? DEFAULT_SOURCE_ROOTS;
-  const requiredDistEntries = options.requiredDistEntries ?? DEFAULT_DIST_ENTRIES;
+  const requiredDistEntries =
+    options.requiredDistEntries ?? DEFAULT_DIST_ENTRIES;
 
   const srcEntry = path.join(repoRoot, "src", "index.ts");
   const distEntry = path.join(repoRoot, "dist", "index.js");
@@ -35,10 +36,14 @@ export async function resolveStepCliEntrypoint(options = {}) {
   const tsxImportPath = resolvePackagePath("tsx", packageResolver);
   const tsxAvailable = tsxImportPath !== null;
   const distStatus = await readDistStatus(repoRoot, requiredDistEntries);
-  const newestSourceMtimeMs = await readNewestRootsMtimeMs(repoRoot, sourceRoots);
+  const newestSourceMtimeMs = await readNewestRootsMtimeMs(
+    repoRoot,
+    sourceRoots,
+  );
   const distStale =
     newestSourceMtimeMs !== null &&
-    (distStatus.newestMtimeMs === null || newestSourceMtimeMs > distStatus.newestMtimeMs);
+    (distStatus.newestMtimeMs === null ||
+      newestSourceMtimeMs > distStatus.newestMtimeMs);
 
   if (hasSourceEntry && (!distStatus.ready || distStale) && tsxAvailable) {
     if (distStale && distStatus.ready) {
@@ -55,7 +60,7 @@ export async function resolveStepCliEntrypoint(options = {}) {
       kind: "spawn-tsx",
       entryPath: srcEntry,
       command: process.execPath,
-      args: ["--import", tsxImportPath, srcEntry, ...argv],
+      args: ["--import", pathToFileURL(tsxImportPath).href, srcEntry, ...argv],
     };
   }
 
@@ -73,17 +78,21 @@ export async function resolveStepCliEntrypoint(options = {}) {
   }
 
   if (hasSourceEntry && tsxAvailable) {
-    stderr.write("step-cli: dist artifacts are unavailable; running src/index.ts via tsx\n");
+    stderr.write(
+      "step-cli: dist artifacts are unavailable; running src/index.ts via tsx\n",
+    );
     return {
       kind: "spawn-tsx",
       entryPath: srcEntry,
       command: process.execPath,
-      args: ["--import", tsxImportPath, srcEntry, ...argv],
+      args: ["--import", pathToFileURL(tsxImportPath).href, srcEntry, ...argv],
     };
   }
 
   const missingArtifacts =
-    distStatus.missingPaths.length > 0 ? ` Missing: ${distStatus.missingPaths.join(", ")}.` : "";
+    distStatus.missingPaths.length > 0
+      ? ` Missing: ${distStatus.missingPaths.join(", ")}.`
+      : "";
   throw new Error(
     `Unable to find a runnable entrypoint. Checked ${distEntry} and ${srcEntry}.${missingArtifacts} Install dev dependencies or run pnpm build.`,
   );
