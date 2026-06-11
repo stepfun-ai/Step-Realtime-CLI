@@ -107,7 +107,7 @@ Step Realtime CLI 采用分层 monorepo 架构，默认依赖方向如下：
 - `extensions/realtime-aec/`：基于 Chrome 的 AEC 适配
 - 其他第三方系统集成（IM / Email / storage / vector db / search backend 等）
 
-扩展目录只负责外部系统对接，不负责核心编排语义。realtime-\* 系列适配器统一依赖 `packages/realtime` 暴露的协议层。
+扩展目录只负责外部系统对接，不负责核心编排语义。realtime-* 系列适配器统一依赖 `packages/realtime` 暴露的协议层。
 
 ### `src/gateway/`
 
@@ -311,7 +311,7 @@ TUI / UI / CLI / Desktop 默认通过 `packages/sdk` 调用 gateway：
 - 新增 CLI 子命令注册：`src/commands/`
 - 新增本地 CLI / TUI 运行时装配：`src/runtime/`
 - 新增内置工具或技能：`skills/`
-- 新增第三方集成或通道（含 LLM / MCP / realtime-\* 适配）：`extensions/`
+- 新增第三方集成或通道（含 LLM / MCP / realtime-* 适配）：`extensions/`
 - 新增服务端宿主能力：`src/gateway/`
 - 新增默认 CLI 客户端实现：`src/cli/`
 - 新增界面与交互：`src/tui/`、`ui/`、`apps/*`

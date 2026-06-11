@@ -30,10 +30,10 @@
 
 StepFun 提供两个相互独立的站点，请按 API Key 的发放来源选择对应安装方式。两个站点的账号与密钥**不互通**。
 
-| 站点         | 控制台                        | API 域名                  | 安装脚本                         |
-| ------------ | ----------------------------- | ------------------------- | -------------------------------- |
-| 国内（默认） | https://platform.stepfun.com/ | `https://api.stepfun.com` | `bash scripts/setup.sh`          |
-| 海外         | https://platform.stepfun.ai/  | `https://api.stepfun.ai`  | `bash scripts/setup-overseas.sh` |
+| 站点 | 控制台 | API 域名 | 安装脚本 |
+| --- | --- | --- | --- |
+| 国内（默认） | https://platform.stepfun.com/ | `https://api.stepfun.com` | `bash scripts/setup.sh` |
+| 海外 | https://platform.stepfun.ai/ | `https://api.stepfun.ai` | `bash scripts/setup-overseas.sh` |
 
 `scripts/setup-overseas.sh` 会先复用 `scripts/setup.sh` 的全部流程，再把 `~/.step-cli/config.json` 中实时语音的 WebSocket 端点与 models-proxy 基础地址改写为 `api.stepfun.ai`。所有其他参数（`--skip-build`、`--force-config`、`--uninstall` 等）均会原样转发。
 

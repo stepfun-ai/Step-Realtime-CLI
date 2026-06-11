@@ -30,10 +30,10 @@
 
 StepFun operates two independent sites; pick the one that matches where your API key was issued. The two sites do **not** share accounts or keys.
 
-| Region                   | Console                       | API endpoint              | Installer                        |
-| ------------------------ | ----------------------------- | ------------------------- | -------------------------------- |
-| Mainland China (default) | https://platform.stepfun.com/ | `https://api.stepfun.com` | `bash scripts/setup.sh`          |
-| Overseas                 | https://platform.stepfun.ai/  | `https://api.stepfun.ai`  | `bash scripts/setup-overseas.sh` |
+| Region | Console | API endpoint | Installer |
+| --- | --- | --- | --- |
+| Mainland China (default) | https://platform.stepfun.com/ | `https://api.stepfun.com` | `bash scripts/setup.sh` |
+| Overseas | https://platform.stepfun.ai/ | `https://api.stepfun.ai` | `bash scripts/setup-overseas.sh` |
 
 `scripts/setup-overseas.sh` runs the same flow as `scripts/setup.sh` and then rewrites `~/.step-cli/config.json` so both the realtime WebSocket and the models-proxy base URL point at `api.stepfun.ai`. All other flags (`--skip-build`, `--force-config`, `--uninstall`, …) are forwarded verbatim.
 
