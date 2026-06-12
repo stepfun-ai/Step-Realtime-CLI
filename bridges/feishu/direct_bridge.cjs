@@ -128,25 +128,63 @@ function extractTextFromEnvelope(envelope) {
 // ── State store ────────────────────────────────────────────────────
 
 class StateStore {
-  constructor(stateDir) {
+  constructor(stateDir, options = {}) {
     this.stateDir = stateDir;
+    this.maxSessions = Number(options.maxSessions || 200);
+    this.maxProcessed = Number(options.maxProcessed || 1000);
     this.sessionsPath = path.join(stateDir, "sessions.json");
     this.processedPath = path.join(stateDir, "processed.json");
     this.sessions = readJsonFile(this.sessionsPath, {});
     this.processed = readJsonFile(this.processedPath, {});
+    this.pruneSessions();
+    this.pruneProcessed();
+    this.persist();
   }
+
+  persist() {
+    writeJsonFile(this.sessionsPath, this.sessions);
+    writeJsonFile(this.processedPath, this.processed);
+  }
+
   getSession(key) { return this.sessions[key]; }
   ensureSession(key) {
     if (!this.sessions[key]) {
       this.sessions[key] = crypto.randomUUID();
-      writeJsonFile(this.sessionsPath, this.sessions);
+      this.pruneSessions();
+      this.persist();
     }
     return this.sessions[key];
   }
   hasProcessed(messageId) { return Boolean(this.processed[messageId]); }
   markProcessed(messageId) {
     this.processed[messageId] = new Date().toISOString();
-    writeJsonFile(this.processedPath, this.processed);
+    this.pruneProcessed();
+    this.persist();
+  }
+
+  pruneSessions() {
+    if (!Number.isFinite(this.maxSessions) || this.maxSessions <= 0) return;
+    const entries = Object.entries(this.sessions);
+    if (entries.length <= this.maxSessions) return;
+    const keep = entries
+      .sort((a, b) => String(b[1] || "").localeCompare(String(a[1] || "")))
+      .slice(0, this.maxSessions);
+    this.sessions = Object.fromEntries(keep);
+  }
+
+  pruneProcessed() {
+    if (!Number.isFinite(this.maxProcessed) || this.maxProcessed <= 0) return;
+    const entries = Object.entries(this.processed);
+    if (entries.length <= this.maxProcessed) return;
+    const keep = entries
+      .map((e, i) => ({ e, i }))
+      .sort((a, b) => {
+        const t = String(b.e[1] || "").localeCompare(String(a.e[1] || ""));
+        return t !== 0 ? t : b.i - a.i;
+      })
+      .slice(0, this.maxProcessed)
+      .map((item) => item.e);
+    this.processed = Object.fromEntries(keep);
   }
 }
 
@@ -166,6 +204,8 @@ class BridgeConfig {
     this.workdir = normalizeString(process.env.STEP_FEISHU_WORKDIR) || process.cwd();
     this.stateDir = normalizeString(process.env.STEP_FEISHU_STATE_DIR) || path.join(ROOT, "state");
     this.requestTimeoutMs = Number(process.env.STEP_FEISHU_TIMEOUT_MS || 180000);
+    this.maxSessions = Number(process.env.STEP_FEISHU_MAX_SESSIONS || 200);
+    this.maxProcessed = Number(process.env.STEP_FEISHU_MAX_PROCESSED || 1000);
     this.larkCli = normalizeString(process.env.STEP_FEISHU_LARK_CLI) || "lark-cli";
     this.stepServeUrl = normalizeString(process.env.STEP_SERVE_URL) || STEP_SERVE_URL;
 
@@ -173,6 +213,7 @@ class BridgeConfig {
     this.appId = normalizeString(process.env.STEP_FEISHU_APP_ID);
     this.appSecret = process.env.STEP_FEISHU_APP_SECRET;
     this.domain = normalizeString(process.env.STEP_FEISHU_DOMAIN) || "feishu";
+    this.forwardSecret = normalizeString(process.env.STEP_FEISHU_FORWARD_SECRET) || "";
 
     this.botName = normalizeString(account.botName) || "Step CLI";
     this.dmPolicy = normalizeString(account.dmPolicy || feishu.dmPolicy) || "allowlist";
@@ -344,7 +385,10 @@ class StepBridge {
 class DirectBridgeService {
   constructor(cfg) {
     this.cfg = cfg;
-    this.state = new StateStore(cfg.stateDir);
+    this.state = new StateStore(cfg.stateDir, {
+      maxSessions: cfg.maxSessions,
+      maxProcessed: cfg.maxProcessed,
+    });
     this.step = new StepBridge(cfg);
     this.larkCliProcess = null;
     this.larkCliBuffer = "";
@@ -356,6 +400,7 @@ class DirectBridgeService {
     this.lastEventAt = null;
     this.lastLiveIngressAt = null;
     this.shuttingDown = false;
+    this.inFlightMessages = new Set();
     this.botOpenId = "";
     this.larkClient = null;
     this.wsClient = null;
@@ -381,6 +426,23 @@ class DirectBridgeService {
         return;
       }
       if (req.method === "POST" && req.url === "/forward") {
+        // Accept only from localhost or matching shared secret
+        const remote = req.socket.remoteAddress || "";
+        const isLoopback = remote.startsWith("127.") || remote.startsWith("::1") || remote.startsWith("::ffff:127.");
+        if (!isLoopback) {
+          if (self.cfg.forwardSecret) {
+            const secret = req.headers["x-forward-secret"] || "";
+            if (secret !== self.cfg.forwardSecret) {
+              res.writeHead(403, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok: false, error: "forbidden" }));
+              return;
+            }
+          } else {
+            res.writeHead(403, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "forbidden: localhost only" }));
+            return;
+          }
+        }
         try {
           const body = await readJsonBodyHttp(req);
           const envelope = buildLarkCliEventEnvelope(body);
@@ -609,7 +671,7 @@ class DirectBridgeService {
       return null;
     }
 
-    const tmpDir = "/tmp/feishu-audio";
+    const tmpDir = path.join(os.tmpdir(), "feishu-audio");
     fs.mkdirSync(tmpDir, { recursive: true });
     const ext = path.extname(fileKey) || ".ogg";
     const outputPath = path.join(tmpDir, `${messageId}${ext}`);
@@ -671,14 +733,18 @@ class DirectBridgeService {
       if (!messageId || !senderId) {
         return { accepted: false, discardReason: "missing_fields" };
       }
-      if (this.cfg.dmPolicy === "allowlist" && !this.cfg.allowFrom.includes(senderId)) {
-        return { accepted: false, discardReason: "sender_not_allowed" };
+      if (this.inFlightMessages.has(messageId)) {
+        return { accepted: true, processed: false, duplicate: true };
       }
       if (this.state.hasProcessed(messageId)) {
         return { accepted: true, processed: false, duplicate: true };
       }
+      if (this.cfg.dmPolicy === "allowlist" && !this.cfg.allowFrom.includes(senderId)) {
+        return { accepted: false, discardReason: "sender_not_allowed" };
+      }
 
       this.lastEventAt = new Date().toISOString();
+      this.inFlightMessages.add(messageId);
       log("info", "received audio message", { messageId, senderId });
 
       try {
@@ -751,6 +817,8 @@ class DirectBridgeService {
           });
         } catch {}
         return { accepted: true, processed: false, error: String(error) };
+      } finally {
+        this.inFlightMessages.delete(messageId);
       }
     }
 
@@ -764,6 +832,9 @@ class DirectBridgeService {
     if (this.cfg.dmPolicy === "allowlist" && !this.cfg.allowFrom.includes(senderId)) {
       return { accepted: false, discardReason: "sender_not_allowed" };
     }
+    if (this.inFlightMessages.has(messageId)) {
+      return { accepted: true, processed: false, duplicate: true };
+    }
     if (this.state.hasProcessed(messageId)) {
       return { accepted: true, processed: false, duplicate: true };
     }
@@ -773,6 +844,7 @@ class DirectBridgeService {
     const sessionId = existingSessionId || this.state.ensureSession(sessionKey);
 
     this.lastEventAt = new Date().toISOString();
+    this.inFlightMessages.add(messageId);
     log("info", "received feishu message", {
       messageId, chatType, senderId, sessionKey,
       textPreview: previewText(text),
@@ -816,6 +888,8 @@ class DirectBridgeService {
         });
       } catch {}
       return this.lastMessageSummary;
+    } finally {
+      this.inFlightMessages.delete(messageId);
     }
   }
 
@@ -826,6 +900,20 @@ class DirectBridgeService {
 }
 
 // ── Main ───────────────────────────────────────────────────────────
+
+async function shutdown(service) {
+  if (service.shuttingDown) return;
+  service.shuttingDown = true;
+  log("info", "shutting down");
+  try {
+    // Flush in-memory state to disk before exit
+    service.state.persist();
+    service.lastEventAt = new Date().toISOString();
+  } catch (error) {
+    log("warn", "state flush during shutdown failed", { error: String(error) });
+  }
+  process.exit(0);
+}
 
 async function main() {
   const cfg = new BridgeConfig();
@@ -840,8 +928,8 @@ async function main() {
     log("warn", "Set via env or use lark-cli pipe forwarder (see README).");
   }
 
-  process.on("SIGINT", () => { service.shuttingDown = true; process.exit(0); });
-  process.on("SIGTERM", () => { service.shuttingDown = true; process.exit(0); });
+  process.on("SIGINT", () => { void shutdown(service); });
+  process.on("SIGTERM", () => { void shutdown(service); });
   await service.start();
 }
 

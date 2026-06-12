@@ -5,8 +5,8 @@
 set -euo pipefail
 
 BRIDGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$BRIDGE_ROOT/scripts/com.rsaga.step-feishu-forwarder.plist"
-DST="$HOME/Library/LaunchAgents/com.rsaga.step-feishu-forwarder.plist"
+SRC="$BRIDGE_ROOT/scripts/com.step-cli.feishu-forwarder.plist"
+DST="$HOME/Library/LaunchAgents/com.step-cli.feishu-forwarder.plist"
 
 echo "=== Install step-feishu-bridge launchd service ==="
 echo "  Source: $SRC"
@@ -19,7 +19,7 @@ if [ ! -f "$SRC" ]; then
 fi
 
 # Stop existing service if running
-if launchctl list com.rsaga.step-feishu-forwarder &>/dev/null 2>&1; then
+if launchctl list com.step-cli.feishu-forwarder &>/dev/null 2>&1; then
   echo "Unloading existing service..."
   launchctl unload "$DST" 2>/dev/null || true
 fi
@@ -36,6 +36,6 @@ echo "Loading service..."
 launchctl load "$DST"
 
 echo ""
-echo "Done! Service installed as com.rsaga.step-feishu-forwarder"
-echo "Check status: launchctl list com.rsaga.step-feishu-forwarder"
+echo "Done! Service installed as com.step-cli.feishu-forwarder"
+echo "Check status: launchctl list com.step-cli.feishu-forwarder"
 echo "View logs: tail -f $BRIDGE_ROOT/logs/forwarder.out.log"
