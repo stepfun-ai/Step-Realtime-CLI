@@ -90,7 +90,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
     return [
       ...this.sessionEntries,
       ...this.localEntries.map(stripLocalTranscriptEntry),
-    ];
+    ].filter((entry) => !entry.hidden);
   }
 
   subscribe(
@@ -900,6 +900,7 @@ function mapChatMessageToTranscriptEntry(
         role: "system",
         caption: null,
         content: message.content,
+        hidden: message.hidden,
       };
   }
 }
