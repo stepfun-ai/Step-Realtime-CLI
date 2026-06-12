@@ -3,6 +3,7 @@
 import path from "node:path";
 import {
   decodePasteBytes,
+  type SyntaxStyle,
   type KeyEvent,
   type PasteEvent,
   type ScrollAcceleration,
@@ -43,8 +44,14 @@ import {
   type StepCliTuiThemeColors,
   type StepCliTuiThemeName,
 } from "./theme.js";
-import { compactToolTranscriptContent } from "./transcript-preview.js";
 import { buildTranscriptClipboardText } from "./transcript-export.js";
+import {
+  buildTranscriptItems,
+  sliceByDisplayWidth,
+  wrapMultiline,
+  type TranscriptItem,
+} from "./transcript-items.js";
+import { buildSyntaxStyleFromTheme } from "./transcript-syntax-style.js";
 import type {
   StepCliTuiComposerState,
   StepCliTuiComposerHistoryState,
@@ -773,6 +780,10 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
     () => buildTranscriptItems(transcriptEntries, transcriptWidth, theme),
     [theme, transcriptEntries, transcriptWidth],
   );
+  const transcriptSyntaxStyle = useMemo(
+    () => buildSyntaxStyleFromTheme(theme),
+    [theme],
+  );
 
   return (
     <box
@@ -790,6 +801,7 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
           scrollAcceleration={transcriptScrollAcceleration}
           summary={summaryText}
           theme={theme}
+          syntaxStyle={transcriptSyntaxStyle}
           width={transcriptWidth}
         />
       </box>
@@ -1449,6 +1461,7 @@ const TranscriptPane = React.memo(function TranscriptPane(input: {
   scrollAcceleration: ScrollAcceleration;
   summary: string;
   theme: StepCliTuiThemeColors;
+  syntaxStyle: SyntaxStyle;
   width: number;
 }) {
   const allSummaryLines = input.summary.length
@@ -1507,7 +1520,12 @@ const TranscriptPane = React.memo(function TranscriptPane(input: {
       ) : null}
       <box flexDirection="column">
         {input.items.map((item) => (
-          <TranscriptEntry key={item.id} item={item} theme={input.theme} />
+          <TranscriptEntry
+            key={item.id}
+            item={item}
+            theme={input.theme}
+            syntaxStyle={input.syntaxStyle}
+          />
         ))}
       </box>
     </scrollbox>
@@ -1517,12 +1535,47 @@ const TranscriptPane = React.memo(function TranscriptPane(input: {
 const TranscriptEntry = React.memo(function TranscriptEntry(input: {
   item: TranscriptItem;
   theme: StepCliTuiThemeColors;
+  syntaxStyle: SyntaxStyle;
 }) {
   const { item } = input;
+  const badgeStyle = resolveTranscriptBadgeStyle(item.tone, input.theme);
+
+  const badgeLine = (
+    <text fg={input.theme.foreground}>
+      <span bg={badgeStyle.backgroundColor} fg={badgeStyle.textColor}>
+        {" "}
+        {item.badge}{" "}
+      </span>
+      {item.caption ? (
+        <span fg={input.theme.muted}> {item.caption}</span>
+      ) : null}
+    </text>
+  );
+
   const [firstLine = "", ...restLines] =
     item.lines.length > 0 ? item.lines : [""];
-  const badgeStyle = resolveTranscriptBadgeStyle(item.tone, input.theme);
-  const body = (
+
+  const body = item.useMarkdown ? (
+    <>
+      {badgeLine}
+      {item.content.length > 0 ? (
+        <box marginLeft={2}>
+          <markdown
+            content={item.content}
+            syntaxStyle={input.syntaxStyle}
+            fg={input.theme.foreground}
+            streaming={false}
+            tableOptions={{
+              widthMode: "content",
+              borders: true,
+              borderColor: input.theme.line,
+              wrapMode: "word",
+            }}
+          />
+        </box>
+      ) : null}
+    </>
+  ) : (
     <>
       <text fg={input.theme.foreground}>
         <span bg={badgeStyle.backgroundColor} fg={badgeStyle.textColor}>
@@ -1907,51 +1960,6 @@ function SlashCommandPalette(input: {
   );
 }
 
-function buildTranscriptItems(
-  entries: StepCliTuiTranscriptEntry[],
-  width: number,
-  theme: StepCliTuiThemeColors,
-): TranscriptItem[] {
-  return [
-    buildWelcomeTranscriptItem(width),
-    ...entries.map((entry, index) => {
-      const identity = resolveTranscriptIdentity(entry);
-      const body = compactToolTranscriptContent(entry);
-      const lines = wrapMultiline(body, Math.max(12, width - 4));
-      return {
-        id:
-          entry.id ||
-          `message:${index}:${identity.badge}:${identity.caption ?? ""}`,
-        ...identity,
-        backgroundColor: resolveTranscriptBackground(entry, theme),
-        border: false,
-        lines,
-        truncated: false,
-      };
-    }),
-  ];
-}
-
-function buildWelcomeTranscriptItem(width: number): TranscriptItem {
-  const welcomeLines = [
-    "Welcome to STEP.",
-    "Start with a prompt, or use /attach to queue an image.",
-    "Enter send · Shift+Enter newline · Ctrl+Y or /copy copy selection/full transcript · Esc quit",
-    "/goal /attach /copy /detach /status /refresh /theme [name] /resume <session_id> /exit",
-  ].flatMap((line) => wrapMultiline(line, Math.max(12, width - 4)));
-
-  return {
-    id: "welcome",
-    badge: "STEP",
-    caption: "welcome",
-    tone: "brand",
-    lines: welcomeLines,
-    truncated: false,
-    backgroundColor: null,
-    border: true,
-  };
-}
-
 function buildQueuedTurnPreviewLines(
   input: StepCliTuiQueuedTurnEntry["input"],
   width: number,
@@ -2067,44 +2075,6 @@ function applySlashCommandSelection(
   };
 }
 
-function resolveTranscriptIdentity(
-  entry: StepCliTuiTranscriptEntry,
-): Pick<TranscriptItem, "badge" | "caption" | "tone"> {
-  switch (entry.role) {
-    case "assistant":
-      return {
-        badge: "STEP",
-        caption: entry.caption,
-        tone: "brand",
-      };
-    case "user":
-      return {
-        badge: "YOU",
-        caption: entry.caption,
-        tone: "accent",
-      };
-    case "tool":
-      return {
-        badge: "TOOL",
-        caption: entry.caption,
-        tone: "success",
-      };
-    case "system":
-      return {
-        badge: "SYSTEM",
-        caption: entry.caption,
-        tone: "muted",
-      };
-  }
-}
-
-function resolveTranscriptBackground(
-  entry: StepCliTuiTranscriptEntry,
-  theme: StepCliTuiThemeColors,
-): string | null {
-  return entry.role === "user" ? theme.inputBackground : null;
-}
-
 function resolveTranscriptBadgeStyle(
   tone: StepCliTuiTone,
   theme: StepCliTuiThemeColors,
@@ -2186,26 +2156,6 @@ function resolveComposerEditorMaxHeight(terminalHeight: number): number {
   );
 }
 
-function wrapMultiline(text: string, width: number): string[] {
-  const lines: string[] = [];
-  for (const rawLine of text.split("\n")) {
-    if (rawLine.length === 0) {
-      lines.push("");
-      continue;
-    }
-
-    let remaining = rawLine;
-    while (visibleLength(remaining) > width) {
-      const line = sliceByDisplayWidth(remaining, width);
-      lines.push(line);
-      remaining = remaining.slice(line.length);
-    }
-    lines.push(remaining);
-  }
-
-  return lines;
-}
-
 function truncateInline(value: string, maxWidth: number): string {
   const singleLine = value.replace(/\s+/g, " ").trim();
   if (visibleLength(singleLine) <= maxWidth) {
@@ -2213,22 +2163,6 @@ function truncateInline(value: string, maxWidth: number): string {
   }
 
   return `${sliceByDisplayWidth(singleLine, Math.max(1, maxWidth - 1))}…`;
-}
-
-function sliceByDisplayWidth(value: string, width: number): string {
-  if (visibleLength(value) <= width) {
-    return value;
-  }
-
-  let end = 0;
-  for (const symbol of value) {
-    if (visibleLength(value.slice(0, end + symbol.length)) > width) {
-      break;
-    }
-    end += symbol.length;
-  }
-
-  return value.slice(0, Math.max(1, end));
 }
 
 function truncatePath(value: string, maxWidth: number): string {
@@ -2306,17 +2240,6 @@ function cloneComposerState(
   composer: StepCliTuiComposerState,
 ): StepCliTuiComposerState {
   return normalizeComposerState(composer);
-}
-
-interface TranscriptItem {
-  id: string;
-  badge: string;
-  caption: string | null;
-  tone: StepCliTuiTone;
-  backgroundColor: string | null;
-  border: boolean;
-  lines: string[];
-  truncated: boolean;
 }
 
 interface SlashPaletteState {
