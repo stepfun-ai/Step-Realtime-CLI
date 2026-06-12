@@ -356,8 +356,12 @@ export class ConversationMemory {
     this.invalidateContextAssemblyForTranscriptMutation();
   }
 
-  addSystem(content: string): void {
-    this.messages.push({ role: "system", content });
+  addSystem(content: string, options?: { hidden?: boolean }): void {
+    this.messages.push({
+      role: "system",
+      content,
+      ...(options?.hidden ? { hidden: true } : undefined),
+    });
     this.invalidateContextAssemblyForTranscriptMutation();
     const normalized = shortenLine(content, this.config.decisionEntryMaxChars);
     if (normalized.length > 0) {
@@ -2048,6 +2052,7 @@ function cloneChatMessage(message: ChatMessage): ChatMessage {
     return {
       role: "system",
       content: message.content,
+      ...(message.hidden ? { hidden: true } : undefined),
     };
   }
 

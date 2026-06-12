@@ -33,6 +33,8 @@ export interface PluginUserMessage {
 export type PluginInjectedMessage = {
   role: "system" | "user";
   content: string;
+  /** When true, the message is only for the model context and should not be rendered in the UI. */
+  hidden?: boolean;
 };
 
 export interface PluginHookContext {
