@@ -39,6 +39,8 @@ export interface JsonSchema {
 export interface SystemMessage {
   role: "system";
   content: string;
+  /** Internal messages injected by plugins; should not be rendered in the UI. */
+  hidden?: boolean;
 }
 
 export type UserAttachmentSource =

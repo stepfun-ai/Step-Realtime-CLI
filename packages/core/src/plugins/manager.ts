@@ -211,6 +211,7 @@ export class PluginManager {
         injected.push({
           role: message.role,
           content: truncated.text,
+          ...(message.hidden ? { hidden: true } : undefined),
         });
       }
 

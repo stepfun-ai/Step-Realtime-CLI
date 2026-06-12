@@ -103,6 +103,7 @@ export function createSkillPlugin(
                 {
                   role: "system" as const,
                   content: renderInjectedSkills(injectedContents),
+                  hidden: true,
                 },
               ]
             : undefined;
