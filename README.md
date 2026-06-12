@@ -50,8 +50,6 @@ When AEC is disabled via `step aec off` (or falls back because Chrome is unavail
 - Linux: ALSA utilities `arecord` / `aplay`, typically provided by `alsa-utils` (e.g. `sudo apt install alsa-utils`)
 - Windows: no command-line audio fallback is used; keep browser audio enabled.
 
-On macOS, set `STEP_SOX_INPUT_DEVICE` or `STEP_SOX_OUTPUT_DEVICE` to pin explicit CoreAudio devices when Sox `-d` cannot select the desired input or output.
-
 ### One-shot install
 
 ```bash
