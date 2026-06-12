@@ -22,9 +22,18 @@
 
 ## README 检查
 
-- `README.md` 和 `README_CN.md` 应同步反映重要变更。
-- 新增的 package/extension/skill 应在 README 中有简要说明。
-- 构建命令和开发启动命令应与 package.json 实际脚本一致。
+> 本项目**暂不接收**对 `README.md`、`README_CN.md` 的修改。
+
+- 如果变更范围内包含 `README.md` 或 `README_CN.md` 的修改，报告为不符合 `AGENTS.md` 当前规则。
+- 不自动回退开发者改动；只有开发者明确要求修复时，才在声明范围内处理。
+- 其他文档（`docs/` 下的技术文档、配置文档注释等）按正常文档一致性规则检查。
+
+## .gitignore 检查
+
+> 本项目**暂不接收**对 `.gitignore` 的修改。
+
+- 如果变更范围内包含 `.gitignore` 的修改，报告为不符合 `AGENTS.md` 当前规则。
+- 不自动回退开发者改动；只有开发者明确要求修复时，才在声明范围内处理。
 
 ## 变更日志
 
@@ -34,4 +43,4 @@
 ## 配置文档
 
 - `.oxlintrc.json`、`knip.config.ts`、`.dependency-cruiser.cjs`、`tsconfig.json` 的变更应记录原因。
-- `project-environment-profile.md` 只在稳定环境事实变化时更新，不记录临时运行状态。
+- 稳定项目事实以 `AGENTS.md`、`package.json`、`tsconfig.json`、`.dependency-cruiser.cjs` 和相关 docs 为准；不要把每次检查记录写入稳定文档。

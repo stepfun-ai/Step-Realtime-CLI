@@ -1,3 +1,3 @@
 display_name: AI Code Inspection
 short_description: 日常代码检查（命名、质量、架构分层、测试、文档、注释、提交准备）
-default_prompt: 使用本 Skill 检查已修改的代码；先报告问题，只有开发者输入"继续"后才修复同一步问题；修复后执行验证，记录 runtime 状态，并保留 release/deploy 边界。本项目为 TypeScript monorepo，重点检查：路径别名使用、依赖方向分层（protocol → utils → core → agent-sdk → realtime → sdk → gateway → clients）、oxlint/tsc/dep-guard 验证通过。
+default_prompt: 使用本 Skill 检查已修改的代码；必须维护 inspection-runtime-state.md 的 Step 状态、验证结果、风险和 remediation_status。检查阶段先报告问题，只有当前 Step 存在 pending_user_continue 且开发者输入"继续"后才修复同一步问题；每次"继续"只消费一个 Runtime Gate。本项目为 TypeScript monorepo，架构事实以 AGENTS.md 和 .dependency-cruiser.cjs 为准，重点检查路径别名、依赖方向（packages/protocol <- packages/utils <- packages/core <- packages/agent-sdk <- packages/realtime <- src/gateway <- packages/sdk <- clients）、测试覆盖、文档一致性，以及 package.json 中 pnpm check 所覆盖的验证项。

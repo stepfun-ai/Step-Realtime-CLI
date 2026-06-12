@@ -33,16 +33,28 @@ git diff --cached --name-status
 
 ## 验证摘要
 
-使用 `../project-environment-profile.md` 中的命令。
+使用 `package.json` 中的项目原生命令。
 
 广义 TypeScript 源码变化时，执行以下验证（按优先级）：
 
-1. `pnpm lint` — oxlint 代码规范检查
-2. `pnpm exec tsc --noEmit` — TypeScript 类型检查
-3. `pnpm dep-guard` — 依赖方向检查（仅当变更涉及 import 时）
-4. `pnpm deadcode` — 死代码检测（轻量，建议执行）
-5. `pnpm format:check` — 代码格式检查
-6. `pnpm build:packages` — 包构建验证（变更影响包时）
+1. `pnpm check` — `AGENTS.md` 要求的提交前完整验证；实际子项以 `package.json` 当前脚本为准，当前覆盖 test、lint、dep-guard、deadcode、tsc 和 format:check。
+2. `pnpm test` — vitest 测试套件。
+3. `pnpm lint` — oxlint 代码规范检查。
+4. `pnpm dep-guard` — 依赖方向检查（仅当变更涉及 import 时仍建议单独执行）。
+5. `pnpm deadcode` — knip 死代码检测。
+6. `pnpm exec tsc --noEmit` — TypeScript 类型检查。
+7. `pnpm format:check` — 代码格式检查。
+8. `pnpm build:packages` — 包构建验证（变更影响包时）。
+
+UI、voice 或 service-facing 变更时，还需手动验证：
+- `pnpm step` — 启动 CLI 客户端
+- `pnpm gateway:watch` — 启动 gateway 服务
+- `pnpm tui:dev` — 启动 TUI 客户端
+- `pnpm ui:dev` — 启动 Web UI
+
+类型完整性：
+- 所有公开导出的函数、类、接口必须提供完整 TypeScript 类型定义，不得省略返回类型或参数类型。
+- `tsc --noEmit` 通过是基础前提，但需额外确认类型定义的完整性（不依赖隐式 `any` 推断）。
 
 范围较窄时，运行与变更区域匹配的验证命令即可。
 

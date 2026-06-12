@@ -5,7 +5,8 @@
 ## 测试框架
 
 - 测试框架统一使用 **vitest**，不得引入其他 runner。
-- 根 package.json 应配置 `test` script（如 `"test": "vitest"`）。
+- 根 `package.json` 的 `test` script 是权威测试入口。
+- coverage 配置和阈值以 `vitest.config.ts` 为准，不在本 reference 中硬编码。
 
 ## 通用覆盖检查
 
@@ -14,6 +15,7 @@
 - async 逻辑变化应覆盖 loading、success 和 failure 状态。
 - test mock 应贴近生产 interface/type。
 - 新增导出符号时，应考虑是否需要配套测试。
+- 平台相关代码（音频驱动、Chrome 查找等）应使用 `vi.skipIf` / `describe.runIf` 进行条件跳过，不得硬编码平台判断导致其他平台加载失败。
 
 ## UI (React) 覆盖检查
 
@@ -50,5 +52,6 @@
 ## 验证命令
 
 - 运行 `pnpm test` 执行 vitest 测试套件。
+- 需要 coverage 时运行 `pnpm test:coverage`，并按 `vitest.config.ts` 的当前阈值判断。
 - 如果测试文件新增或修改，确保测试通过。
 - TypeScript 类型检查 (`pnpm exec tsc --noEmit`) 不能替代测试，但类型通过是测试的基础前提。

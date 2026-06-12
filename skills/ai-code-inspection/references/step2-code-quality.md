@@ -17,6 +17,11 @@
 - ESM 模块中不得使用 CommonJS 模式（如 `require`、`module.exports`、`__dirname`）。
 - `node:` 前缀导入应优先于裸模块名导入（如 `node:fs` 而非 `fs`）。
 
+## 平台差异处理
+
+- Windows 语音模式必须使用 `BrowserAudioDriver`（Chrome / Edge / Chromium）；`SoxAudioDriver` 仅作为 macOS / Linux 的命令行音频 fallback，不得在 Windows 上回退到 `arecord` / `aplay` / `sox`。
+- Windows 脚本不得直接 `spawn("pnpm")`；需要从 Node 脚本调用 pnpm 时，统一使用 `scripts/package-manager-command.mjs` 解析命令和 Windows shim 包装。
+
 ## UI (React) 检查
 
 当 ui/ 文件在范围内时执行：

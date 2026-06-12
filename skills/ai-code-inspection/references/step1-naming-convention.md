@@ -4,7 +4,8 @@
 
 ## 输入
 
-- `../project-environment-profile.md`
+- `../project-environment-profile.md` 中的稳定环境事实。
+- `AGENTS.md`、`tsconfig.json`、`package.json` 中与命名、路径别名和目录职责相关的项目事实。
 - 已声明的检查边界。
 - 变更文件或范围内文件。
 - 所属目录中相邻的现有文件。
