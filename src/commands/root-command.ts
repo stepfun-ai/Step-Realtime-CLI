@@ -14,7 +14,7 @@ import { resolveStepCliRuntimeConfig } from "../runtime/runtime-config.js";
 import { createLocalCliClientApp } from "../runtime/local-cli-app.js";
 import {
   isOpenTuiEnabledInCurrentBuild,
-  loadOpenTuiClientAppFactoryAtRuntime,
+  resolveOpenTuiClientAppFactoryAtRuntime,
 } from "../runtime/open-tui-capability.js";
 
 // Keep this build flag in the command module so rolldown can fold the bundle's
@@ -92,15 +92,22 @@ export async function runRootCommand(argv: string[]): Promise<void> {
           interactionSurface: shouldUseTui ? "interactive" : undefined,
         });
         if (shouldUseTui) {
-          const createLocalTuiClientApp =
-            await loadOpenTuiClientAppFactoryAtRuntime();
-          const app = await createLocalTuiClientApp(stepCliConfig);
-          try {
-            await app.run();
-          } finally {
-            await app.close();
+          const openTuiRuntime =
+            await resolveOpenTuiClientAppFactoryAtRuntime();
+          if (openTuiRuntime.available) {
+            const app =
+              await openTuiRuntime.createLocalTuiClientApp(stepCliConfig);
+            try {
+              await app.run();
+            } finally {
+              await app.close();
+            }
+            return;
           }
-          return;
+
+          process.stderr.write(
+            `step-cli warning: OpenTUI runtime unavailable, falling back to the text CLI: ${openTuiRuntime.reason}\n`,
+          );
         }
 
         const app = await createLocalCliClientApp(stepCliConfig);

@@ -1,5 +1,19 @@
 import type { CreateLocalTuiClientApp } from "./local-tui-app.js";
 
+export interface OpenTuiRuntimeUnavailable {
+  available: false;
+  reason: string;
+}
+
+export interface OpenTuiRuntimeAvailable {
+  available: true;
+  createLocalTuiClientApp: CreateLocalTuiClientApp;
+}
+
+export type OpenTuiRuntimeResolution =
+  | OpenTuiRuntimeAvailable
+  | OpenTuiRuntimeUnavailable;
+
 export function parseOpenTuiEnabledValue(
   rawValue: string | undefined,
 ): boolean {
@@ -32,4 +46,27 @@ export async function loadOpenTuiClientAppFactoryAtRuntime(): Promise<CreateLoca
   }
 
   return runtimeModule.createLocalTuiClientApp;
+}
+
+export async function resolveOpenTuiClientAppFactoryAtRuntime(
+  loadRuntime: () => Promise<CreateLocalTuiClientApp> = loadOpenTuiClientAppFactoryAtRuntime,
+): Promise<OpenTuiRuntimeResolution> {
+  try {
+    return {
+      available: true,
+      createLocalTuiClientApp: await loadRuntime(),
+    };
+  } catch (error) {
+    return {
+      available: false,
+      reason: formatOpenTuiRuntimeUnavailableReason(error),
+    };
+  }
+}
+
+export function formatOpenTuiRuntimeUnavailableReason(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+  return String(error);
 }
