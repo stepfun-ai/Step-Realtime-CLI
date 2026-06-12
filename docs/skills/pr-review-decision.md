@@ -1,3 +1,4 @@
+
 # PR review & decision (maintainer-style)
 
 This skill handles the full path from "here's a PR" to "here's the doc, here's the comment to paste, here's the decision." Single PR is the common case. Multi-PR comparison is a branch this skill takes automatically when the inventory step finds overlap.
@@ -35,7 +36,6 @@ If main moved since the user last asked, **say so explicitly** before continuing
 ### Step 2 — PR inventory: never trust the framing of one
 
 Even when the user names one PR, there may be:
-
 - **Already-merged PRs** that ate the differentiator (e.g. the named PR brings test infra that's already on main from another PR)
 - **Other open PRs** solving the same problem (turning the question from review → routing)
 - **Recently-closed PRs** with a closing comment that sets precedent for the current decision
@@ -73,7 +73,7 @@ Extract and write down:
 
 - **mergeable / mergeStateStatus** — `CONFLICTING` is a blocker; `CLEAN` means the PR has been kept in shape; `BLOCKED` may mean failing required checks
 - **headRefOid + updatedAt** — note this; if you don't post the comment immediately, recheck before posting (PRs move)
-- **PR body's "Verification" or "Test plan" section** — what did the author actually run? On which OS? Against which code path? Distinguish _installed binary path_ from _dev launcher path_ — they're not the same
+- **PR body's "Verification" or "Test plan" section** — what did the author actually run? On which OS? Against which code path? Distinguish *installed binary path* from *dev launcher path* — they're not the same
 - **File list shape** — does it match the user's framing? A "Windows fix" that touches `package.json`'s cross-platform scripts is a cross-platform PR; flag it
 
 For each notable file, read the actual diff. Don't summarize from the file list alone — you'll miss the bug in line 4 of a 5-line diff.
@@ -92,19 +92,19 @@ What "architectural principles" looks like in practice — discover them before 
 
 - Read the repo's `README*.md`, `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md`, and any design docs under `docs/`. These usually state the intended architecture.
 - Skim recent merged PRs and their review discussions. Patterns the maintainers explicitly approved or rejected before are signals.
-- Look at how the area in question is currently structured. If audio uses `BrowserAudioDriver` for AEC, that _is_ the architecture — a PR that bypasses it has changed the architecture even if it doesn't say so.
+- Look at how the area in question is currently structured. If audio uses `BrowserAudioDriver` for AEC, that *is* the architecture — a PR that bypasses it has changed the architecture even if it doesn't say so.
 - Ask the user explicitly: "what are the load-bearing constraints I should not break?" if the codebase doesn't make them legible.
 
 Common patterns that count as architectural principles (the PR must respect, not redefine):
 
-| Principle category         | Example                                                                                      |
-| -------------------------- | -------------------------------------------------------------------------------------------- |
-| User-experience invariants | "Voice mode must work hands-free → AEC required → BrowserAudioDriver is the path"            |
-| Isolation boundaries       | "Platform-specific code is conditionally dispatched, not replacing the universal path"       |
-| Single source of truth     | "Config lives in `~/.step-cli/config.json`; no PR introduces a parallel config store"        |
-| Data-loss safety           | "Restore operations must fail loudly on missing input, never silently `warn` and continue"   |
-| Compatibility contract     | "Existing users on macOS keep working with their existing install command after the upgrade" |
-| Dependency-direction rules | "`packages/utils` cannot import from `packages/core`"                                        |
+| Principle category | Example |
+| --- | --- |
+| User-experience invariants | "Voice mode must work hands-free → AEC required → BrowserAudioDriver is the path" |
+| Isolation boundaries | "Platform-specific code is conditionally dispatched, not replacing the universal path" |
+| Single source of truth | "Config lives in `~/.step-cli/config.json`; no PR introduces a parallel config store" |
+| Data-loss safety | "Restore operations must fail loudly on missing input, never silently `warn` and continue" |
+| Compatibility contract | "Existing users on macOS keep working with their existing install command after the upgrade" |
+| Dependency-direction rules | "`packages/utils` cannot import from `packages/core`" |
 
 Red flags that usually indicate an architectural violation:
 
@@ -115,7 +115,7 @@ Red flags that usually indicate an architectural violation:
 - A new dependency or runtime is introduced (sox, ffmpeg, a new package manager) when the existing architecture already provides a way (browser audio, an existing dependency).
 - The PR description frames a route change as "support added," hiding that the previous route is now unused or deleted.
 
-When you spot one, name the principle being broken and explain _why_ it matters. Don't say "this is wrong" — say "the project's architecture relies on AEC being available without headphones via `BrowserAudioDriver`; this PR makes Windows users headphone-required, which changes the product's UX contract." Architecture violations are the single biggest reason a "well-written" PR gets closed; this is also the single largest source of contributor frustration if you don't articulate the reason cleanly.
+When you spot one, name the principle being broken and explain *why* it matters. Don't say "this is wrong" — say "the project's architecture relies on AEC being available without headphones via `BrowserAudioDriver`; this PR makes Windows users headphone-required, which changes the product's UX contract." Architecture violations are the single biggest reason a "well-written" PR gets closed; this is also the single largest source of contributor frustration if you don't articulate the reason cleanly.
 
 If two PRs solve the same problem with different architectural choices, pick the one that aligns with the existing principle. The other is closed (with the borrowables salvaged) — not merged in parallel and not "left for later." Architectural debt does not amortize; it compounds.
 
@@ -154,75 +154,60 @@ Output structure (target ~150–400 lines, longer is fine if the scope warrants)
 ```markdown
 # <repo> PR #X review & decision
 
-| Field         | Value                                                             |
-| ------------- | ----------------------------------------------------------------- |
-| Target branch | main (HEAD `<sha>`, was `<sha>` at draft time)                    |
-| Date          | YYYY-MM-DD                                                        |
-| Version       | v1 / v2 (bump when you re-review against new main or new PR HEAD) |
+| Field | Value |
+| --- | --- |
+| Target branch | main (HEAD `<sha>`, was `<sha>` at draft time) |
+| Date | YYYY-MM-DD |
+| Version | v1 / v2 (bump when you re-review against new main or new PR HEAD) |
 
 ## Revision notes (vN-1 → vN)
-
 What changed on main / on the PR since the last draft, and what conclusions shift as a result. Skip on v1.
 
 ## TL;DR
-
 - One paragraph stating the decision and the key reason
 - If multi-PR, a decision table: PR | decision | key reason | handling action
 
 ## PR #X review
-
 ### Architectural alignment (the dominant check)
-
 Name the architectural principle(s) at stake and answer yes/no whether the PR respects them. Quote the principle source if it lives in `README.md` / `AGENTS.md` / `CLAUDE.md` / `ARCHITECTURE.md` / a prior decision. If "no," explain which principle is broken, how, and why patching can't save it. This section is non-optional even when the answer is "yes" — say so explicitly so the user can verify the check happened.
 
 ### Mergeability
-
 Blockers (must fix) / Non-blockers (suggestions). Tag each as:
-
 - DONE (already met since draft) — strike through
 - BLOCKER — required before merge
 - NON-BLOCKER — nice to have
 
 ### Risk / trade-off table
-
 | Change | Scope | Risk | Mitigation |
 
 ### Review comment draft (paste-ready)
-
 #### 中文版
-
 > ...
-
 #### English
-
 > ...
 
 (if multi-PR: repeat the section for the other PR — even when the verdict is "close")
 
 ## Follow-up actions
-
 Time-ordered list with owner + dependency. Strike through items that completed automatically (e.g., "add macOS CI lane" if a third PR already added it).
 
 ## Merge sequence
-
 | Order | Action | Owner | Dependency |
 
 ## Appendix
-
 - main current state (key files, configs, CI workflows already on main) — useful for v2+ recheck
 - Per-PR key file paths, with one-line rationale
 - Critical bug snippets quoted with file:line
 - Hyperlinks: full URLs, never bare `#11`
 ```
 
-Use full markdown links for every PR / commit reference: `[PR #11](https://github.com/<org>/<repo>/pull/11)`, not `PR #11`. Same for table cells (`[#11](url)`) and English-prose mentions (`taken in [#12](url)`). To avoid nested-bracket bugs when running replace_all, scrub any pre-existing `[PR #11 - title](url)` style links to `[Pull request 11 — title](url)` _first_, then replace_all `PR #11` → linked form.
+Use full markdown links for every PR / commit reference: `[PR #11](https://github.com/<org>/<repo>/pull/11)`, not `PR #11`. Same for table cells (`[#11](url)`) and English-prose mentions (`taken in [#12](url)`). To avoid nested-bracket bugs when running replace_all, scrub any pre-existing `[PR #11 - title](url)` style links to `[Pull request 11 — title](url)` *first*, then replace_all `PR #11` → linked form.
 
 ### Step 6 — Bilingual comment drafting
 
 Both versions go in the doc, under `#### 中文版` / `#### English` subheaders. Write them as **co-drafts**, not translations.
 
 **Chinese-version pitfalls:**
-
 - Translation-ese: "落到 main 上" reads stiff; rewrite as "合入 main 之后引入的". Read each sentence out loud — if it sounds like an LLM, rewrite.
 - `*所有*` (markdown italic) often renders as plain text on GitHub Chinese. Use `**所有**` (bold) or quotes.
 - Long sentences with multiple parallel clauses should break with `。` and `——`, not `、` or `,` all the way through.
@@ -230,14 +215,12 @@ Both versions go in the doc, under `#### 中文版` / `#### English` subheaders.
 - Use `——` (Chinese em dash) not `--`.
 
 **English-version pitfalls:**
-
 - "Three small PRs" reads non-native. Prefer "three separate follow-up PRs" or "split into three PRs (one per item)".
 - Don't backtick-suffix function names (`` `warn`s ``); say "logs a warning" instead.
 - Em dash `—` (U+2014), not double-hyphen `--`.
 - Prefer maintainer verbs: "land," "ship," "follow-up." Avoid "submit," "kindly," "resubmit" (formal/translated tone).
 
 **Both versions:**
-
 - Open with one line of genuine acknowledgement of what the author actually got right (specific, from the diff — not generic praise).
 - Number the blockers. Each blocker = exactly one ask + the explicit acceptance criterion.
 - Close with a clear next step ("ping us on rebase," "open three follow-up PRs after #X lands"), not vague niceties.
@@ -249,7 +232,7 @@ Before reporting back to the user, run this checklist against your own draft. (I
 
 For each of the CN and EN drafts, ask:
 
-1. **Acknowledgement** — Does it open with a _specific_ thing the author got right (not generic "thanks for the work")?
+1. **Acknowledgement** — Does it open with a *specific* thing the author got right (not generic "thanks for the work")?
 2. **Blockers numbered** — Each blocker is exactly one ask, with an acceptance criterion the author can verify themselves before re-pinging?
 3. **Strength match across CN/EN** — Every "必须" has a matching "must"? Every "建议" has "we'd suggest" / "consider," not "must"?
 4. **No translation-ese in CN** — Read each sentence; rewrite anything that sounds like a literal translation of English syntax.
