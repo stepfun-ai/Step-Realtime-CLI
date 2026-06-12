@@ -77,6 +77,7 @@ interface TaskArgs {
   contextMode?: TaskContextMode;
   isolateWorkspace?: boolean;
   worktreeName?: string;
+  model?: string;
 }
 
 interface TaskReplyArgs {
@@ -806,6 +807,11 @@ function createAgentSwarmTool(
               items: { type: "string" },
               description: `Values to fill into prompt_template. Each item launches one subagent (max ${MAX_SWARM_SUBAGENTS}).`,
             },
+            subagent_model: {
+              type: "string",
+              description:
+                "Optional model override for all subagents in this swarm. Falls back to the main model when omitted.",
+            },
           },
         },
       },
@@ -879,6 +885,7 @@ function createAgentSwarmTool(
           {
             prompt,
             description: label,
+            model: args.subagent_model,
           },
           ctx.workspaceRoot,
           access.parent,
@@ -964,6 +971,7 @@ interface AgentSwarmArgs {
   description: string;
   prompt_template: string;
   items: string[];
+  subagent_model?: string;
 }
 
 function renderSwarmResults(
@@ -2659,6 +2667,7 @@ async function prepareSubagentHarness(input: {
   contextMode?: TaskContextMode;
   isolateWorkspace?: boolean;
   worktreeName?: string;
+  model?: string;
   mode: "sync" | "background";
   subtaskHooksFactory?: SubtaskHooksFactory;
 }): Promise<{
@@ -2716,6 +2725,7 @@ async function prepareSubagentHarness(input: {
     preset: input.preset,
     presetRegistry: input.presetRegistry,
     memoryState,
+    model: input.model,
     hooks:
       input.mode === "background"
         ? input.subtaskHooksFactory?.(input.label)

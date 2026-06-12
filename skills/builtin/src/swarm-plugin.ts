@@ -23,7 +23,7 @@ const SWARM_MODE_ENTER_REMINDER = [
   "",
   "2. After exploring, if you are convinced no subagent is needed to complete the task, tell the user why and wait for further instructions; otherwise, continue with the appropriate delegation.",
   "",
-  "3. Once you have enough context, do not handle the main work yourself. Use AgentSwarm with a `prompt_template` containing the `{{item}}` placeholder and an `items` array for the requested or appropriate number of subagents, partitioning the problem so each item gives one subagent a distinct part of the work. Pass `subagent_type` when the whole swarm should use a non-default subagent profile.",
+  "3. Once you have enough context, do not handle the main work yourself. Use AgentSwarm with a `prompt_template` containing the `{{item}}` placeholder and an `items` array for the requested or appropriate number of subagents, partitioning the problem so each item gives one subagent a distinct part of the work. Pass `subagent_model` when the swarm should use a different model than the default.",
   "",
   "## Coordination",
   "",
@@ -34,19 +34,11 @@ const SWARM_MODE_ENTER_REMINDER = [
   "- Unless the user explicitly specifies a lower limit, do not try to conserve the number of agents. AgentSwarm supports up to 128 subagents and queues launches automatically, so decompose work as finely as possible while keeping subagent responsibilities non-conflicting; combine tasks only when they are genuinely inseparable. If the subagents only need to read, inspect, or report back without making changes, their scopes may overlap slightly.",
 ].join("\n");
 
-export function createSwarmPlugin(): {
-  id: string;
-  description: string;
-  register: () => [];
-  hooks: {
-    beforeModelRequest: (context: PluginHookContext) => PluginHookResult | void;
-  };
-  getSwarmMode: () => SwarmModeState;
-} {
-  let active: SwarmModeTrigger | null = null;
-  const seenPrompts = new Set<string>();
+let active: SwarmModeTrigger | null = null;
+const seenPrompts = new Set<string>();
 
-  const getState = (): SwarmModeState => ({
+export function getSwarmMode(): SwarmModeState {
+  return {
     get isActive(): boolean {
       return active !== null;
     },
@@ -64,8 +56,18 @@ export function createSwarmPlugin(): {
       if (active === null) return;
       active = null;
     },
-  });
+  };
+}
 
+export function createSwarmPlugin(): {
+  id: string;
+  description: string;
+  register: () => [];
+  hooks: {
+    beforeModelRequest: (context: PluginHookContext) => PluginHookResult | void;
+  };
+  getSwarmMode: () => SwarmModeState;
+} {
   return {
     id: "swarm-plugin",
     description: "Swarm mode state machine and reminder injection",
@@ -93,6 +95,6 @@ export function createSwarmPlugin(): {
         };
       },
     },
-    getSwarmMode: getState,
+    getSwarmMode: getSwarmMode,
   };
 }

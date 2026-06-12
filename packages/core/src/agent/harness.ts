@@ -63,6 +63,7 @@ export interface AgentHarnessOptions {
   allowedTools?: string[];
   hooks?: AgentLoopOptions["hooks"];
   signal?: AbortSignal;
+  model?: string;
 }
 
 export interface AgentHarnessState {
@@ -450,7 +451,7 @@ export class AgentHarnessFactory {
     }
 
     const agent = new AgentLoop({
-      model: this.model,
+      model: options.model ?? this.model,
       client: this.client,
       memory,
       tools,
