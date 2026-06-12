@@ -3,7 +3,7 @@
 #   1) pnpm install (workspace deps, idempotent / fast if already installed)
 #   2) step config init (writes ~/.step-cli/config.json template if missing)
 #   3) Silero VAD   (avr-vad + onnxruntime-node, then write voice.defaults.vad=silero)
-#   4) AEC          (ensure Chrome/Chromium is available, then write voice.defaults.aec=true)
+#   4) AEC          (enable AEC if Chrome/Chromium is available; gracefully skip otherwise)
 #   5) Build        (pnpm build — workspace bundle in dist/)
 #   6) Launcher     (native binary when Bun exists; otherwise Node launcher)
 #   7) Install      (copy launcher + runtime tree to ~/.step-cli/bin/; append PATH block to shell rc)
@@ -16,7 +16,7 @@
 # Usage:
 #   bash scripts/setup.sh                         # works on a fresh clone, even without pnpm
 #   pnpm init:all                                 # equivalent, if pnpm is already on PATH
-#   bash scripts/setup.sh --skip-chrome-install   # don't auto brew-install Chrome
+#   bash scripts/setup.sh --skip-chrome-install   # don't auto brew-install Chrome (macOS only)
 #   bash scripts/setup.sh --skip-install          # skip the pnpm install step
 #   bash scripts/setup.sh --skip-build            # skip build (reuse existing dist/ or dist/bin/step)
 #   bash scripts/setup.sh --force-config          # overwrite existing config.json
@@ -128,41 +128,51 @@ detect_chrome() {
   return 1
 }
 
+AEC_AVAILABLE=0
 if detect_chrome; then
   ok "Chrome/Chromium found"
+  AEC_AVAILABLE=1
 else
-  warn "Chrome/Chromium not found — AEC needs it for libwebrtc APM"
+  warn "Chrome/Chromium not found — AEC will be disabled."
+  info "AEC requires Chrome/Chromium for libwebrtc APM."
+  info "To enable AEC later, install Chrome/Chromium and run: step aec on"
   case "$(uname -s)" in
     Darwin)
-      if [[ "$SKIP_CHROME_INSTALL" == 1 ]]; then
-        info "Skipping auto-install. Run:  brew install --cask google-chrome"
-        exit 1
+      if [[ "$SKIP_CHROME_INSTALL" != 1 ]]; then
+        if command -v brew >/dev/null 2>&1; then
+          info "Installing Google Chrome via Homebrew…"
+          brew install --cask google-chrome
+          if detect_chrome; then
+            ok "Chrome installed"
+            AEC_AVAILABLE=1
+          else
+            warn "Chrome install succeeded but binary not detected."
+          fi
+        else
+          info "Homebrew not found. Install Chrome manually:"
+          info "  brew install --cask google-chrome"
+        fi
+      else
+        info "Skipping auto-install (--skip-chrome-install). Run:"
+        info "  brew install --cask google-chrome"
       fi
-      if ! command -v brew >/dev/null 2>&1; then
-        err "Homebrew not found. Install brew from https://brew.sh, then re-run."
-        exit 1
-      fi
-      info "Installing Google Chrome via Homebrew…"
-      brew install --cask google-chrome
-      ok "Chrome installed"
       ;;
     Linux)
       info "Install Chrome/Chromium with your package manager, e.g.:"
       info "  sudo apt-get install -y google-chrome-stable    # Debian/Ubuntu"
       info "  sudo dnf install -y chromium                    # Fedora"
-      info "Then re-run:  bash scripts/setup.sh"
-      exit 1
-      ;;
-    *)
-      err "Unsupported platform: $(uname -s)"
-      exit 1
       ;;
   esac
 fi
 
-step_cli aec on
-step_cli aec status
-ok "AEC enabled (voice.defaults.aec = true)"
+if [[ "$AEC_AVAILABLE" == 1 ]]; then
+  step_cli aec on
+  step_cli aec status
+  ok "AEC enabled (voice.defaults.aec = true)"
+else
+  step_cli aec off
+  ok "AEC skipped (Chrome not found; setup continues without echo cancellation)"
+fi
 
 # ── 5. Build production bundle ────────────────────────────────────────────
 bold "[5/7] Building production bundle"
