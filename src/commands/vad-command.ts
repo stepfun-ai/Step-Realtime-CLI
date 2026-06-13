@@ -60,7 +60,16 @@ function createVadCommandProgram(input: {
     )
     .action(async (opts: { config?: string }) => {
       const path = opts.config ?? resolveDefaultVoiceConfigPath();
-      const defaults = await readVoiceDefaults(path);
+      let defaults: Awaited<ReturnType<typeof readVoiceDefaults>>;
+      try {
+        defaults = await readVoiceDefaults(path);
+      } catch (err) {
+        input.stderr.write(
+          `${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
       const selected = defaults.vad;
       input.stdout.write(
         [

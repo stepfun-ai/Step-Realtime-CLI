@@ -103,7 +103,14 @@ async function reportAecStatus(
   configPath: string | undefined,
 ): Promise<void> {
   const path = configPath ?? resolveDefaultVoiceConfigPath();
-  const defaults = await readVoiceDefaults(path);
+  let defaults: Awaited<ReturnType<typeof readVoiceDefaults>>;
+  try {
+    defaults = await readVoiceDefaults(path);
+  } catch (err) {
+    input.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const envOverride = process.env.STEP_VOICE_AEC === "1";
   const configValue = defaults.aec ?? false;
   const effective = envOverride || configValue;
