@@ -22,14 +22,35 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function readOptionalConfigObject(
+  source: Record<string, unknown>,
+  key: string,
+  label: string,
+  configPath: string,
+): Record<string, unknown> | undefined {
+  const value = source[key];
+  if (value === undefined) return undefined;
+  if (isPlainObject(value)) return value;
+  throw new Error(`${label} in ${configPath} must be a JSON object`);
+}
+
 async function readConfigObject(
   configPath: string,
-): Promise<Record<string, unknown>> {
+): Promise<Record<string, unknown>>;
+async function readConfigObject(
+  configPath: string,
+  options: { allowMissing: true },
+): Promise<Record<string, unknown> | undefined>;
+async function readConfigObject(
+  configPath: string,
+  options: { allowMissing?: boolean } = {},
+): Promise<Record<string, unknown> | undefined> {
   let raw: string;
   try {
     raw = await fs.readFile(configPath, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (options.allowMissing) return undefined;
       throw new Error(
         `Config file not found: ${configPath}\n` +
           "  Run `step config init` first to create it.",
@@ -62,8 +83,16 @@ export async function setVoiceDefault(
 ): Promise<{ configPath: string }> {
   const root = await readConfigObject(configPath);
 
-  const voice = isPlainObject(root.voice) ? root.voice : {};
-  const defaults = isPlainObject(voice.defaults) ? voice.defaults : {};
+  const voice =
+    readOptionalConfigObject(root, "voice", "`voice` section", configPath) ??
+    {};
+  const defaults =
+    readOptionalConfigObject(
+      voice,
+      "defaults",
+      "`voice.defaults` section",
+      configPath,
+    ) ?? {};
   defaults[key] = value;
   voice.defaults = defaults;
   root.voice = voice;
@@ -73,19 +102,28 @@ export async function setVoiceDefault(
 }
 
 /** Read the current `voice.defaults.{vad,aec}` from the main config. Returns
- *  an empty snapshot if the file or fields are missing. */
+ *  an empty snapshot only when the file or fields are missing. Malformed
+ *  existing config still fails loudly so status commands do not mask it as an
+ *  unset default. */
 export async function readVoiceDefaults(
   configPath: string = resolveDefaultVoiceConfigPath(),
 ): Promise<VoiceDefaultsSnapshot> {
-  let root: Record<string, unknown>;
-  try {
-    root = await readConfigObject(configPath);
-  } catch {
-    return {};
-  }
-  const voice = isPlainObject(root.voice) ? root.voice : undefined;
+  const root = await readConfigObject(configPath, { allowMissing: true });
+  if (!root) return {};
+  const voice = readOptionalConfigObject(
+    root,
+    "voice",
+    "`voice` section",
+    configPath,
+  );
   const defaults =
-    voice && isPlainObject(voice.defaults) ? voice.defaults : undefined;
+    voice &&
+    readOptionalConfigObject(
+      voice,
+      "defaults",
+      "`voice.defaults` section",
+      configPath,
+    );
   if (!defaults) return {};
   return {
     vad: typeof defaults.vad === "string" ? defaults.vad : undefined,
