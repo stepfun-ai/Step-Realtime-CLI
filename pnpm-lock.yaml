@@ -154,6 +154,10 @@ importers:
       ws:
         specifier: ^8.18.0
         version: 8.20.0
+    devDependencies:
+      "@types/ws":
+        specifier: ^8.5.13
+        version: 8.18.1
 
   extensions/realtime-vad-silero:
     dependencies:
