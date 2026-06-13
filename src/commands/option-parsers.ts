@@ -14,9 +14,28 @@ import { MIN_ANTHROPIC_THINKING_BUDGET_TOKENS } from "../bootstrap/config/defaul
 
 export class InvalidArgumentError extends Error {}
 
+const DECIMAL_INTEGER_PATTERN = /^[+-]?\d+$/u;
+const DECIMAL_NUMBER_PATTERN = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/iu;
+
+function parseDecimalInteger(value: string): number {
+  const normalized = value.trim();
+  if (!DECIMAL_INTEGER_PATTERN.test(normalized)) {
+    return Number.NaN;
+  }
+  return Number(normalized);
+}
+
+function parseFiniteNumber(value: string): number {
+  const normalized = value.trim();
+  if (!DECIMAL_NUMBER_PATTERN.test(normalized)) {
+    return Number.NaN;
+  }
+  return Number(normalized);
+}
+
 export function parsePositiveInt(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  const parsed = parseDecimalInteger(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`Expected positive integer, got: ${value}`);
   }
   return parsed;
@@ -32,8 +51,8 @@ export function parseOperatingMode(value: string): AgentOperatingMode {
 }
 
 export function parseNonNegativeInt(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 0) {
+  const parsed = parseDecimalInteger(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
     throw new Error(`Expected non-negative integer, got: ${value}`);
   }
   return parsed;
@@ -107,7 +126,7 @@ export function parseToolSearchIndexProfile(
 }
 
 export function parseNumber(value: string): number {
-  const parsed = Number.parseFloat(value);
+  const parsed = parseFiniteNumber(value);
   if (!Number.isFinite(parsed)) {
     throw new Error(`Expected number, got: ${value}`);
   }
