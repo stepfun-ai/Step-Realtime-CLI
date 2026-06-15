@@ -90,6 +90,17 @@ jobs:
         shell: pwsh
         run: pnpm build
 
+      # Sentinel for #25-class regressions: warns (does not fail) when the
+      # OpenTUI runtime chunk is missing its exports. Runs only on the Windows
+      # lane (which already produces a build); tsdown output is platform-shape-
+      # consistent, so one lane covers the build regression. Non-blocking on
+      # purpose so it can land independently of #28; the warning clears once
+      # #28 lands. Flip to `--enforce` (and drop continue-on-error) for a hard gate.
+      - name: Build-output sentinel (#25 regression guard)
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        run: node scripts/check-build-output.mjs
+
       - name: Install with Windows script
         if: matrix.os == 'windows-latest'
         shell: pwsh
