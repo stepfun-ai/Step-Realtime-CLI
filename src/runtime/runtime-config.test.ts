@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { resolveStepCliRuntimeConfig } from "./runtime-config.js";
+import {
+  inspectStepCliConfig,
+  resolveServiceRuntimeOptions,
+} from "./runtime-config.js";
 
 // Mock model-limits to avoid network requests during tests.
 // resolveCachedModelTokenLimits probes the default API endpoint when no
@@ -740,5 +744,179 @@ describe("runtime config", () => {
 
     const result = await resolve();
     expect(result.stepCliConfig.mode).toBe("plan");
+  });
+
+  it("modelsProxy supplies a default model when none is set", async () => {
+    await writeConfig({
+      integrations: {
+        modelsProxy: {
+          models: ["other", "step/native"],
+        },
+      },
+    });
+
+    const result = await resolve();
+    expect(result.stepCliConfig.model).toBe("step/native");
+  });
+
+  it("throws for an unsupported provider value", async () => {
+    process.env.STEP_MODEL_PROVIDER = "gemini";
+    await expect(resolve()).rejects.toThrow("Unsupported provider");
+  });
+
+  it("throws when min-output-tokens exceeds max-output-tokens", async () => {
+    await writeConfig({
+      model: {
+        tokens: {
+          maxContext: 80000,
+          maxOutput: 1000,
+          minOutput: 2000,
+        },
+      },
+    });
+
+    await expect(resolve()).rejects.toThrow(
+      "--min-output-tokens must be <= --max-output-tokens",
+    );
+  });
+
+  it("throws when anthropic max-output-tokens is not greater than thinking budget", async () => {
+    await writeConfig({
+      model: {
+        provider: "anthropic",
+        tokens: {
+          maxContext: 80000,
+          maxOutput: 1024,
+        },
+        reasoning: {
+          anthropicThinkingBudgetTokens: 2048,
+        },
+      },
+    });
+
+    await expect(resolve()).rejects.toThrow(
+      "--max-output-tokens must be > --anthropic-thinking-budget-tokens",
+    );
+  });
+
+  it("applies the default anthropic thinking budget when provider is anthropic", async () => {
+    await writeConfig({
+      model: {
+        provider: "anthropic",
+        tokens: {
+          maxContext: 200000,
+          maxOutput: 64000,
+        },
+      },
+    });
+
+    const result = await resolve();
+    expect(result.stepCliConfig.anthropicThinkingBudgetTokens).toBe(16000);
+  });
+
+  it("resolves a custom storage layout path from config", async () => {
+    await writeConfig({
+      storage: {
+        layout: {
+          themesDir: "custom-themes",
+        },
+      },
+    });
+
+    const result = await resolve();
+    expect(result.stepCliConfig.storageLayout.paths.themesDir).toBe(
+      "custom-themes",
+    );
+  });
+});
+
+describe("inspectStepCliConfig", () => {
+  let tempDir: string;
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "step-cli-inspect-"));
+    originalEnv = { ...process.env };
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith("STEP_") || key.startsWith("STEPCLI_")) {
+        delete process.env[key];
+      }
+    }
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    process.env = originalEnv;
+  });
+
+  it("reports resolved runtime values and their sources", async () => {
+    const configPath = path.join(tempDir, "config.json");
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        model: { model: "config-model", apiKey: "secret" },
+      }),
+    );
+
+    const inspection = await inspectStepCliConfig({
+      workspaceRoot: tempDir,
+      explicitConfigPath: configPath,
+    });
+
+    expect(inspection.workspaceRoot).toBe(path.resolve(tempDir));
+    expect(inspection.runtime.model.value).toBe("config-model");
+    expect(inspection.runtime.model.source).toBe("config");
+    expect(inspection.runtime.serviceOptions.host).toBeDefined();
+    expect(inspection.runtime.serviceOptions.port).toBeGreaterThan(0);
+    expect(typeof inspection.runtime.metadataProbeEligible).toBe("boolean");
+  });
+});
+
+describe("resolveServiceRuntimeOptions", () => {
+  it("falls back to builtin service defaults", () => {
+    const result = resolveServiceRuntimeOptions({
+      options: {},
+      cliOptionSources: {},
+      sharedCliOptionSources: {},
+      loadedConfig: {} as never,
+      workspaceRoot: "/workspace",
+    });
+
+    expect(result.host).toBeDefined();
+    expect(result.port).toBeGreaterThan(0);
+    expect(result.token).toBeUndefined();
+    expect(path.isAbsolute(result.storageRootDir)).toBe(true);
+  });
+
+  it("prefers explicit CLI options over config and defaults", () => {
+    const result = resolveServiceRuntimeOptions({
+      options: { host: "0.0.0.0", port: 9999, token: "cli-token" },
+      cliOptionSources: { host: "cli", port: "cli", token: "cli" } as never,
+      sharedCliOptionSources: {},
+      loadedConfig: {
+        service: { host: "config-host", port: 1111, token: "config-token" },
+      } as never,
+      workspaceRoot: "/workspace",
+    });
+
+    expect(result.host).toBe("0.0.0.0");
+    expect(result.port).toBe(9999);
+    expect(result.token).toBe("cli-token");
+  });
+
+  it("reads host, port and token from config.service when no CLI override", () => {
+    const result = resolveServiceRuntimeOptions({
+      options: {},
+      cliOptionSources: {},
+      sharedCliOptionSources: {},
+      loadedConfig: {
+        service: { host: "config-host", port: 2222, token: "config-token" },
+      } as never,
+      workspaceRoot: "/workspace",
+    });
+
+    expect(result.host).toBe("config-host");
+    expect(result.port).toBe(2222);
+    expect(result.token).toBe("config-token");
   });
 });

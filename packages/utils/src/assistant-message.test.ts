@@ -5,6 +5,7 @@ import {
   getAssistantReasoningLabel,
   extractAssistantReasoningSections,
   assistantMessagePreviewText,
+  cloneAssistantMessage,
 } from "./assistant-message.js";
 
 // ---------------------------------------------------------------------------
@@ -243,6 +244,238 @@ describe("assistant-message", () => {
       };
       const sections = extractAssistantReasoningSections(message);
       expect(sections).toEqual([]);
+    });
+
+    it("ignores non-array thinking_blocks", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: "not-an-array",
+      });
+      expect(sections).toEqual([]);
+    });
+
+    it("filters out non-object entries in thinking_blocks", () => {
+      const message = {
+        thinking_blocks: [
+          null,
+          42,
+          ["x"],
+          { type: "thinking", thinking: "ok" },
+        ],
+      };
+      const sections = extractAssistantReasoningSections(message);
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.text).toBe("ok");
+    });
+
+    it("classifies a typeless block by its analysis field", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ analysis: "analysis only" }],
+      });
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.kind).toBe("analysis");
+      expect(sections[0]!.text).toBe("analysis only");
+    });
+
+    it("classifies a typeless block by its reasoning field", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ reasoning: "reasoning only" }],
+      });
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.kind).toBe("reasoning");
+      expect(sections[0]!.text).toBe("reasoning only");
+    });
+
+    it("classifies a typeless block by data as redacted_thinking", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ data: "secret-bytes" }],
+      });
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.kind).toBe("redacted_thinking");
+      expect(sections[0]!.text).toBe("secret-bytes");
+    });
+
+    it("classifies a typeless block with only thinking text", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ thinking: "just thinking" }],
+      });
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.kind).toBe("thinking");
+    });
+
+    it("falls back to text field for a typeless block", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ text: "plain text" }],
+      });
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.kind).toBe("thinking");
+      expect(sections[0]!.text).toBe("plain text");
+    });
+
+    it("returns nothing for a block with no usable text", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ type: "thinking" }],
+      });
+      expect(sections).toEqual([]);
+    });
+
+    it("uses text fallback for an analysis-typed block missing analysis field", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ type: "analysis", text: "fallback analysis" }],
+      });
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.kind).toBe("analysis");
+      expect(sections[0]!.text).toBe("fallback analysis");
+    });
+
+    it("uses text fallback for a reasoning-typed block missing reasoning field", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ type: "reasoning", text: "fallback reasoning" }],
+      });
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.kind).toBe("reasoning");
+    });
+
+    it("uses data fallback for a redacted_thinking-typed block", () => {
+      const sections = extractAssistantReasoningSections({
+        thinking_blocks: [{ type: "redacted_thinking", data: "via-data" }],
+      });
+      expect(sections).toHaveLength(1);
+      expect(sections[0]!.kind).toBe("redacted_thinking");
+      expect(sections[0]!.text).toBe("via-data");
+    });
+
+    it("extracts all five reasoning text fields, deduped by kind text", () => {
+      const sections = extractAssistantReasoningSections({
+        reasoning_content: "rc",
+        thinking: "th",
+        analysis: "an",
+        reasoning: "re",
+        redacted_thinking: "rt",
+      });
+      expect(sections.map((s) => s.kind)).toEqual([
+        "reasoning_content",
+        "thinking",
+        "analysis",
+        "reasoning",
+        "redacted_thinking",
+      ]);
+    });
+  });
+
+  // ---- cloneAssistantMessage ----
+
+  describe("cloneAssistantMessage", () => {
+    it("clones a minimal message", () => {
+      const msg: AssistantMessage = { role: "assistant", content: "hi" };
+      const clone = cloneAssistantMessage(msg);
+      expect(clone).toEqual({ role: "assistant", content: "hi" });
+      expect(clone).not.toBe(msg);
+    });
+
+    it("includes spanId when present", () => {
+      const msg: AssistantMessage = {
+        role: "assistant",
+        content: "hi",
+        spanId: "span-1",
+      };
+      const clone = cloneAssistantMessage(msg);
+      expect(clone.spanId).toBe("span-1");
+    });
+
+    it("deep-clones tool_calls", () => {
+      const msg: AssistantMessage = {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "do", arguments: "{}" },
+          },
+        ],
+      };
+      const clone = cloneAssistantMessage(msg);
+      expect(clone.tool_calls).toEqual(msg.tool_calls);
+      expect(clone.tool_calls).not.toBe(msg.tool_calls);
+      expect(clone.tool_calls![0]!.function).not.toBe(
+        msg.tool_calls![0]!.function,
+      );
+    });
+
+    it("omits empty tool_calls", () => {
+      const msg: AssistantMessage = {
+        role: "assistant",
+        content: "x",
+        tool_calls: [],
+      };
+      const clone = cloneAssistantMessage(msg);
+      expect(clone.tool_calls).toBeUndefined();
+    });
+
+    it("includes and deep-clones thinking_blocks", () => {
+      const msg: AssistantMessage = {
+        role: "assistant",
+        content: "x",
+        thinking_blocks: [{ type: "thinking", thinking: "deep" }],
+      };
+      const clone = cloneAssistantMessage(msg);
+      expect(clone.thinking_blocks).toEqual(msg.thinking_blocks);
+      expect(clone.thinking_blocks).not.toBe(msg.thinking_blocks);
+      expect(clone.thinking_blocks![0]).not.toBe(msg.thinking_blocks![0]);
+    });
+
+    it("omits empty thinking_blocks", () => {
+      const msg: AssistantMessage = {
+        role: "assistant",
+        content: "x",
+        thinking_blocks: [],
+      };
+      const clone = cloneAssistantMessage(msg);
+      expect(clone.thinking_blocks).toBeUndefined();
+    });
+
+    it("carries reasoning text fields through", () => {
+      const msg: AssistantMessage = {
+        role: "assistant",
+        content: "x",
+        thinking: "reasoned",
+        reasoning_signature: "sig",
+      };
+      const clone = cloneAssistantMessage(msg);
+      expect(clone.thinking).toBe("reasoned");
+      expect(clone.reasoning_signature).toBe("sig");
+    });
+  });
+
+  // ---- assistantMessagePreviewText (block fallbacks) ----
+
+  describe("assistantMessagePreviewText block fallbacks", () => {
+    it("uses block 'data' field as preview fallback", () => {
+      const msg: AssistantMessage = {
+        role: "assistant",
+        content: "",
+        thinking_blocks: [{ type: "redacted_thinking", data: "blob" }],
+      };
+      expect(assistantMessagePreviewText(msg)).toBe("blob");
+    });
+
+    it("uses block 'reasoning' field as preview when no section produced", () => {
+      const msg = {
+        role: "assistant",
+        content: "",
+        thinking_blocks: [{ foo: "bar", reasoning: "" }],
+      } as unknown as AssistantMessage;
+      // No section (empty reasoning) and previewTextFromThinkingBlock finds nothing
+      expect(assistantMessagePreviewText(msg)).toBe("");
+    });
+
+    it("returns '' when content is empty and blocks have no usable text", () => {
+      const msg: AssistantMessage = {
+        role: "assistant",
+        content: "",
+        thinking_blocks: [{ type: "thinking" }],
+      };
+      expect(assistantMessagePreviewText(msg)).toBe("");
     });
   });
 
