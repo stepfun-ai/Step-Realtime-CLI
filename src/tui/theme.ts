@@ -211,6 +211,14 @@ export function resolveTuiTheme(
   );
 }
 
+export function resolveTuiTranscriptRailColor(
+  colors: StepCliTuiThemeColors,
+): string {
+  // Transcript rails are structural markers, so keep them tied to the
+  // contrast-checked line color instead of tone colors that may be too dark.
+  return colors.line;
+}
+
 export function isValidTuiThemeName(value: string): boolean {
   return /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/i.test(value.trim());
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getBuiltinTuiThemes } from "./theme.js";
+import { getBuiltinTuiThemes, resolveTuiTranscriptRailColor } from "./theme.js";
 
 function hexToRgb(hex: string): [number, number, number] {
   const normalized = hex.trim().replace(/^#/, "");
@@ -69,19 +69,21 @@ describe("builtin TUI themes", () => {
     }
   });
 
-  it("keeps rails and badges visible against panel surfaces", () => {
+  it("keeps transcript rails and badges visible against panel surfaces", () => {
     for (const theme of themes) {
+      const transcriptRailColor = resolveTuiTranscriptRailColor(theme.colors);
+
       expect(
-        contrastRatio(theme.colors.line, theme.colors.panel),
-        `${theme.name} line vs panel`,
+        contrastRatio(transcriptRailColor, theme.colors.panel),
+        `${theme.name} transcript rail vs panel`,
       ).toBeGreaterThanOrEqual(3);
       expect(
-        contrastRatio(theme.colors.line, theme.colors.panelAlt),
-        `${theme.name} line vs panelAlt`,
+        contrastRatio(transcriptRailColor, theme.colors.panelAlt),
+        `${theme.name} transcript rail vs panelAlt`,
       ).toBeGreaterThanOrEqual(3);
       expect(
-        contrastRatio(theme.colors.line, theme.colors.inputBackground),
-        `${theme.name} line vs inputBackground`,
+        contrastRatio(transcriptRailColor, theme.colors.inputBackground),
+        `${theme.name} transcript rail vs inputBackground`,
       ).toBeGreaterThanOrEqual(3);
       expect(
         contrastRatio(theme.colors.foreground, theme.colors.assistantBadge),

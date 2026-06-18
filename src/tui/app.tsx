@@ -39,6 +39,7 @@ import {
   getTuiThemeNames,
   hasTuiTheme,
   mergeTuiThemes,
+  resolveTuiTranscriptRailColor,
   resolveTuiTheme,
   type StepCliTuiThemeColors,
   type StepCliTuiThemeName,
@@ -1525,7 +1526,7 @@ const TranscriptEntry = React.memo(function TranscriptEntry(input: {
   const body = (
     <>
       <text fg={input.theme.foreground}>
-        <span bg={badgeStyle.backgroundColor} fg={input.theme.foreground}>
+        <span bg={badgeStyle.backgroundColor} fg={badgeStyle.textColor}>
           {" "}
           {item.badge}{" "}
         </span>
@@ -2113,42 +2114,43 @@ function resolveTranscriptBadgeStyle(
   textColor: string;
   railColor: string;
 } {
+  const railColor = resolveTuiTranscriptRailColor(theme);
   switch (tone) {
     case "accent":
       return {
         backgroundColor: theme.userBadge,
         textColor: theme.foreground,
-        railColor: theme.accent,
+        railColor,
       };
     case "brand":
       return {
         backgroundColor: theme.assistantBadge,
         textColor: theme.foreground,
-        railColor: theme.brand,
+        railColor,
       };
     case "success":
       return {
         backgroundColor: theme.toolBadge,
         textColor: theme.foreground,
-        railColor: theme.success,
+        railColor,
       };
     case "warning":
       return {
         backgroundColor: theme.systemBadge,
         textColor: theme.foreground,
-        railColor: theme.warning,
+        railColor,
       };
     case "danger":
       return {
         backgroundColor: theme.systemBadge,
         textColor: theme.foreground,
-        railColor: theme.danger,
+        railColor,
       };
     case "muted":
       return {
         backgroundColor: theme.systemBadge,
         textColor: theme.foreground,
-        railColor: theme.line,
+        railColor,
       };
   }
 }

@@ -80,5 +80,8 @@
   "packageManager": "pnpm@10.17.0",
   "simple-git-hooks": {
     "pre-commit": "pnpm check:staged-files && pnpm lint && pnpm exec tsc --noEmit && pnpm format:check"
+  },
+  "prettier": {
+    "endOfLine": "auto"
   }
 }
