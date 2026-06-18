@@ -5,6 +5,8 @@ import type {
 
 export type StepCliTuiComposerHistoryDirection = "older" | "newer";
 
+const MAX_COMPOSER_HISTORY_ENTRIES = 200;
+
 export function applyComposerPaste(
   composer: StepCliTuiComposerState,
   text: string,
@@ -34,8 +36,15 @@ export function rememberSubmittedComposerValue(
     return detachComposerHistory(history);
   }
 
+  const lastEntry = history.entries[history.entries.length - 1];
+  if (lastEntry?.value === composer.value) {
+    return detachComposerHistory(history);
+  }
+
   return {
-    entries: [...history.entries, cloneComposerState(composer)],
+    entries: [...history.entries, cloneComposerState(composer)].slice(
+      -MAX_COMPOSER_HISTORY_ENTRIES,
+    ),
     browsingIndex: null,
     draftBeforeBrowsing: null,
   };
@@ -54,6 +63,10 @@ export function browseComposerHistory(
   }
 
   if (direction === "older") {
+    if (history.browsingIndex === 0) {
+      return { history, composer };
+    }
+
     const nextIndex =
       history.browsingIndex === null
         ? history.entries.length - 1
