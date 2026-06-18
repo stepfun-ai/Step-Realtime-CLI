@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { enforceOutputLimit } from "./shell.js";
+import os from "node:os";
+import { enforceOutputLimit, runShell } from "./shell.js";
+
+const BIG_LIMIT = 1_000_000;
 
 // ---------------------------------------------------------------------------
 // shell.ts (from batch2)
@@ -95,5 +98,98 @@ describe("enforceOutputLimit", () => {
   it("handles single-char limit", () => {
     const result = enforceOutputLimit("abcdef", 1);
     expect(result).toContain("[truncated");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runShell (real child processes via spawn)
+// ---------------------------------------------------------------------------
+describe("runShell", () => {
+  const cwd = os.tmpdir();
+
+  it("captures stdout from a successful command", async () => {
+    const result = await runShell("echo hello-world", {
+      cwd,
+      timeoutMs: 10_000,
+      outputLimit: BIG_LIMIT,
+    });
+    expect(result.stdout).toContain("hello-world");
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(false);
+    expect(result.interrupted).toBe(false);
+  });
+
+  it("captures stderr and a non-zero exit code", async () => {
+    const result = await runShell("echo oops 1>&2; exit 3", {
+      cwd,
+      timeoutMs: 10_000,
+      outputLimit: BIG_LIMIT,
+    });
+    expect(result.stderr).toContain("oops");
+    expect(result.exitCode).toBe(3);
+    expect(result.timedOut).toBe(false);
+  });
+
+  it("returns interrupted result immediately when signal already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runShell("echo never", {
+      cwd,
+      timeoutMs: 10_000,
+      outputLimit: BIG_LIMIT,
+      signal: controller.signal,
+    });
+    expect(result.interrupted).toBe(true);
+    expect(result.exitCode).toBe(-1);
+    expect(result.stderr).toBe("Process interrupted before start.");
+    expect(result.stdout).toBe("");
+  });
+
+  it("times out a long-running command and kills it", async () => {
+    const result = await runShell("sleep 5", {
+      cwd,
+      timeoutMs: 100,
+      outputLimit: BIG_LIMIT,
+    });
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBe(-1);
+    expect(result.interrupted).toBe(false);
+    expect(result.stderr).toContain("Process killed after timeout");
+  });
+
+  it("interrupts a running command when the signal aborts mid-flight", async () => {
+    const controller = new AbortController();
+    const promise = runShell("sleep 5", {
+      cwd,
+      timeoutMs: 10_000,
+      outputLimit: BIG_LIMIT,
+      signal: controller.signal,
+    });
+    // Abort shortly after the child has started.
+    setTimeout(() => controller.abort(), 100);
+    const result = await promise;
+    expect(result.interrupted).toBe(true);
+    expect(result.exitCode).toBe(-1);
+    expect(result.timedOut).toBe(false);
+    expect(result.stderr).toContain("Process interrupted by user.");
+  });
+
+  it("applies the output limit to large stdout", async () => {
+    // Produce more than the limit so truncation kicks in.
+    const result = await runShell(
+      "for i in $(seq 1 200); do echo 0123456789; done",
+      { cwd, timeoutMs: 10_000, outputLimit: 100 },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("[truncated");
+  });
+
+  it("returns exitCode -1 when the close code is null (killed by timeout)", async () => {
+    const result = await runShell("sleep 5", {
+      cwd,
+      timeoutMs: 50,
+      outputLimit: BIG_LIMIT,
+    });
+    expect(result.exitCode).toBe(-1);
   });
 });

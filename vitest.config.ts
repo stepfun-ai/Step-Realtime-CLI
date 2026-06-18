@@ -82,10 +82,10 @@ export default defineConfig({
       ],
       exclude: ["**/*.test.ts", "**/*.spec.ts", "dist/**", "node_modules/**"],
       thresholds: {
-        // Baseline thresholds for tested core modules.
-        // Raise incrementally as coverage expands to more files.
-        statements: 50,
-        branches: 60,
+        // Single source of truth for coverage gating (referenced by
+        // CONTRIBUTING.md and docs/TESTING.md — they must not hardcode numbers).
+        statements: 80,
+        branches: 80,
       },
     },
   },
