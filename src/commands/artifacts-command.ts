@@ -30,6 +30,7 @@ import {
   parseCommanderProgram,
 } from "./commander-utils.js";
 import { setStderrDevLogStorageRootDirectory } from "../runtime/stderr-dev-log.js";
+import { parseNonNegativeInt } from "./option-parsers.js";
 
 interface WriteTarget {
   write(chunk: string): unknown;
@@ -389,14 +390,6 @@ function parseHarnessKindOption(value: string): AgentHarnessKind {
   throw new InvalidArgumentError(
     "harness kind must be 'main', 'subagent', or 'teammate'",
   );
-}
-
-function parseNonNegativeInt(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new InvalidArgumentError("value must be a non-negative integer");
-  }
-  return parsed;
 }
 
 function writeJson(stdout: WriteTarget, value: unknown): void {
