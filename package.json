@@ -68,7 +68,7 @@
     "dependency-cruiser": "^17.3.9",
     "knip": "^6.0.4",
     "oxlint": "~0.15.15",
-    "prettier": "^3.8.1",
+    "prettier": "^3.8.4",
     "rolldown": "1.0.0-beta.7",
     "simple-git-hooks": "^2.13.1",
     "ts-prune": "^0.10.3",
