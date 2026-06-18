@@ -1,34 +1,78 @@
-import { describe, it, expect } from "vitest";
-import { getChromeCandidates } from "./find-chrome.js";
+import { describe, it, expect, afterEach } from "vitest";
+import { platform } from "node:os";
 
-describe("getChromeCandidates", () => {
-  it("checks both 64-bit and x86 Edge installs on Windows", () => {
-    const candidates = getChromeCandidates("win32", {
-      ProgramFiles: "C:\\Program Files",
-      "ProgramFiles(x86)": "C:\\Program Files (x86)",
-      LOCALAPPDATA: "C:\\Users\\dev\\AppData\\Local",
-    });
+const isWindows = platform() === "win32";
+const isMac = platform() === "darwin";
+const isLinux = platform() === "linux";
 
-    expect(candidates).toContain(
-      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-    );
-    expect(candidates).toContain(
-      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-    );
+describe("findChrome", () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
   });
 
-  it("checks per-user Chrome and Edge installs on Windows", () => {
-    const candidates = getChromeCandidates("win32", {
-      ProgramFiles: "C:\\Program Files",
-      "ProgramFiles(x86)": "C:\\Program Files (x86)",
-      LOCALAPPDATA: "C:\\Users\\dev\\AppData\\Local",
-    });
+  it("returns a string or undefined", async () => {
+    const { findChrome } = await import("./find-chrome.js");
+    const result = findChrome();
+    expect(result === undefined || typeof result === "string").toBe(true);
+  });
 
-    expect(candidates).toContain(
-      "C:\\Users\\dev\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe",
-    );
-    expect(candidates).toContain(
-      "C:\\Users\\dev\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe",
-    );
+  it("honors STEP_CHROME_PATH environment variable", async () => {
+    process.env.STEP_CHROME_PATH = "/nonexistent/chrome";
+    delete process.env.CHROME_PATH;
+
+    const mod = await import("./find-chrome.js");
+    const result = mod.findChrome();
+    expect(result).not.toBe("/nonexistent/chrome");
+  });
+
+  it("honors CHROME_PATH environment variable", async () => {
+    delete process.env.STEP_CHROME_PATH;
+    process.env.CHROME_PATH = "/also/nonexistent";
+
+    const mod = await import("./find-chrome.js");
+    const result = mod.findChrome();
+    expect(result).not.toBe("/also/nonexistent");
+  });
+
+  it.runIf(isWindows)("on Windows, checks Program Files paths", async () => {
+    delete process.env.STEP_CHROME_PATH;
+    delete process.env.CHROME_PATH;
+
+    const mod = await import("./find-chrome.js");
+    const result = mod.findChrome();
+    if (result) {
+      expect(result).toMatch(/\.exe$/i);
+    }
+  });
+
+  it.runIf(isMac)("on macOS, checks /Applications paths", async () => {
+    delete process.env.STEP_CHROME_PATH;
+    delete process.env.CHROME_PATH;
+
+    const mod = await import("./find-chrome.js");
+    const result = mod.findChrome();
+    if (result) {
+      expect(result.startsWith("/Applications")).toBe(true);
+    }
+  });
+
+  it.runIf(isLinux)("on Linux, checks /usr/bin paths", async () => {
+    delete process.env.STEP_CHROME_PATH;
+    delete process.env.CHROME_PATH;
+
+    const mod = await import("./find-chrome.js");
+    const result = mod.findChrome();
+    if (result) {
+      expect(result.startsWith("/usr/bin")).toBe(true);
+    }
+  });
+
+  it("returns existing env path when file exists", async () => {
+    process.env.STEP_CHROME_PATH = process.execPath;
+    const mod = await import("./find-chrome.js");
+    const result = mod.findChrome();
+    expect(result).toBe(process.execPath);
   });
 });

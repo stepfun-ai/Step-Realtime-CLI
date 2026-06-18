@@ -565,6 +565,7 @@ export class ConversationMemory {
     maxSummaryTokens?: number;
     signal?: AbortSignal;
   }): Promise<SmartCompactResult> {
+    throwIfAborted(input.signal);
     this.repairIncompleteToolCalls();
     this.microCompactToolMessages();
 
@@ -572,6 +573,7 @@ export class ConversationMemory {
     const promptTokensBefore = await this.measureProjectedPromptTokens(input, {
       windowed: true,
     });
+    throwIfAborted(input.signal);
     if (promptTokensBefore <= thresholds.softTriggerTokens) {
       this.lastCompactionDecision = {
         source: "smart",
@@ -631,6 +633,7 @@ export class ConversationMemory {
     );
 
     while (promptTokensAfter > targetTokens && iterations < maxPasses) {
+      throwIfAborted(input.signal);
       const plan = this.computeAutoCompactionRange(
         input.systemPrompt,
         retainTail,
@@ -656,10 +659,12 @@ export class ConversationMemory {
         promptTokensAfter = await this.measureProjectedPromptTokens(input, {
           windowed: true,
         });
+        throwIfAborted(input.signal);
         continue;
       }
 
       const applied = await this.applySmartCompactionRange(plan, input);
+      throwIfAborted(input.signal);
       iterations += 1;
       summarizedMessages += applied.summarizedMessages;
       fromIndex ??= applied.fromIndex;
@@ -671,6 +676,7 @@ export class ConversationMemory {
       promptTokensAfter = await this.measureProjectedPromptTokens(input, {
         windowed: true,
       });
+      throwIfAborted(input.signal);
     }
 
     const compacted = summarizedMessages > 0 || iterations > 0;
@@ -1660,6 +1666,7 @@ export class ConversationMemory {
     mode: "model" | "heuristic";
     error?: string;
   }> {
+    throwIfAborted(input.signal);
     const chunk = this.messages.slice(plan.from, plan.to);
     if (chunk.length === 0) {
       return {
@@ -1746,6 +1753,7 @@ export class ConversationMemory {
         max_tokens: maxTokens,
         signal: input.signal,
       });
+      throwIfAborted(input.signal);
 
       const message = completion.choices[0]?.message;
       const summaryText =
@@ -1785,6 +1793,7 @@ export class ConversationMemory {
         mode: "model",
       };
     } catch (error) {
+      throwIfAborted(input.signal);
       this.rememberCompactedUserMessages(chunk);
       this.mergeCheckpointFromMessages({
         messages: chunk,
@@ -2308,6 +2317,23 @@ function truncateTextToTokenBudget(input: {
   }
 
   return best;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+
+  const reason = signal.reason;
+  if (reason instanceof Error) {
+    throw reason;
+  }
+
+  if (typeof reason === "string" && reason.trim().length > 0) {
+    throw new Error(reason);
+  }
+
+  throw new Error("Operation aborted.");
 }
 
 export function formatContextUsage(value: ContextUsage): string {
