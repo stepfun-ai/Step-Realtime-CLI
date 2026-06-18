@@ -45,6 +45,10 @@ import {
 } from "./theme.js";
 import { compactToolTranscriptContent } from "./transcript-preview.js";
 import { buildTranscriptClipboardText } from "./transcript-export.js";
+import {
+  buildCollapsedToolSummary,
+  buildToolTranscriptLines,
+} from "./tool-call-collapsible.js";
 import type {
   StepCliTuiComposerState,
   StepCliTuiComposerHistoryState,
@@ -147,6 +151,7 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
   const [activeRunCount, setActiveRunCount] = useState(0);
   const [spinnerFrameIndex, setSpinnerFrameIndex] = useState(0);
   const [slashSelectionIndex, setSlashSelectionIndex] = useState(0);
+  const [toolOutputExpanded, setToolOutputExpanded] = useState(false);
   const submitting = activeRunCount > 0;
 
   // Voice mode state. The host passes a loadVoiceRuntime factory; we cache
@@ -604,6 +609,12 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
       return;
     }
 
+    if (key.ctrl && key.name === "o") {
+      key.preventDefault();
+      setToolOutputExpanded((current) => !current);
+      return;
+    }
+
     if (key.name === "up") {
       if (slashPaletteState.visible && slashPaletteState.matches.length > 0) {
         key.preventDefault();
@@ -770,8 +781,14 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
     [props.scrollConfig, terminal.height],
   );
   const transcriptItems = useMemo(
-    () => buildTranscriptItems(transcriptEntries, transcriptWidth, theme),
-    [theme, transcriptEntries, transcriptWidth],
+    () =>
+      buildTranscriptItems(
+        transcriptEntries,
+        transcriptWidth,
+        theme,
+        toolOutputExpanded,
+      ),
+    [theme, transcriptEntries, transcriptWidth, toolOutputExpanded],
   );
 
   return (
@@ -1522,6 +1539,7 @@ const TranscriptEntry = React.memo(function TranscriptEntry(input: {
   const [firstLine = "", ...restLines] =
     item.lines.length > 0 ? item.lines : [""];
   const badgeStyle = resolveTranscriptBadgeStyle(item.tone, input.theme);
+  const isCollapsed = item.collapsible && !item.expanded;
   const body = (
     <>
       <text fg={input.theme.foreground}>
@@ -1529,17 +1547,23 @@ const TranscriptEntry = React.memo(function TranscriptEntry(input: {
           {" "}
           {item.badge}{" "}
         </span>
-        {item.caption ? (
+        {item.caption && !isCollapsed ? (
           <span fg={input.theme.muted}> {item.caption}</span>
         ) : null}
         {firstLine.length > 0 ? <span> {firstLine}</span> : null}
       </text>
-      {restLines.map((line, index) => (
-        <text key={`${item.id}:${index}`} fg={input.theme.foreground}>
-          <span fg={badgeStyle.railColor}>│ </span>
-          {line.length > 0 ? line : " "}
-        </text>
-      ))}
+      {isCollapsed
+        ? restLines.map((line, index) => (
+            <text key={`${item.id}:${index}`} fg={input.theme.muted}>
+              {line.length > 0 ? line : " "}
+            </text>
+          ))
+        : restLines.map((line, index) => (
+            <text key={`${item.id}:${index}`} fg={input.theme.foreground}>
+              <span fg={badgeStyle.railColor}>│ </span>
+              {line.length > 0 ? line : " "}
+            </text>
+          ))}
       {item.truncated ? (
         <text fg={input.theme.muted}>
           <span fg={badgeStyle.railColor}>│ </span>…
@@ -1911,13 +1935,22 @@ function buildTranscriptItems(
   entries: StepCliTuiTranscriptEntry[],
   width: number,
   theme: StepCliTuiThemeColors,
+  toolOutputExpanded: boolean,
 ): TranscriptItem[] {
   return [
     buildWelcomeTranscriptItem(width),
     ...entries.map((entry, index) => {
       const identity = resolveTranscriptIdentity(entry);
-      const body = compactToolTranscriptContent(entry);
-      const lines = wrapMultiline(body, Math.max(12, width - 4));
+      const isTool = entry.role === "tool";
+      const lines = isTool
+        ? buildToolTranscriptLines(entry, toolOutputExpanded)
+        : wrapMultiline(
+            compactToolTranscriptContent(entry),
+            Math.max(12, width - 4),
+          );
+      const collapsedSummary = isTool
+        ? buildCollapsedToolSummary(entry)
+        : undefined;
       return {
         id:
           entry.id ||
@@ -1927,6 +1960,9 @@ function buildTranscriptItems(
         border: false,
         lines,
         truncated: false,
+        collapsible: isTool,
+        expanded: isTool ? toolOutputExpanded : undefined,
+        expandHint: collapsedSummary?.expandHint,
       };
     }),
   ];
@@ -1936,7 +1972,7 @@ function buildWelcomeTranscriptItem(width: number): TranscriptItem {
   const welcomeLines = [
     "Welcome to STEP.",
     "Start with a prompt, or use /attach to queue an image.",
-    "Enter send · Shift+Enter newline · Ctrl+Y or /copy copy selection/full transcript · Esc quit",
+    "Enter send · Shift+Enter newline · Ctrl+Y or /copy copy selection/full transcript · Ctrl+O expand/collapse tool output · Esc quit",
     "/goal /attach /copy /detach /status /refresh /theme [name] /resume <session_id> /exit",
   ].flatMap((line) => wrapMultiline(line, Math.max(12, width - 4)));
 
@@ -2317,6 +2353,12 @@ interface TranscriptItem {
   border: boolean;
   lines: string[];
   truncated: boolean;
+  /** When true, the entry can be expanded/collapsed with Ctrl+O. */
+  collapsible?: boolean;
+  /** Current expansion state (only meaningful when collapsible is true). */
+  expanded?: boolean;
+  /** Hint shown when collapsed. */
+  expandHint?: string;
 }
 
 interface SlashPaletteState {
