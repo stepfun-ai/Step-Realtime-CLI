@@ -78,7 +78,7 @@ jobs:
 
       - name: Upload to Codecov
         if: matrix.os == 'ubuntu-latest' && steps.codecov_check.outputs.has_token == 'true'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/lcov.info
