@@ -174,6 +174,8 @@ step config sync --write
 
 欢迎通过 Issue / Pull Request 反馈问题或参与贡献。开发规范请参阅 [`CONTRIBUTING.md`](CONTRIBUTING.md) 与 [`AGENTS.md`](AGENTS.md)。
 
+核心贡献者（stepfun CLI 团队）：[@ZouR-Ma](https://github.com/ZouR-Ma) · [@qiushi20260601](https://github.com/qiushi20260601) · [@MelodyVAR](https://github.com/MelodyVAR) · [@beanzhou](https://github.com/beanzhou) · [@icystone](https://github.com/icystone)
+
 ## License
 
 Step Realtime CLI 基于 MIT License 开源发布。完整许可证文本可在本仓库的 [LICENSE](LICENSE) 文件中查阅。该许可证允许自由使用、修改与分发本软件，前提是保留原始的版权声明与许可证条款。

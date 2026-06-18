@@ -58,6 +58,40 @@ warn() { printf "  \033[33m! %s\033[0m\n" "$*"; }
 err()  { printf "  \033[31m✗ %s\033[0m\n" "$*"; }
 step_cli() { node scripts/run-step.mjs --stale-only "$@"; }
 
+# Resolve a usable Bun binary. On WSL, a Windows bun (under /mnt) cannot build
+# or run a working Linux native binary, so we explicitly look for a
+# Linux-native installation first.
+resolve_bun() {
+  if [[ -n "${STEP_BUN_BIN:-}" ]]; then
+    if [[ -x "$STEP_BUN_BIN" ]]; then
+      echo "$STEP_BUN_BIN"
+      return 0
+    fi
+    warn "STEP_BUN_BIN=$STEP_BUN_BIN is not executable; ignoring" >&2
+  fi
+
+  local bun_path
+  bun_path=$(command -v bun || true)
+  if [[ -n "$bun_path" && "$bun_path" != /mnt/* ]]; then
+    echo "$bun_path"
+    return 0
+  fi
+
+  if [[ -n "$bun_path" && "$bun_path" == /mnt/* ]]; then
+    warn "Detected Windows Bun at $bun_path; looking for a Linux-native Bun..." >&2
+  fi
+
+  for candidate in "$HOME/.bun/bin/bun" "/usr/local/bin/bun" "/opt/bun/bin/bun"; do
+    if [[ -x "$candidate" ]]; then
+      info "Using Linux-native Bun: $candidate" >&2
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 # ── 0. pre-flight ─────────────────────────────────────────────────────────
 # pnpm may be missing on a fresh clone. Try to bootstrap it via corepack
 # (bundled with Node ≥ 16.10) before bailing out.
@@ -190,13 +224,16 @@ if [[ "$SKIP_BUILD" == 1 ]]; then
   if [[ -x "dist/bin/step" ]]; then
     INSTALL_NATIVE_BINARY=1
   fi
-elif command -v "${STEP_BUN_BIN:-bun}" >/dev/null 2>&1; then
-  info "Bun found; building native binary (dist/bin/step)."
-  pnpm build:bin
-  ok "dist/bin/step built"
-  INSTALL_NATIVE_BINARY=1
 else
-  warn "Bun not found; installing a Node-based launcher instead of a native binary."
+  BUN_PATH=$(resolve_bun || true)
+  if [[ -n "$BUN_PATH" ]]; then
+    info "Bun found; building native binary (dist/bin/step)."
+    STEP_BUN_BIN="$BUN_PATH" pnpm build:bin
+    ok "dist/bin/step built"
+    INSTALL_NATIVE_BINARY=1
+  else
+    warn "Bun not found; installing a Node-based launcher instead of a native binary."
+  fi
 fi
 
 # ── 7. Install to ~/.step-cli/bin/ + ensure PATH ──────────────────────────
