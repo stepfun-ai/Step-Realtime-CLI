@@ -45,6 +45,7 @@ import type {
   PluginHookResult,
   ToolPlugin,
 } from "@step-cli/core/plugins/types.js";
+import { getSwarmMode } from "./swarm-plugin.js";
 import {
   compareBackgroundSubtaskRecords,
   isTaskBusy,
@@ -926,104 +927,116 @@ function createAgentSwarmTool(
         return access.result;
       }
 
-      const waitMs = clamp(
-        args.wait_ms ?? DEFAULT_SWARM_WAIT_MS,
-        0,
-        MAX_WAIT_MS,
-      );
-
-      const taskIds: string[] = [];
-      for (let i = 0; i < args.items.length; i++) {
-        const item = args.items[i];
-        const prompt = args.prompt_template.split("{{item}}").join(item);
-        const label = `${args.description} #${i + 1}`;
-
-        const startResult = await manager.start(
-          {
-            prompt,
-            description: label,
-            model: args.subagent_model,
-            preset: args.subagent_preset,
-            contextMode: args.subagent_context_mode,
-            isolateWorkspace: args.isolate_workspace,
-            worktreeName: args.subagent_worktree_name,
-          },
-          ctx.workspaceRoot,
-          access.parent,
-        );
-
-        if (!startResult.ok) {
-          return {
-            ok: true,
-            summary: `Swarm failed to start subagent #${i + 1}`,
-            content: startResult.summary ?? "Failed to start subagent",
-          };
-        }
-
-        const taskId = (
-          startResult.data as { task?: { id?: string } } | undefined
-        )?.task?.id;
-        if (!taskId) {
-          return {
-            ok: true,
-            summary: "Swarm missing task id after start",
-            content: "Missing task id after start",
-          };
-        }
-        taskIds.push(taskId);
+      const swarmMode = getSwarmMode();
+      const alreadyActive = swarmMode.isActive;
+      if (!alreadyActive) {
+        swarmMode.enter("tool");
       }
 
-      const results = await Promise.all(
-        taskIds.map(async (taskId, index) => {
-          const waitResult = await manager.wait({
-            taskId,
-            waitFor: "all",
-            waitMs,
-            signal: ctx.signal,
-          });
+      try {
+        const waitMs = clamp(
+          args.wait_ms ?? DEFAULT_SWARM_WAIT_MS,
+          0,
+          MAX_WAIT_MS,
+        );
 
-          const taskView = (
-            waitResult.data as
-              | {
-                  task?: {
-                    status?: string;
-                    lastSummary?: string;
-                    lastError?: string;
-                  };
-                }
-              | undefined
-          )?.task;
-          let status: "completed" | "failed" | "aborted" = "completed";
-          let output = `Subagent ${taskId} finished`;
+        const taskIds: string[] = [];
+        for (let i = 0; i < args.items.length; i++) {
+          const item = args.items[i];
+          const prompt = args.prompt_template.split("{{item}}").join(item);
+          const label = `${args.description} #${i + 1}`;
 
-          if (taskView) {
-            if (taskView.status === "error") {
-              status = "failed";
-              output = taskView.lastError ?? taskView.lastSummary ?? output;
-            } else if (taskView.status === "interrupted") {
-              status = "aborted";
-              output = taskView.lastSummary ?? output;
-            } else {
-              output = taskView.lastSummary ?? output;
-            }
-          } else {
-            output = waitResult.summary ?? output;
+          const startResult = await manager.start(
+            {
+              prompt,
+              description: label,
+              model: args.subagent_model,
+              preset: args.subagent_preset,
+              contextMode: args.subagent_context_mode,
+              isolateWorkspace: args.isolate_workspace,
+              worktreeName: args.subagent_worktree_name,
+            },
+            ctx.workspaceRoot,
+            access.parent,
+          );
+
+          if (!startResult.ok) {
+            return {
+              ok: true,
+              summary: `Swarm failed to start subagent #${i + 1}`,
+              content: startResult.summary ?? "Failed to start subagent",
+            };
           }
 
-          return {
-            index: index + 1,
-            item: args.items[index],
-            status,
-            output,
-          };
-        }),
-      );
+          const taskId = (
+            startResult.data as { task?: { id?: string } } | undefined
+          )?.task?.id;
+          if (!taskId) {
+            return {
+              ok: true,
+              summary: "Swarm missing task id after start",
+              content: "Missing task id after start",
+            };
+          }
+          taskIds.push(taskId);
+        }
 
-      return {
-        ok: true,
-        summary: `Swarm completed: ${results.length} subagent(s)`,
-        content: renderSwarmResults(results),
-      };
+        const results = await Promise.all(
+          taskIds.map(async (taskId, index) => {
+            const waitResult = await manager.wait({
+              taskId,
+              waitFor: "all",
+              waitMs,
+              signal: ctx.signal,
+            });
+
+            const taskView = (
+              waitResult.data as
+                | {
+                    task?: {
+                      status?: string;
+                      lastSummary?: string;
+                      lastError?: string;
+                    };
+                  }
+                | undefined
+            )?.task;
+            let status: "completed" | "failed" | "aborted" = "completed";
+            let output = `Subagent ${taskId} finished`;
+
+            if (taskView) {
+              if (taskView.status === "error") {
+                status = "failed";
+                output = taskView.lastError ?? taskView.lastSummary ?? output;
+              } else if (taskView.status === "interrupted") {
+                status = "aborted";
+                output = taskView.lastSummary ?? output;
+              } else {
+                output = taskView.lastSummary ?? output;
+              }
+            } else {
+              output = waitResult.summary ?? output;
+            }
+
+            return {
+              index: index + 1,
+              item: args.items[index],
+              status,
+              output,
+            };
+          }),
+        );
+
+        return {
+          ok: true,
+          summary: `Swarm completed: ${results.length} subagent(s)`,
+          content: renderSwarmResults(results),
+        };
+      } finally {
+        if (!alreadyActive) {
+          swarmMode.exit();
+        }
+      }
     },
   };
 }
