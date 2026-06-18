@@ -7,6 +7,12 @@ import {
   parseNumber,
   parseNonInteractiveApproval,
   parseConfigScope,
+  parseAnthropicThinkingBudgetTokens,
+  parseOpenAIReasoningEffort,
+  parseSystemPromptProfile,
+  parseToolPresentationProfile,
+  parseToolDescriptionStyle,
+  parseToolSearchIndexProfile,
   collectToolOverride,
   collectRepeatedString,
   InvalidArgumentError,
@@ -96,6 +102,104 @@ describe("parseConfigScope", () => {
   });
 });
 
+describe("parseAnthropicThinkingBudgetTokens", () => {
+  it("accepts a value at the minimum boundary", () => {
+    expect(parseAnthropicThinkingBudgetTokens("1024")).toBe(1024);
+  });
+
+  it("accepts a value above the minimum", () => {
+    expect(parseAnthropicThinkingBudgetTokens("16000")).toBe(16000);
+  });
+
+  it("throws for a value below the minimum", () => {
+    expect(() => parseAnthropicThinkingBudgetTokens("1023")).toThrow(
+      InvalidArgumentError,
+    );
+    expect(() => parseAnthropicThinkingBudgetTokens("500")).toThrow(">= 1024");
+  });
+
+  it("throws for non-positive values via parsePositiveInt", () => {
+    expect(() => parseAnthropicThinkingBudgetTokens("0")).toThrow(
+      "positive integer",
+    );
+    expect(() => parseAnthropicThinkingBudgetTokens("-5")).toThrow(
+      "positive integer",
+    );
+  });
+});
+
+describe("parseOpenAIReasoningEffort", () => {
+  it("accepts every supported effort level", () => {
+    expect(parseOpenAIReasoningEffort("minimal")).toBe("minimal");
+    expect(parseOpenAIReasoningEffort("low")).toBe("low");
+    expect(parseOpenAIReasoningEffort("medium")).toBe("medium");
+    expect(parseOpenAIReasoningEffort("high")).toBe("high");
+  });
+
+  it("throws for an unknown effort level", () => {
+    expect(() => parseOpenAIReasoningEffort("extreme")).toThrow(
+      InvalidArgumentError,
+    );
+    expect(() => parseOpenAIReasoningEffort("")).toThrow("minimal, low");
+  });
+});
+
+describe("parseSystemPromptProfile", () => {
+  it("accepts default and minimal", () => {
+    expect(parseSystemPromptProfile("default")).toBe("default");
+    expect(parseSystemPromptProfile("minimal")).toBe("minimal");
+  });
+
+  it("throws for an unknown profile", () => {
+    expect(() => parseSystemPromptProfile("verbose")).toThrow(
+      InvalidArgumentError,
+    );
+  });
+});
+
+describe("parseToolPresentationProfile", () => {
+  it("normalizes canonical aliases to their canonical form", () => {
+    expect(parseToolPresentationProfile("grouped")).toBe("grouped");
+    expect(parseToolPresentationProfile("compact")).toBe("grouped");
+    expect(parseToolPresentationProfile("raw")).toBe("raw");
+    expect(parseToolPresentationProfile("canonical")).toBe("raw");
+    expect(parseToolPresentationProfile("obfuscated")).toBe("obfuscated");
+  });
+
+  it("throws for an unknown profile", () => {
+    expect(() => parseToolPresentationProfile("fancy")).toThrow(
+      InvalidArgumentError,
+    );
+    expect(() => parseToolPresentationProfile("")).toThrow("Received:");
+  });
+});
+
+describe("parseToolDescriptionStyle", () => {
+  it("accepts canonical and simple", () => {
+    expect(parseToolDescriptionStyle("canonical")).toBe("canonical");
+    expect(parseToolDescriptionStyle("simple")).toBe("simple");
+  });
+
+  it("throws for an unknown style", () => {
+    expect(() => parseToolDescriptionStyle("verbose")).toThrow(
+      InvalidArgumentError,
+    );
+  });
+});
+
+describe("parseToolSearchIndexProfile", () => {
+  it("accepts presented and canonical", () => {
+    expect(parseToolSearchIndexProfile("presented")).toBe("presented");
+    expect(parseToolSearchIndexProfile("canonical")).toBe("canonical");
+  });
+
+  it("throws for an unknown profile", () => {
+    expect(() => parseToolSearchIndexProfile("raw")).toThrow(
+      InvalidArgumentError,
+    );
+  });
+});
+
 describe("collectToolOverride", () => {
   it("accumulates overrides", () => {
     const result = collectToolOverride("my_tool=allow", {});
@@ -107,9 +211,32 @@ describe("collectToolOverride", () => {
     expect(result).toEqual({ a: "allow", b: "deny" });
   });
 
+  it("trims whitespace around tool name and mode", () => {
+    const result = collectToolOverride("  my_tool  =  confirm  ", {});
+    expect(result).toEqual({ my_tool: "confirm" });
+  });
+
   it("throws for missing separator", () => {
     expect(() => collectToolOverride("no_equals", {})).toThrow(
       "Invalid --tool-override",
+    );
+  });
+
+  it("throws when separator is the first character", () => {
+    expect(() => collectToolOverride("=allow", {})).toThrow(
+      "Invalid --tool-override",
+    );
+  });
+
+  it("throws when separator is the last character", () => {
+    expect(() => collectToolOverride("tool=", {})).toThrow(
+      "Invalid --tool-override",
+    );
+  });
+
+  it("throws when the tool name is only whitespace", () => {
+    expect(() => collectToolOverride("   =allow", {})).toThrow(
+      "Invalid tool name in --tool-override",
     );
   });
 

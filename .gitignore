@@ -5,4 +5,3 @@ dist
 .DS_Store
 coverage/
 .claude/
-docs/compose/

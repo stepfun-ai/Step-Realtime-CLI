@@ -2,12 +2,18 @@ import { describe, it, expect } from "vitest";
 import type {
   UserClarificationRequest,
   UserClarificationOption,
+  UserClarificationResponse,
+  UserClarificationRuntimeState,
 } from "@step-cli/protocol";
 import {
   parseClarificationAnswer,
   formatClarificationOption,
   clarificationAllowsFreeform,
   normalizeUserClarificationRequest,
+  buildClarificationHelpLines,
+  cloneUserClarificationResponse,
+  cloneUserClarificationRuntimeState,
+  isUserClarificationRuntimeState,
 } from "./clarification.js";
 
 // ---------------------------------------------------------------------------
@@ -153,6 +159,355 @@ describe("clarification", () => {
     it("trims input before processing", () => {
       const result = parseClarificationAnswer(makeRequest(), "  help  ");
       expect(result.kind).toBe("help");
+    });
+
+    it("treats uppercase CANCEL as cancel", () => {
+      const result = parseClarificationAnswer(makeRequest(), "CANCEL");
+      expect(result.kind).toBe("cancel");
+    });
+
+    it("treats uppercase HELP as help", () => {
+      const result = parseClarificationAnswer(makeRequest(), "HELP");
+      expect(result.kind).toBe("help");
+    });
+
+    it("falls through to freeform when request has no options at all", () => {
+      const result = parseClarificationAnswer(
+        makeRequest({ options: undefined }),
+        "anything goes",
+      );
+      expect(result.kind).toBe("answer");
+      if (result.kind === "answer") {
+        expect(result.response.source).toBe("freeform");
+        expect(result.response.answer).toBe("anything goes");
+      }
+    });
+
+    it("returns invalid for empty option list with freeform disabled", () => {
+      const result = parseClarificationAnswer(
+        makeRequest({ options: undefined, allowFreeform: false }),
+        "anything",
+      );
+      expect(result.kind).toBe("invalid");
+      if (result.kind === "invalid") {
+        expect(result.message).toContain("disabled");
+      }
+    });
+
+    it("matches option by value when value differs from label", () => {
+      const result = parseClarificationAnswer(makeRequest(), "REFACTOR");
+      expect(result.kind).toBe("answer");
+      if (result.kind === "answer") {
+        expect(result.response.source).toBe("option");
+        expect(result.response.answer).toBe("refactor");
+      }
+    });
+
+    it("does not match numeric zero (out of 1-based range) and uses freeform", () => {
+      const result = parseClarificationAnswer(makeRequest(), "0");
+      expect(result.kind).toBe("answer");
+      if (result.kind === "answer") {
+        expect(result.response.source).toBe("freeform");
+        expect(result.response.answer).toBe("0");
+      }
+    });
+  });
+
+  // ---- buildClarificationHelpLines ----
+
+  describe("buildClarificationHelpLines", () => {
+    it("lists number/label/value and freeform when options exist and freeform allowed", () => {
+      const lines = buildClarificationHelpLines({
+        question: "q?",
+        options: [{ label: "A", value: "a" }],
+      });
+      expect(lines[0]).toBe(
+        "Accepted input: number / label / value / freeform text",
+      );
+      expect(lines).toContain("Type cancel or c to abort the clarification.");
+      expect(lines).toContain("Type ? or help to repeat these instructions.");
+    });
+
+    it("omits freeform text when freeform disabled but options exist", () => {
+      const lines = buildClarificationHelpLines({
+        question: "q?",
+        options: [{ label: "A", value: "a" }],
+        allowFreeform: false,
+      });
+      expect(lines[0]).toBe("Accepted input: number / label / value");
+    });
+
+    it("shows only freeform text when no options exist", () => {
+      const lines = buildClarificationHelpLines({ question: "q?" });
+      expect(lines[0]).toBe("Accepted input: freeform text");
+    });
+
+    it("falls back to default accepted-input line when nothing accepted", () => {
+      const lines = buildClarificationHelpLines({
+        question: "q?",
+        options: [],
+        allowFreeform: false,
+      });
+      expect(lines[0]).toBe("Accepted input: freeform text");
+    });
+  });
+
+  // ---- cloneUserClarificationResponse ----
+
+  describe("cloneUserClarificationResponse", () => {
+    it("clones a cancelled response", () => {
+      const response: UserClarificationResponse = {
+        cancelled: true,
+        reason: "nope",
+      };
+      const clone = cloneUserClarificationResponse(response);
+      expect(clone).toEqual({ cancelled: true, reason: "nope" });
+      expect(clone).not.toBe(response);
+    });
+
+    it("clones a freeform answer without matchedOption", () => {
+      const response: UserClarificationResponse = {
+        cancelled: false,
+        answer: "hello",
+        source: "freeform",
+      };
+      const clone = cloneUserClarificationResponse(response);
+      expect(clone).toEqual({
+        cancelled: false,
+        answer: "hello",
+        source: "freeform",
+        matchedOption: undefined,
+      });
+    });
+
+    it("deep-clones the matchedOption for option answers", () => {
+      const option: UserClarificationOption = { label: "A", value: "a" };
+      const response: UserClarificationResponse = {
+        cancelled: false,
+        answer: "a",
+        source: "option",
+        matchedOption: option,
+      };
+      const clone = cloneUserClarificationResponse(response);
+      if (!clone.cancelled) {
+        expect(clone.matchedOption).toEqual(option);
+        expect(clone.matchedOption).not.toBe(option);
+      }
+    });
+  });
+
+  // ---- cloneUserClarificationRuntimeState ----
+
+  describe("cloneUserClarificationRuntimeState", () => {
+    function makeState(
+      overrides: Partial<UserClarificationRuntimeState> = {},
+    ): UserClarificationRuntimeState {
+      return {
+        maxPerTurn: 3,
+        usedThisTurn: 1,
+        remainingThisTurn: 2,
+        totalRequests: 5,
+        pending: null,
+        history: [],
+        ...overrides,
+      };
+    }
+
+    it("clones a state with null pending and empty history", () => {
+      const state = makeState();
+      const clone = cloneUserClarificationRuntimeState(state);
+      expect(clone).toEqual(state);
+      expect(clone).not.toBe(state);
+      expect(clone.history).not.toBe(state.history);
+    });
+
+    it("deep-clones pending and history entries", () => {
+      const state = makeState({
+        pending: {
+          id: "p1",
+          requestedAt: "2026-01-01T00:00:00Z",
+          request: {
+            question: "q?",
+            allowFreeform: true,
+            options: [{ label: "A", value: "a" }],
+          },
+        },
+        history: [
+          {
+            id: "h1",
+            requestedAt: "2026-01-01T00:00:00Z",
+            completedAt: "2026-01-01T00:01:00Z",
+            request: { question: "old?", allowFreeform: false },
+            response: {
+              cancelled: false,
+              answer: "a",
+              source: "option",
+              matchedOption: { label: "A", value: "a" },
+            },
+          },
+        ],
+      });
+      const clone = cloneUserClarificationRuntimeState(state);
+      expect(clone.pending).toEqual(state.pending);
+      expect(clone.pending).not.toBe(state.pending);
+      expect(clone.history[0]).toEqual(state.history[0]);
+      expect(clone.history[0]).not.toBe(state.history[0]);
+    });
+  });
+
+  // ---- isUserClarificationRuntimeState ----
+
+  describe("isUserClarificationRuntimeState", () => {
+    const validState: UserClarificationRuntimeState = {
+      maxPerTurn: 3,
+      usedThisTurn: 1,
+      remainingThisTurn: 2,
+      totalRequests: 5,
+      pending: null,
+      history: [],
+    };
+
+    it("accepts a valid state", () => {
+      expect(isUserClarificationRuntimeState(validState)).toBe(true);
+    });
+
+    it("accepts a valid state with pending and history", () => {
+      const state: UserClarificationRuntimeState = {
+        ...validState,
+        pending: {
+          id: "p1",
+          requestedAt: "ts",
+          request: { question: "q?", allowFreeform: true },
+        },
+        history: [
+          {
+            id: "h1",
+            requestedAt: "ts",
+            completedAt: "ts2",
+            request: {
+              question: "q?",
+              allowFreeform: false,
+              reason: "because",
+              options: [{ label: "A", value: "a" }],
+            },
+            response: { cancelled: true, reason: "x" },
+          },
+        ],
+      };
+      expect(isUserClarificationRuntimeState(state)).toBe(true);
+    });
+
+    it("rejects non-objects", () => {
+      expect(isUserClarificationRuntimeState(null)).toBe(false);
+      expect(isUserClarificationRuntimeState(undefined)).toBe(false);
+      expect(isUserClarificationRuntimeState("x")).toBe(false);
+      expect(isUserClarificationRuntimeState([])).toBe(false);
+    });
+
+    it("rejects negative or non-integer counters", () => {
+      expect(
+        isUserClarificationRuntimeState({ ...validState, maxPerTurn: -1 }),
+      ).toBe(false);
+      expect(
+        isUserClarificationRuntimeState({ ...validState, usedThisTurn: 1.5 }),
+      ).toBe(false);
+      expect(
+        isUserClarificationRuntimeState({
+          ...validState,
+          remainingThisTurn: "2",
+        }),
+      ).toBe(false);
+      expect(
+        isUserClarificationRuntimeState({ ...validState, totalRequests: NaN }),
+      ).toBe(false);
+    });
+
+    it("rejects an invalid pending object", () => {
+      expect(
+        isUserClarificationRuntimeState({
+          ...validState,
+          pending: { id: 1, requestedAt: "ts", request: {} },
+        }),
+      ).toBe(false);
+    });
+
+    it("rejects when history is not an array", () => {
+      expect(
+        isUserClarificationRuntimeState({ ...validState, history: "nope" }),
+      ).toBe(false);
+    });
+
+    it("rejects when a history entry is malformed", () => {
+      expect(
+        isUserClarificationRuntimeState({
+          ...validState,
+          history: [{ id: "h1" }],
+        }),
+      ).toBe(false);
+    });
+
+    it("rejects history entry whose request is invalid", () => {
+      expect(
+        isUserClarificationRuntimeState({
+          ...validState,
+          history: [
+            {
+              id: "h1",
+              requestedAt: "ts",
+              completedAt: "ts2",
+              request: { question: 5, allowFreeform: true },
+              response: { cancelled: true },
+            },
+          ],
+        }),
+      ).toBe(false);
+    });
+
+    it("rejects history entry whose response is invalid", () => {
+      expect(
+        isUserClarificationRuntimeState({
+          ...validState,
+          history: [
+            {
+              id: "h1",
+              requestedAt: "ts",
+              completedAt: "ts2",
+              request: { question: "q?", allowFreeform: true },
+              response: { cancelled: false, answer: "a", source: "bogus" },
+            },
+          ],
+        }),
+      ).toBe(false);
+    });
+
+    it("rejects request with non-string reason", () => {
+      expect(
+        isUserClarificationRuntimeState({
+          ...validState,
+          pending: {
+            id: "p1",
+            requestedAt: "ts",
+            request: { question: "q?", allowFreeform: true, reason: 7 },
+          },
+        }),
+      ).toBe(false);
+    });
+
+    it("rejects request with malformed options entries", () => {
+      expect(
+        isUserClarificationRuntimeState({
+          ...validState,
+          pending: {
+            id: "p1",
+            requestedAt: "ts",
+            request: {
+              question: "q?",
+              allowFreeform: true,
+              options: [{ label: "A" }],
+            },
+          },
+        }),
+      ).toBe(false);
     });
   });
 

@@ -215,7 +215,7 @@ Time-ordered list with owner + dependency. Strike through items that completed a
 - Hyperlinks: full URLs, never bare `#11`
 ```
 
-Use full markdown links for every PR / commit reference: `[PR #11](https://github.com/<org>/<repo>/pull/11)`, not `PR #11`. Same for table cells (`[#11](url)`) and English-prose mentions (`taken in [#12](url)`). To avoid nested-bracket bugs when running replace_all, scrub any pre-existing `[PR #11 - title](url)` style links to `[Pull request 11 — title](url)` first, then replace_all `PR #11` → linked form.
+Use full markdown links for every PR / commit reference: `[PR #11](https://github.com/<org>/<repo>/pull/11)`, not `PR #11`. Same for table cells (`[#11](url)`) and English-prose mentions (`taken in [#12](url)`). To avoid nested-bracket bugs when running replace*all, scrub any pre-existing `[PR #11 - title](url)` style links to `[Pull request 11 — title](url)` \_first*, then replace_all `PR #11` → linked form.
 
 ### Step 6 — Bilingual comment drafting
 
