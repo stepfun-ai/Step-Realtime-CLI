@@ -15,13 +15,20 @@ type AudioCommand = { cmd: string; args: string[] };
 
 export type SoxAudioCommandOptions = {
   platform?: NodeJS.Platform | string;
+  env?: NodeJS.ProcessEnv;
 };
+
+function trimmedEnv(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const value = env[key]?.trim();
+  return value ? value : undefined;
+}
 
 export function resolveSoxAudioCommands(options: SoxAudioCommandOptions = {}): {
   capture: AudioCommand;
   playback: AudioCommand;
 } {
   const currentPlatform = options.platform ?? platform();
+  const env = options.env ?? process.env;
 
   if (currentPlatform === "win32") {
     throw new Error(
@@ -35,8 +42,10 @@ export function resolveSoxAudioCommands(options: SoxAudioCommandOptions = {}): {
     // configured") and silently capture silence. STEP_SOX_INPUT_DEVICE lets
     // the user pin an explicit CoreAudio device name (e.g. "MacBook Pro麦克风"),
     // which captures correctly. Falls back to `-d` when unset.
-    const dev = process.env.STEP_SOX_INPUT_DEVICE;
-    const input = dev ? ["-t", "coreaudio", dev] : ["-d"];
+    const inputDevice = trimmedEnv(env, "STEP_SOX_INPUT_DEVICE");
+    const outputDevice = trimmedEnv(env, "STEP_SOX_OUTPUT_DEVICE");
+    const input = inputDevice ? ["-t", "coreaudio", inputDevice] : ["-d"];
+    const output = outputDevice ? ["-t", "coreaudio", outputDevice] : ["-d"];
     return {
       capture: {
         cmd: "sox",
@@ -69,7 +78,7 @@ export function resolveSoxAudioCommands(options: SoxAudioCommandOptions = {}): {
           "-c",
           String(CHANNELS),
           "-",
-          "-d",
+          ...output,
         ],
       },
     };
