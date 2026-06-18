@@ -2,16 +2,6 @@
 
 Thanks for your interest in contributing.
 
-## Core contributors
-
-The step-realtime-cli (stepfun CLI) team core contributors:
-
-- [@ZouR-Ma](https://github.com/ZouR-Ma)
-- [@qiushi20260601](https://github.com/qiushi20260601)
-- [@MelodyVAR](https://github.com/MelodyVAR)
-- [@beanzhou](https://github.com/beanzhou)
-- [@icystone](https://github.com/icystone)
-
 ## Quick start
 
 ```bash
