@@ -39,6 +39,7 @@ import {
   getTuiThemeNames,
   hasTuiTheme,
   mergeTuiThemes,
+  resolveTuiTranscriptRailColor,
   resolveTuiTheme,
   type StepCliTuiThemeColors,
   type StepCliTuiThemeName,
@@ -1080,7 +1081,7 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
           setStatus({
             tone: "accent",
             label: "Theme",
-            detail: `Current ${themeName}. Available: ${availableThemesLabel}. Use /theme <name>.`,
+            detail: `Current ${themeName}. Available: ${availableThemesLabel}. Use /theme <name> or /theme ${DEFAULT_TUI_THEME_NAME} to recover the default theme.`,
           });
           return true;
         }
@@ -1089,7 +1090,7 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
           setStatus({
             tone: "warning",
             label: "Theme",
-            detail: `Unknown theme "${requestedThemeName}". Available: ${availableThemesLabel}.`,
+            detail: `Unknown theme "${requestedThemeName}". Available: ${availableThemesLabel}. Use /theme ${DEFAULT_TUI_THEME_NAME} to recover the default theme.`,
           });
           return false;
         }
@@ -1486,7 +1487,7 @@ const TranscriptPane = React.memo(function TranscriptPane(input: {
       {summaryLines.length > 0 ? (
         <box flexDirection="column" marginBottom={1}>
           <text fg={input.theme.foreground}>
-            <span bg={input.theme.systemBadge} fg={input.theme.warning}>
+            <span bg={input.theme.systemBadge} fg={input.theme.foreground}>
               {" "}
               SUMMARY{" "}
             </span>
@@ -2113,42 +2114,43 @@ function resolveTranscriptBadgeStyle(
   textColor: string;
   railColor: string;
 } {
+  const railColor = resolveTuiTranscriptRailColor(theme);
   switch (tone) {
     case "accent":
       return {
         backgroundColor: theme.userBadge,
-        textColor: theme.accent,
-        railColor: theme.accent,
+        textColor: theme.foreground,
+        railColor,
       };
     case "brand":
       return {
         backgroundColor: theme.assistantBadge,
-        textColor: theme.brand,
-        railColor: theme.brand,
+        textColor: theme.foreground,
+        railColor,
       };
     case "success":
       return {
         backgroundColor: theme.toolBadge,
-        textColor: theme.success,
-        railColor: theme.success,
+        textColor: theme.foreground,
+        railColor,
       };
     case "warning":
       return {
         backgroundColor: theme.systemBadge,
-        textColor: theme.warning,
-        railColor: theme.warning,
+        textColor: theme.foreground,
+        railColor,
       };
     case "danger":
       return {
         backgroundColor: theme.systemBadge,
-        textColor: theme.danger,
-        railColor: theme.danger,
+        textColor: theme.foreground,
+        railColor,
       };
     case "muted":
       return {
         backgroundColor: theme.systemBadge,
-        textColor: theme.muted,
-        railColor: theme.line,
+        textColor: theme.foreground,
+        railColor,
       };
   }
 }

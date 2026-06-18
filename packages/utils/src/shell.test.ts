@@ -3,6 +3,9 @@ import os from "node:os";
 import { enforceOutputLimit, runShell } from "./shell.js";
 
 const BIG_LIMIT = 1_000_000;
+const longRunningCommand = `${JSON.stringify(
+  process.execPath,
+)} -e "setTimeout(() => {}, 5000)"`;
 
 // Some runShell cases assert POSIX shell semantics (`;` chaining, `exit N`,
 // `for`/`seq`) that cmd.exe does not interpret. Skip those on Windows; the
@@ -151,7 +154,7 @@ describe("runShell", () => {
   });
 
   it("times out a long-running command and kills it", async () => {
-    const result = await runShell("sleep 5", {
+    const result = await runShell(longRunningCommand, {
       cwd,
       timeoutMs: 100,
       outputLimit: BIG_LIMIT,
@@ -164,7 +167,7 @@ describe("runShell", () => {
 
   it("interrupts a running command when the signal aborts mid-flight", async () => {
     const controller = new AbortController();
-    const promise = runShell("sleep 5", {
+    const promise = runShell(longRunningCommand, {
       cwd,
       timeoutMs: 10_000,
       outputLimit: BIG_LIMIT,
@@ -190,7 +193,7 @@ describe("runShell", () => {
   });
 
   it("returns exitCode -1 when the close code is null (killed by timeout)", async () => {
-    const result = await runShell("sleep 5", {
+    const result = await runShell(longRunningCommand, {
       cwd,
       timeoutMs: 50,
       outputLimit: BIG_LIMIT,
