@@ -4,6 +4,11 @@ import { enforceOutputLimit, runShell } from "./shell.js";
 
 const BIG_LIMIT = 1_000_000;
 
+// Some runShell cases assert POSIX shell semantics (`;` chaining, `exit N`,
+// `for`/`seq`) that cmd.exe does not interpret. Skip those on Windows; the
+// ubuntu/macOS legs still exercise them (so coverage is unaffected).
+const isWindows = process.platform === "win32";
+
 // ---------------------------------------------------------------------------
 // shell.ts (from batch2)
 // ---------------------------------------------------------------------------
@@ -119,7 +124,7 @@ describe("runShell", () => {
     expect(result.interrupted).toBe(false);
   });
 
-  it("captures stderr and a non-zero exit code", async () => {
+  it.skipIf(isWindows)("captures stderr and a non-zero exit code", async () => {
     const result = await runShell("echo oops 1>&2; exit 3", {
       cwd,
       timeoutMs: 10_000,
@@ -174,7 +179,7 @@ describe("runShell", () => {
     expect(result.stderr).toContain("Process interrupted by user.");
   });
 
-  it("applies the output limit to large stdout", async () => {
+  it.skipIf(isWindows)("applies the output limit to large stdout", async () => {
     // Produce more than the limit so truncation kicks in.
     const result = await runShell(
       "for i in $(seq 1 200); do echo 0123456789; done",
