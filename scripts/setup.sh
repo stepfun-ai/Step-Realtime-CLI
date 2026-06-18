@@ -148,10 +148,15 @@ bold "[4/7] AEC (echo cancellation)"
 
 detect_chrome() {
   if [[ -n "${STEP_CHROME_PATH:-}" && -x "$STEP_CHROME_PATH" ]]; then return 0; fi
+  if [[ -n "${CHROME_PATH:-}" && -x "$CHROME_PATH" ]]; then return 0; fi
   case "$(uname -s)" in
     Darwin)
-      [[ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]] && return 0
-      [[ -x "/Applications/Chromium.app/Contents/MacOS/Chromium" ]] && return 0
+      for prefix in "/Applications" "$HOME/Applications"; do
+        [[ -x "$prefix/Google Chrome.app/Contents/MacOS/Google Chrome" ]] && return 0
+        [[ -x "$prefix/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary" ]] && return 0
+        [[ -x "$prefix/Chromium.app/Contents/MacOS/Chromium" ]] && return 0
+        [[ -x "$prefix/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" ]] && return 0
+      done
       ;;
     Linux)
       for bin in google-chrome google-chrome-stable chromium chromium-browser; do
