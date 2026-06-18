@@ -38,7 +38,7 @@
     "test:changed": "vitest run --changed"
   },
   "dependencies": {
-    "@opentui/core": "^0.1.90",
+    "@opentui/core": "^0.4.1",
     "@opentui/react": "^0.1.90",
     "@step-cli/core": "workspace:*",
     "@step-cli/llm": "workspace:*",
