@@ -1051,7 +1051,6 @@ function computeRetryDelayMs(attempt: number): number {
 async function sleep(delayMs: number, signal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", abort);
       resolve();
     }, delayMs);
 
