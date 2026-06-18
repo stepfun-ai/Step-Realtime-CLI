@@ -34,7 +34,8 @@
     "step:fresh": "node scripts/run-step.mjs --full",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:changed": "vitest run --changed"
   },
   "dependencies": {
     "@opentui/core": "^0.1.90",
@@ -79,6 +80,7 @@
   },
   "packageManager": "pnpm@10.17.0",
   "simple-git-hooks": {
-    "pre-commit": "pnpm check:staged-files && pnpm lint && pnpm exec tsc --noEmit && pnpm format:check"
+    "pre-commit": "pnpm check:staged-files && pnpm lint && pnpm exec tsc --noEmit && pnpm format:check && pnpm test:changed",
+    "pre-push": "pnpm check"
   }
 }

@@ -174,6 +174,8 @@ step config sync --write
 
 Issues and pull requests are welcome. Please refer to [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) for development conventions.
 
+Core contributors (stepfun CLI team): [@ZouR-Ma](https://github.com/ZouR-Ma) · [@qiushi20260601](https://github.com/qiushi20260601) · [@MelodyVAR](https://github.com/MelodyVAR) · [@beanzhou](https://github.com/beanzhou) · [@icystone](https://github.com/icystone)
+
 ## License
 
 Step Realtime CLI is licensed under the MIT License. You can find the license file in the [LICENSE](LICENSE) file of this repository. This permits free use, modification, and distribution of the software, provided that the original copyright notice and license terms are retained.

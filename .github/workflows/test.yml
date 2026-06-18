@@ -43,10 +43,48 @@ jobs:
             exit 1
           }
 
+      # —— 静态检查（与本地 pnpm check 一致，分步以便定位失败）——
       - run: pnpm lint
+      - run: pnpm dep-guard
+      - run: pnpm deadcode
       - run: pnpm exec tsc --noEmit
-      - run: pnpm test
+      - run: pnpm format:check
 
+      # —— 测试：ubuntu 跑覆盖率（含阈值守门），其他平台跑普通 test ——
+      - name: Test (with coverage on ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm test:coverage
+
+      - name: Test
+        if: matrix.os != 'ubuntu-latest'
+        run: pnpm test
+
+      # —— 覆盖率上传（仅 ubuntu）——
+      - name: Upload coverage report (artifact)
+        if: matrix.os == 'ubuntu-latest' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+      - name: Check Codecov token
+        if: matrix.os == 'ubuntu-latest'
+        id: codecov_check
+        run: |
+          if [ -n "${{ secrets.CODECOV_TOKEN }}" ]; then
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload to Codecov
+        if: matrix.os == 'ubuntu-latest' && steps.codecov_check.outputs.has_token == 'true'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+
+      # —— Windows 专属构建与 smoke（保留原逻辑） ——
       - name: Build on Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh

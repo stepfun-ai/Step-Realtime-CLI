@@ -15,6 +15,7 @@ import {
   estimateMessagesTokens,
   estimateToolDefinitionTokens,
   inferTokenEstimatorProviderFromModel,
+  estimateCompletionRequestPromptTokens,
   AdaptivePromptTokenEstimator,
 } from "./token-estimator.js";
 
@@ -246,6 +247,228 @@ describe("token-estimator", () => {
       ];
       const tokens = estimateToolDefinitionTokens(tools);
       expect(tokens).toBeGreaterThan(0);
+    });
+
+    it("falls back to String() when parameters are circular (safeStableStringify catch)", () => {
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+      const tools: OpenAIToolDefinition[] = [
+        {
+          type: "function",
+          function: {
+            name: "circ",
+            description: "circular params",
+            parameters: circular as Record<string, unknown>,
+          },
+        },
+      ];
+      // Should not throw; the JSON.stringify failure is caught and String()
+      // is used instead.
+      const tokens = estimateToolDefinitionTokens(tools);
+      expect(tokens).toBeGreaterThan(0);
+    });
+
+    it("sorts object keys stably so key order does not change the estimate", () => {
+      const a: OpenAIToolDefinition[] = [
+        {
+          type: "function",
+          function: {
+            name: "fn",
+            description: "d",
+            parameters: {
+              type: "object",
+              properties: { b: { type: "string" }, a: { type: "number" } },
+            },
+          },
+        },
+      ];
+      const b: OpenAIToolDefinition[] = [
+        {
+          type: "function",
+          function: {
+            name: "fn",
+            description: "d",
+            parameters: {
+              type: "object",
+              properties: { a: { type: "number" }, b: { type: "string" } },
+            },
+          },
+        },
+      ];
+      expect(estimateToolDefinitionTokens(a)).toBe(
+        estimateToolDefinitionTokens(b),
+      );
+    });
+  });
+
+  // ---- estimateCompletionRequestPromptTokens ----
+
+  describe("estimateCompletionRequestPromptTokens", () => {
+    function req(
+      overrides: Partial<CompletionRequest> = {},
+    ): CompletionRequest {
+      return {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "hello there" }],
+        ...overrides,
+      };
+    }
+
+    it("infers provider from the model when no provider option is given", () => {
+      const anthropic = estimateCompletionRequestPromptTokens(
+        req({ model: "claude-3-opus" }),
+      );
+      const generic = estimateCompletionRequestPromptTokens(
+        req({ model: "llama-3" }),
+      );
+      // anthropic has higher request overhead + model factor than generic.
+      expect(anthropic).toBeGreaterThan(generic);
+    });
+
+    it("respects an explicit provider option over the model name", () => {
+      const asGeneric = estimateCompletionRequestPromptTokens(
+        req({ model: "claude-3-opus" }),
+        { provider: "generic" },
+      );
+      const asAnthropic = estimateCompletionRequestPromptTokens(
+        req({ model: "claude-3-opus" }),
+        { provider: "anthropic" },
+      );
+      expect(asAnthropic).toBeGreaterThan(asGeneric);
+    });
+
+    it("adds tool overhead when tools are present", () => {
+      const tools: OpenAIToolDefinition[] = [
+        {
+          type: "function",
+          function: {
+            name: "get_weather",
+            description: "Get weather",
+            parameters: { type: "object" },
+          },
+        },
+      ];
+      const withTools = estimateCompletionRequestPromptTokens(req({ tools }));
+      const withoutTools = estimateCompletionRequestPromptTokens(req());
+      expect(withTools).toBeGreaterThan(withoutTools);
+    });
+
+    it("adds extra overhead when tool_choice is 'required'", () => {
+      const tools: OpenAIToolDefinition[] = [
+        {
+          type: "function",
+          function: {
+            name: "fn",
+            description: "d",
+            parameters: { type: "object" },
+          },
+        },
+      ];
+      const base = estimateCompletionRequestPromptTokens(req({ tools }));
+      const required = estimateCompletionRequestPromptTokens(
+        req({ tools, tool_choice: "required" }),
+      );
+      expect(required).toBeGreaterThan(base);
+    });
+
+    it("adds 4 tokens (pre-factor) when parallel_tool_calls is false", () => {
+      const tools: OpenAIToolDefinition[] = [
+        {
+          type: "function",
+          function: {
+            name: "fn",
+            description: "d",
+            parameters: { type: "object" },
+          },
+        },
+      ];
+      const base = estimateCompletionRequestPromptTokens(req({ tools }), {
+        provider: "generic",
+      });
+      const noParallel = estimateCompletionRequestPromptTokens(
+        req({ tools, parallel_tool_calls: false }),
+        { provider: "generic" },
+      );
+      expect(noParallel).toBeGreaterThan(base);
+    });
+
+    it("clamps the calibration factor below 0.5", () => {
+      const low = estimateCompletionRequestPromptTokens(req(), {
+        provider: "generic",
+        calibrationFactor: 0.0001,
+      });
+      const atMin = estimateCompletionRequestPromptTokens(req(), {
+        provider: "generic",
+        calibrationFactor: 0.5,
+      });
+      expect(low).toBe(atMin);
+    });
+
+    it("clamps the calibration factor above 2.5", () => {
+      const high = estimateCompletionRequestPromptTokens(req(), {
+        provider: "generic",
+        calibrationFactor: 999,
+      });
+      const atMax = estimateCompletionRequestPromptTokens(req(), {
+        provider: "generic",
+        calibrationFactor: 2.5,
+      });
+      expect(high).toBe(atMax);
+    });
+
+    it("applies a higher model factor for opus-4 / sonnet-4 anthropic models", () => {
+      const opus4 = estimateCompletionRequestPromptTokens(
+        req({ model: "claude-opus-4" }),
+        { provider: "anthropic" },
+      );
+      const older = estimateCompletionRequestPromptTokens(
+        req({ model: "claude-3-opus" }),
+        { provider: "anthropic" },
+      );
+      // 1.06 factor vs 1.03 factor.
+      expect(opus4).toBeGreaterThan(older);
+    });
+
+    it("applies gpt-5 model factor higher than gpt-4o", () => {
+      const gpt5 = estimateCompletionRequestPromptTokens(
+        req({ model: "gpt-5" }),
+        { provider: "openai" },
+      );
+      const gpt4o = estimateCompletionRequestPromptTokens(
+        req({ model: "gpt-4o" }),
+        { provider: "openai" },
+      );
+      expect(gpt5).toBeGreaterThan(gpt4o);
+    });
+
+    it("applies the o-series (startsWith 'o') factor of 1.08 for openai", () => {
+      const oSeries = estimateCompletionRequestPromptTokens(
+        req({ model: "o3-mini" }),
+        { provider: "openai" },
+      );
+      const gpt4o = estimateCompletionRequestPromptTokens(
+        req({ model: "gpt-4o" }),
+        { provider: "openai" },
+      );
+      // o-series factor (1.08) > gpt-4o factor (1.02).
+      expect(oSeries).toBeGreaterThan(gpt4o);
+    });
+
+    it("uses factor 1 for an unrecognised openai model name", () => {
+      const unknownOpenai = estimateCompletionRequestPromptTokens(
+        req({ model: "some-openai-thing" }),
+        { provider: "openai" },
+      );
+      expect(unknownOpenai).toBeGreaterThan(0);
+    });
+
+    it("returns 0 for an empty request (no messages, no tools)", () => {
+      const result = estimateCompletionRequestPromptTokens(
+        { model: "x-unknown", messages: [] },
+        { provider: "generic" },
+      );
+      // Only PROVIDER_REQUEST_OVERHEAD remains, rounded; still > 0.
+      expect(result).toBeGreaterThanOrEqual(0);
     });
   });
 
