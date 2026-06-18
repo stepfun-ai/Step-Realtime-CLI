@@ -58,7 +58,7 @@
   "devDependencies": {
     "@opentui/core-darwin-arm64": "0.1.90",
     "@opentui/core-darwin-x64": "0.1.90",
-    "@opentui/core-linux-arm64": "0.1.90",
+    "@opentui/core-linux-arm64": "0.4.1",
     "@opentui/core-linux-x64": "0.1.90",
     "@opentui/core-win32-x64": "0.1.90",
     "@types/node": "^25.5.0",
