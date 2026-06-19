@@ -456,6 +456,11 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       },
       onModelToolCall: ({ toolName, rawArgs }) => {
         this.discardEmptyAssistantEntry();
+        // Reset the streaming assistant entry ID so that any text deltas
+        // arriving *after* this tool call (within the same streaming
+        // response) create a new assistant entry positioned after the
+        // tool entry, instead of appending to the pre-tool entry.
+        this.currentAssistantEntryId = null;
         const entryId = this.findCurrentToolEntryId(toolName);
         if (entryId) {
           this.updateLocalEntry(entryId, (entry) => ({
@@ -480,6 +485,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       },
       onToolStart: (info) => {
         this.discardEmptyAssistantEntry();
+        this.currentAssistantEntryId = null;
         const toolName = readString((info as { toolName?: unknown }).toolName);
         const entryId = this.findCurrentToolEntryId(toolName);
         if (entryId) {
@@ -574,6 +580,19 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
         content: message,
       }));
       this.currentAssistantEntryId = null;
+      return;
+    }
+
+    // currentAssistantEntryId may be null because onModelToolCall reset it
+    // after the streaming assistant text was finalized. Find the last
+    // transient assistant entry for the current turn and update it with the
+    // final message content.
+    const lastStreamingId = this.findLastStreamingAssistantEntryId();
+    if (lastStreamingId) {
+      this.updateLocalEntry(lastStreamingId, (entry) => ({
+        ...entry,
+        content: message,
+      }));
       return;
     }
 
@@ -705,6 +724,26 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
     );
     this.currentAssistantEntryId = null;
     this.emit();
+  }
+
+  /**
+   * Find the last transient assistant entry for the current turn. Used by
+   * `commitAssistantMessage` when `currentAssistantEntryId` was reset (e.g.
+   * by `onModelToolCall`) to locate the streaming entry that should receive
+   * the final message content.
+   */
+  private findLastStreamingAssistantEntryId(): string | null {
+    for (let i = this.localEntries.length - 1; i >= 0; i -= 1) {
+      const entry = this.localEntries[i];
+      if (
+        entry.role === "assistant" &&
+        entry.kind === "transient" &&
+        entry.turnId === this.currentTurnId
+      ) {
+        return entry.id;
+      }
+    }
+    return null;
   }
 
   private emit(): void {
