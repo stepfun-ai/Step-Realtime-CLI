@@ -84,7 +84,7 @@ export interface StepCliTuiSessionData {
 
 export interface StepCliTuiTranscriptEntry {
   id: string;
-  role: "assistant" | "user" | "tool" | "system";
+  role: "assistant" | "user" | "tool" | "system" | "reasoning";
   content: string;
   caption: string | null;
 }
