@@ -244,8 +244,21 @@ if ($SkipBun) {
   Write-Section "[2/8] Bun runtime (for OpenTUI TUI)"
   $BunBin = Install-Bun
   if ($BunBin) {
-    $env:STEP_BUN_BIN = $BunBin
-    Write-Ok "STEP_BUN_BIN set to $BunBin"
+    # WinGet installs Bun as an "app execution alias" — a zero-byte reparse
+    # point under %LOCALAPPDATA%\Microsoft\WinGet\Links\bun.exe. PowerShell
+    # and cmd.exe resolve it via shell APIs, but Node's child_process.spawn
+    # uses CreateProcess directly and gets ENOENT. Setting STEP_BUN_BIN to
+    # such a shim breaks Invoke-StepCli (which spawns via Node). When we
+    # detect a shim, leave STEP_BUN_BIN unset: Node spawns fall back to tsx
+    # and the installed step.cmd launcher resolves Bun via `where bun`.
+    if ($BunBin -match "WinGet\\Links\\") {
+      Write-Ok "Bun available at $BunBin (WinGet app execution alias)"
+      Write-Info "STEP_BUN_BIN not set — Node spawn cannot use WinGet aliases directly."
+      Write-Info "step.cmd launcher will resolve Bun via PATH (cmd handles aliases)."
+    } else {
+      $env:STEP_BUN_BIN = $BunBin
+      Write-Ok "STEP_BUN_BIN set to $BunBin"
+    }
   } else {
     Write-Warn "Proceeding without Bun. OpenTUI TUI will use Node fallback."
   }
