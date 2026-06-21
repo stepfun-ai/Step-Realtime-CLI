@@ -215,7 +215,11 @@ export function getVoiceRuntimeError(): string | null {
   if (isOpenTuiRuntimeSupported()) {
     return null;
   }
-  return "step voice requires Bun runtime on this platform. Install Bun via `winget install Oven-sh.Bun` or set STEP_BUN_BIN, then re-run.";
+  const installHint =
+    process.platform === "win32"
+      ? "Install Bun via `winget install Oven-sh.Bun`"
+      : "Install Bun from https://bun.sh";
+  return `step voice requires Bun runtime on this platform. ${installHint}, or set STEP_BUN_BIN, then re-run.`;
 }
 
 function normalizeInputMode(
