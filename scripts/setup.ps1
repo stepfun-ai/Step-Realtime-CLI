@@ -1,6 +1,7 @@
 param(
   [switch]$SkipInstall,
   [switch]$SkipBuild,
+  [switch]$SkipBun,
   [switch]$ForceConfig,
   [switch]$Uninstall,
   [switch]$Overseas,
@@ -104,6 +105,89 @@ function Find-Chrome {
   return $null
 }
 
+function Resolve-BunBin {
+  if ($env:STEP_BUN_BIN -and (Test-Path $env:STEP_BUN_BIN)) {
+    return $env:STEP_BUN_BIN
+  }
+  $cmd = Get-Command bun -ErrorAction SilentlyContinue
+  if ($cmd) {
+    return $cmd.Source
+  }
+  return $null
+}
+
+function Install-Bun {
+  <#
+    .SYNOPSIS
+      Ensures Bun is available on PATH. Strategy:
+        1. Already on PATH -> use it
+        2. winget -> install Oven-sh.Bun
+        3. Direct download -> github.com/oven-sh/bun/releases/latest
+      Returns the path to bun.exe, or $null if all attempts failed.
+  #>
+  $existing = Resolve-BunBin
+  if ($existing) {
+    Write-Ok "Bun already available: $existing"
+    return $existing
+  }
+
+  Write-Section "[bun] Installing Bun (needed for OpenTUI TUI on Windows)"
+
+  if (Test-Command "winget") {
+    Write-Info "Trying winget install Oven-sh.Bun ..."
+    & winget install Oven-sh.Bun --accept-source-agreements --accept-package-agreements --silent
+    if ($LASTEXITCODE -eq 0) {
+      $bunPath = Join-Path $HOME ".bun\bin\bun.exe"
+      $env:Path = "$HOME\.bun\bin;$env:Path"
+      $cmd = Get-Command bun -ErrorAction SilentlyContinue
+      if ($cmd) {
+        Write-Ok "Bun installed via winget: $($cmd.Source)"
+        return $cmd.Source
+      }
+      if (Test-Path $bunPath) {
+        Write-Ok "Bun installed via winget: $bunPath"
+        return $bunPath
+      }
+    }
+    Write-Warn "winget install exited $LASTEXITCODE; falling back to direct download"
+  }
+
+  $installDir = Join-Path $HOME ".bun"
+  $bunExe = Join-Path $installDir "bin\bun.exe"
+  if (Test-Path $bunExe) {
+    Write-Ok "Bun already downloaded at $bunExe"
+    return $bunExe
+  }
+
+  Write-Info "Downloading Bun for Windows x64 from github.com/oven-sh/bun ..."
+  $zipUrl = "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip"
+  $tmpZip = Join-Path $env:TEMP "bun-windows-x64.zip"
+  try {
+    Invoke-WebRequest -Uri $zipUrl -OutFile $tmpZip -UseBasicParsing
+    Expand-Archive -Path $tmpZip -DestinationPath $installDir -Force
+    # The zip extracts as `bun-windows-x64\bun.exe`; flatten into bin\
+    $nested = Join-Path $installDir "bun-windows-x64\bun.exe"
+    if (Test-Path $nested) {
+      New-Item -ItemType Directory -Force (Join-Path $installDir "bin") | Out-Null
+      Move-Item -Force $nested $bunExe
+      Remove-Item -Recurse -Force (Join-Path $installDir "bun-windows-x64") -ErrorAction SilentlyContinue
+    }
+    Remove-Item -Force $tmpZip -ErrorAction SilentlyContinue
+    if (Test-Path $bunExe) {
+      Add-UserPath (Join-Path $installDir "bin")
+      Write-Ok "Bun installed via direct download: $bunExe"
+      return $bunExe
+    }
+  } catch {
+    Write-Warn "Direct download failed: $($_.Exception.Message)"
+  }
+
+  Write-Err "Could not install Bun. OpenTUI TUI will not work."
+  Write-Info "Manual install: download from https://bun.com/docs/installation/windows"
+  Write-Info "Or re-run this script with -SkipBun to install with Node only (text CLI fallback)."
+  return $null
+}
+
 Set-Location (Join-Path $PSScriptRoot "..")
 $RepoRoot = (Get-Location).Path
 $InstallDir = Join-Path $HOME ".step-cli\bin"
@@ -115,11 +199,12 @@ if ($Uninstall) {
   Remove-UserPath $InstallDir
   Write-Ok "Removed $InstallDir and its user PATH entry"
   Write-Info "Config and session history under $HOME\.step-cli are preserved."
+  Write-Info "Bun installation (under $HOME\.bun) is preserved; uninstall via winget or by deleting the directory."
   exit 0
 }
 
 if (-not (Test-Command "pnpm")) {
-  Write-Section "[0/7] Bootstrapping pnpm via corepack"
+  Write-Section "[0/8] Bootstrapping pnpm via corepack"
   if (-not (Test-Command "corepack")) {
     Write-Err "Neither pnpm nor corepack was found in PATH."
     Write-Info "Install Node.js 20+ and then re-run this script."
@@ -135,7 +220,7 @@ if (-not (Test-Command "pnpm")) {
   Write-Ok "pnpm $(pnpm --version) ready"
 }
 
-Write-Section "[1/7] Installing workspace dependencies"
+Write-Section "[1/8] Installing workspace dependencies"
 if ($SkipInstall) {
   Write-Info "Skipped (-SkipInstall)"
 } else {
@@ -143,7 +228,22 @@ if ($SkipInstall) {
   Write-Ok "Workspace dependencies installed"
 }
 
-Write-Section "[2/7] Initializing user config"
+$BunBin = $null
+if ($SkipBun) {
+  Write-Section "[2/8] Bun (skipped via -SkipBun)"
+  Write-Warn "OpenTUI TUI will be unavailable; step will fall back to text CLI."
+} else {
+  Write-Section "[2/8] Bun runtime (for OpenTUI TUI)"
+  $BunBin = Install-Bun
+  if ($BunBin) {
+    $env:STEP_BUN_BIN = $BunBin
+    Write-Ok "STEP_BUN_BIN set to $BunBin"
+  } else {
+    Write-Warn "Proceeding without Bun. OpenTUI TUI will use Node fallback."
+  }
+}
+
+Write-Section "[3/8] Initializing user config"
 if ((Test-Path $UserConfig) -and (-not $ForceConfig)) {
   Write-Ok "Config already exists at $UserConfig (use -ForceConfig to overwrite)"
 } else {
@@ -155,7 +255,7 @@ if ((Test-Path $UserConfig) -and (-not $ForceConfig)) {
   Write-Ok "Config written to $UserConfig"
 }
 
-Write-Section "[3/7] Silero VAD"
+Write-Section "[4/8] Silero VAD"
 pnpm setup:silero
 if ($LASTEXITCODE -ne 0) {
   throw "setup:silero failed with exit code $LASTEXITCODE"
@@ -164,7 +264,7 @@ Invoke-StepCli vad set silero
 Invoke-StepCli vad status
 Write-Ok "Silero enabled (voice.defaults.vad = silero)"
 
-Write-Section "[4/7] Browser audio / AEC"
+Write-Section "[5/8] Browser audio / AEC"
 $Chrome = Find-Chrome
 if ($Chrome) {
   Write-Ok "Chrome/Chromium found: $Chrome"
@@ -196,7 +296,7 @@ if ($Overseas) {
   Write-Ok "Patched $UserConfig for api.stepfun.ai"
 }
 
-Write-Section "[5/7] Building production bundle"
+Write-Section "[6/8] Building production bundle"
   if ($SkipBuild) {
     Write-Warn "Skipped (-SkipBuild). Will reuse existing dist."
   } else {
@@ -204,7 +304,7 @@ Write-Section "[5/7] Building production bundle"
     Write-Ok "dist built"
   }
 
-Write-Section "[6/7] Preparing Windows launcher"
+Write-Section "[7/8] Preparing Windows launcher"
 if ($SkipBuild) {
   if (-not (Test-Path "dist\index.js")) {
     Write-Err "No existing dist\index.js found; cannot continue with -SkipBuild."
@@ -215,7 +315,7 @@ if ($SkipBuild) {
   Write-Info "Using a Node-based step.cmd launcher; Bun native compilation is not required on Windows."
 }
 
-Write-Section "[7/7] Installing to $InstallDir"
+Write-Section "[8/8] Installing to $InstallDir"
 New-Item -ItemType Directory -Force $InstallDir | Out-Null
 
 foreach ($dir in @("package.json", "bin", "dist", "packages", "extensions", "skills", "node_modules")) {
@@ -233,6 +333,14 @@ $Launcher = Join-Path $InstallDir "step.cmd"
 $LauncherContent = @"
 @echo off
 setlocal
+if defined STEP_BUN_BIN (
+  "%STEP_BUN_BIN%" "%~dp0bin\step-cli.js" %*
+  exit /b %ERRORLEVEL%
+)
+where bun >nul 2>&1 && (
+  bun "%~dp0bin\step-cli.js" %*
+  exit /b %ERRORLEVEL%
+)
 node "%~dp0bin\step-cli.js" %*
 exit /b %ERRORLEVEL%
 "@
