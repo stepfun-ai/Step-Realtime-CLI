@@ -33,3 +33,18 @@ export async function loadOpenTuiClientAppFactoryAtRuntime(): Promise<CreateLoca
 
   return runtimeModule.createLocalTuiClientApp;
 }
+
+/**
+ * Returns true when the current process is running under Bun.
+ *
+ * `@opentui/core` ships a Bun-built bundle that uses `bun:ffi` (top-level
+ * static imports) and `with { type: "file" }` import attributes for `.scm`
+ * and `.wasm` assets. Node.js's strict ESM loader cannot evaluate these, so
+ * the TUI code path must be skipped on Node.js. See:
+ * https://github.com/stepfun-ai/Step-Realtime-CLI/issues/78
+ */
+export function isOpenTuiRuntimeSupported(): boolean {
+  return (
+    typeof process.versions.bun === "string" && process.versions.bun !== ""
+  );
+}
