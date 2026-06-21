@@ -29,4 +29,11 @@ describe("getVoiceRuntimeError", () => {
   it("error message mentions STEP_BUN_BIN for actionable recovery", () => {
     expect(getVoiceRuntimeError()).toMatch(/STEP_BUN_BIN/);
   });
+
+  it("error message includes install instructions", () => {
+    const message = getVoiceRuntimeError();
+    expect(message).not.toBeNull();
+    // Either winget (Windows) or bun.sh URL (other platforms).
+    expect(message).toMatch(/(winget|bun\.sh)/);
+  });
 });
