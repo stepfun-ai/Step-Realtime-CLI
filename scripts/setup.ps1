@@ -138,15 +138,18 @@ function Install-Bun {
     & winget install Oven-sh.Bun --accept-source-agreements --accept-package-agreements --silent
     if ($LASTEXITCODE -eq 0) {
       $bunPath = Join-Path $HOME ".bun\bin\bun.exe"
-      $env:Path = "$HOME\.bun\bin;$env:Path"
-      $cmd = Get-Command bun -ErrorAction SilentlyContinue
-      if ($cmd) {
-        Write-Ok "Bun installed via winget: $($cmd.Source)"
-        return $cmd.Source
+      if ($env:Path -notlike "*$HOME\.bun\bin*") {
+        $env:Path = "$HOME\.bun\bin;$env:Path"
       }
-      if (Test-Path $bunPath) {
-        Write-Ok "Bun installed via winget: $bunPath"
-        return $bunPath
+      $cmd = Get-Command bun -ErrorAction SilentlyContinue
+      $candidate = if ($cmd) { $cmd.Source } elseif (Test-Path $bunPath) { $bunPath } else { $null }
+      if ($candidate) {
+        $versionOutput = & $candidate --version 2>$null
+        if ($LASTEXITCODE -eq 0 -and $versionOutput) {
+          Write-Ok "Bun installed via winget: $candidate ($($versionOutput.Trim()))"
+          return $candidate
+        }
+        Write-Warn "Bun at $candidate did not respond to --version; continuing to next strategy"
       }
     }
     Write-Warn "winget install exited $LASTEXITCODE; falling back to direct download"
@@ -172,14 +175,19 @@ function Install-Bun {
       Move-Item -Force $nested $bunExe
       Remove-Item -Recurse -Force (Join-Path $installDir "bun-windows-x64") -ErrorAction SilentlyContinue
     }
-    Remove-Item -Force $tmpZip -ErrorAction SilentlyContinue
     if (Test-Path $bunExe) {
-      Add-UserPath (Join-Path $installDir "bin")
-      Write-Ok "Bun installed via direct download: $bunExe"
-      return $bunExe
+      $versionOutput = & $bunExe --version 2>$null
+      if ($LASTEXITCODE -eq 0 -and $versionOutput) {
+        Add-UserPath (Join-Path $installDir "bin")
+        Write-Ok "Bun installed via direct download: $bunExe ($($versionOutput.Trim()))"
+        return $bunExe
+      }
+      Write-Warn "Downloaded Bun at $bunExe did not respond to --version; install incomplete"
     }
   } catch {
     Write-Warn "Direct download failed: $($_.Exception.Message)"
+  } finally {
+    Remove-Item -Force $tmpZip -ErrorAction SilentlyContinue
   }
 
   Write-Err "Could not install Bun. OpenTUI TUI will not work."
