@@ -9,7 +9,10 @@ import {
   type SharedRuntimeCliOptions,
 } from "./shared-runtime-options.js";
 import { resolveStepCliRuntimeConfig } from "../runtime/runtime-config.js";
-import { loadOpenTuiClientAppFactoryAtRuntime } from "../runtime/open-tui-capability.js";
+import {
+  isOpenTuiRuntimeSupported,
+  loadOpenTuiClientAppFactoryAtRuntime,
+} from "../runtime/open-tui-capability.js";
 import type { VoiceBootstrapConfig } from "../runtime/voice-bootstrap-config.js";
 import {
   loadVoiceConfigFile,
@@ -186,6 +189,11 @@ default.`,
         },
       };
 
+      const voiceRuntimeError = getVoiceRuntimeError();
+      if (voiceRuntimeError !== null) {
+        throw new Error(voiceRuntimeError);
+      }
+
       const createLocalTuiClientApp =
         await loadOpenTuiClientAppFactoryAtRuntime();
       const app = await createLocalTuiClientApp(stepCliConfig, voice);
@@ -197,6 +205,17 @@ default.`,
     });
 
   await parseCommanderProgram(voiceProgram, ["node", "step voice", ...argv]);
+}
+
+/**
+ * Returns null when voice mode may proceed, or an error message string when
+ * the runtime cannot support OpenTUI. Pure function for unit testing.
+ */
+export function getVoiceRuntimeError(): string | null {
+  if (isOpenTuiRuntimeSupported()) {
+    return null;
+  }
+  return "step voice requires Bun runtime on this platform. Install Bun via `winget install Oven-sh.Bun` or set STEP_BUN_BIN, then re-run.";
 }
 
 function normalizeInputMode(
