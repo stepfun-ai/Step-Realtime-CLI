@@ -12,6 +12,7 @@ import { resolveStepCliRuntimeConfig } from "../runtime/runtime-config.js";
 import { createLocalCliClientApp } from "../runtime/local-cli-app.js";
 import {
   isOpenTuiEnabledInCurrentBuild,
+  isOpenTuiRuntimeSupported,
   loadOpenTuiClientAppFactoryAtRuntime,
 } from "../runtime/open-tui-capability.js";
 
@@ -45,9 +46,19 @@ export async function runResumeCommand(argv: string[]): Promise<void> {
       const shouldUseTui =
         OPEN_TUI_COMPILE_TIME_ENABLED &&
         isOpenTuiEnabledInCurrentBuild() &&
+        isOpenTuiRuntimeSupported() &&
         !options.json &&
         process.stdin.isTTY === true &&
         process.stdout.isTTY === true;
+      const runtimeUnsupported =
+        OPEN_TUI_COMPILE_TIME_ENABLED &&
+        isOpenTuiEnabledInCurrentBuild() &&
+        !isOpenTuiRuntimeSupported();
+      if (runtimeUnsupported && process.stderr.isTTY) {
+        process.stderr.write(
+          "warning: OpenTUI TUI requires Bun runtime; falling back to text CLI. Install Bun or use a Bun-based launcher.\n",
+        );
+      }
       const { stepCliConfig } = await resolveStepCliRuntimeConfig({
         options,
         cliOptionSources,
