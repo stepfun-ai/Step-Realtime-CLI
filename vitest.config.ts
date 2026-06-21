@@ -76,6 +76,7 @@ export default defineConfig({
         "src/bootstrap/config/defaults.ts",
         "src/commands/option-parsers.ts",
         "src/gateway/storage/layout.ts",
+        "src/gateway/interactive-readline.ts",
         "src/gateway/verifier.ts",
         "src/runtime/runtime-config.ts",
         "src/runtime/runtime-utils.ts",
