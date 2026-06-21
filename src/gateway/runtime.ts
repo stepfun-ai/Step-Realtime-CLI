@@ -115,6 +115,10 @@ import {
   type StepCliInteractiveUi,
   type StepCliInteractiveUiFactory,
 } from "./interactive-ui.js";
+import {
+  createInteractiveReadline,
+  disposeInteractiveReadline,
+} from "./interactive-readline.js";
 import { createFilesystemAgentRunArtifactStore } from "./artifacts/run-artifact-store.js";
 import { FilesystemConversationTranscriptStore } from "./memory/filesystem-conversation-transcript-store.js";
 import { FilesystemFreshAttemptProgressStore } from "./memory/filesystem-fresh-attempt-progress-store.js";
@@ -4606,11 +4610,10 @@ async function promptForToolApproval(
       : "deny";
   }
 
-  const rl = readline.createInterface({
-    input,
-    output,
-    terminal: true,
-  });
+  // Per-call readline in cooked mode (terminal:false). See
+  // `interactive-readline.ts` for why `terminal:true` is unreliable on
+  // Windows (listener leak + spurious empty line events).
+  const rl = createInteractiveReadline();
 
   const preview =
     request.rawArgs.length > 240
@@ -4692,7 +4695,7 @@ async function promptForToolApproval(
       output.write(`Unrecognized decision: ${answer}. Type '?' for help.\n`);
     }
   } finally {
-    rl.close();
+    disposeInteractiveReadline(rl);
   }
 }
 
@@ -4708,11 +4711,8 @@ async function promptForUserClarification(
     };
   }
 
-  const rl = readline.createInterface({
-    input,
-    output,
-    terminal: true,
-  });
+  // Per-call readline in cooked mode. See `interactive-readline.ts`.
+  const rl = createInteractiveReadline();
 
   const options = Array.isArray(request.options) ? request.options : [];
   const helpLines = buildClarificationHelpLines(request);
@@ -4779,7 +4779,7 @@ async function promptForUserClarification(
       output.write(`${parsed.message}\n`);
     }
   } finally {
-    rl.close();
+    disposeInteractiveReadline(rl);
   }
 }
 
