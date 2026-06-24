@@ -35,6 +35,10 @@ import {
 import { loadVoiceConfigFile } from "./voice-config-loader.js";
 import type { VoiceBootstrapConfig } from "./voice-bootstrap-config.js";
 import type { VoiceRuntimeUnavailable } from "../tui/types.js";
+import {
+  ensureWindowsVirtualTerminalInput,
+  installWindowsVirtualTerminalInput,
+} from "../tui/win-console-input.js";
 
 export async function runLocalOpenTui(): Promise<void> {
   const { stepCliConfig, voice } = await loadLocalTuiBootstrapConfig();
@@ -51,11 +55,20 @@ export async function runLocalOpenTui(): Promise<void> {
   const activeTheme = resolveTuiTheme(availableThemes, activeThemeName);
   activeThemeName = activeTheme.name;
   const bootstrapFilePath = process.env[STEP_CLI_TUI_BOOTSTRAP_ENV];
+  // Bun's setRawMode on Windows does not enable ENABLE_VIRTUAL_TERMINAL_INPUT,
+  // so special keys (PageUp/PageDown/Home/End/arrows) and mouse events are
+  // never delivered as VT sequences — making every TUI content area
+  // unscrollable. Install the wrapper (no-op on non-Windows) before the
+  // renderer is created so the flag is on for the initial setup and every
+  // subsequent raw-mode toggle (e.g. renderer resume after suspend).
+  installWindowsVirtualTerminalInput();
   const renderer = await createCliRenderer({
     stdin: process.stdin,
     stdout: process.stdout,
     exitOnCtrlC: false,
-    useAlternateScreen: stepCliConfig.useAlternateScreen,
+    screenMode: stepCliConfig.useAlternateScreen
+      ? "alternate-screen"
+      : "main-screen",
     backgroundColor: activeTheme.colors.canvas,
     useKittyKeyboard: {
       disambiguate: true,
@@ -63,6 +76,10 @@ export async function runLocalOpenTui(): Promise<void> {
       reportText: true,
     },
   });
+  // createCliRenderer runs setupTerminal (native lib) after the constructor's
+  // setRawMode; the native setup may reset the console input mode, so re-assert
+  // VT input now that the renderer is fully initialized. No-op on non-Windows.
+  ensureWindowsVirtualTerminalInput();
 
   let activeSessionId = (await resolveLocalSessionTarget(stepCliConfig))
     .sessionId;

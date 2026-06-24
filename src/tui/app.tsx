@@ -960,6 +960,85 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
     }
   }
 
+  /**
+   * Submit a prompt string to the agent through the SDK. Used by slash
+   * commands that produce a task to run (e.g. /swarm <task>), so the task
+   * goes through the normal session service turn queue.
+   */
+  async function submitPromptContent(content: string): Promise<void> {
+    const controller = new AbortController();
+    const queued = activeRunCountRef.current > 0;
+    const turnInput = { content };
+    abortControllersRef.current.add(controller);
+    activeRunCountRef.current += 1;
+    setActiveRunCount(activeRunCountRef.current);
+    const turnId = props.transcript.submitUserTurn(turnInput, { queued });
+    setStatus({
+      tone: "brand",
+      label: queued ? "Queued" : "Running",
+      detail: queued
+        ? "Waiting for the active turn to finish"
+        : "Waiting for the agent turn to finish",
+    });
+
+    try {
+      const runResult = await props.sdk.runPrompt(
+        props.sessionId,
+        turnInput,
+        controller.signal,
+      );
+      setLastRun({
+        result: runResult.result,
+        completedAt: new Date().toISOString(),
+      });
+      const turnSucceeded = didTurnSucceed(runResult.result);
+      const nextStatusDetail = turnSucceeded
+        ? summarizeTurn(runResult.result)
+        : describeRunFailure(runResult.result);
+      const refreshed = await refreshAll(
+        turnSucceeded ? "Completed" : "Failed",
+        nextStatusDetail,
+        turnId,
+      );
+      if (refreshed) {
+        if (!turnSucceeded) {
+          props.transcript.appendLocalEvent(
+            "error",
+            nextStatusDetail,
+            "danger",
+          );
+        }
+        setStatus({
+          tone: turnSucceeded ? "success" : "danger",
+          label: turnSucceeded ? "Completed" : "Failed",
+          detail: nextStatusDetail,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const refreshed = await refreshAll("Failed", message, turnId);
+      props.transcript.appendLocalEvent("error", message, "danger");
+      if (refreshed) {
+        setStatus({
+          tone: "danger",
+          label: "Failed",
+          detail: message,
+        });
+      }
+    } finally {
+      abortControllersRef.current.delete(controller);
+      activeRunCountRef.current = Math.max(0, activeRunCountRef.current - 1);
+      setActiveRunCount(activeRunCountRef.current);
+      if (activeRunCountRef.current > 0) {
+        setStatus({
+          tone: "brand",
+          label: "Running",
+          detail: "Waiting for queued turns to finish",
+        });
+      }
+    }
+  }
+
   async function activateVoiceRuntime(
     cause: "autostart" | "slash",
   ): Promise<void> {
@@ -1239,13 +1318,40 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
         await activateVoiceRuntime("slash");
         return true;
       }
-      default:
+      default: {
+        // Forward unrecognized slash commands to the gateway runtime,
+        // which handles gateway-level commands like /swarm, /clear,
+        // /history, /compact, /policy, etc. This bridges the gap between
+        // the TUI's local command set and the runtime's full command set.
+        try {
+          const result = await props.sdk.executeSlashCommand(
+            props.sessionId,
+            commandLine,
+          );
+          if (result.handled) {
+            if (result.taskText) {
+              // /swarm <task> — submit the task as a regular prompt so it
+              // goes through the session service's turn queue.
+              await submitPromptContent(result.taskText);
+            } else if (result.message) {
+              setStatus({
+                tone: "accent",
+                label: "Command",
+                detail: result.message,
+              });
+            }
+            return true;
+          }
+        } catch {
+          // Fall through to unknown command message
+        }
         setStatus({
           tone: "warning",
           label: "Unknown Command",
           detail: `${command} is not supported in the OpenTUI client`,
         });
         return false;
+      }
     }
   }
 

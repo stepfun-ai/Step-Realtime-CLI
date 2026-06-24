@@ -10,5 +10,6 @@ export * from "./code-mode-plugin.js";
 export * from "./plan-plugin.js";
 export * from "./agent-team-plugin.js";
 export * from "./subagent-plugin.js";
+export * from "./swarm-plugin.js";
 export * from "./skill-plugin.js";
 export * from "./skill-tool.js";

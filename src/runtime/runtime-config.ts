@@ -442,10 +442,14 @@ async function resolveLocalStepCliRuntimeConfig(input: {
     json: Boolean(input.options.json),
     surfaceOverride: input.interactionSurface,
   });
-  const useAlternateScreen =
-    input.useAlternateScreen ??
+  const resolvedAltScreen =
     loadedConfig.clients?.tui?.altScreen ??
     (interactionProfile.surface === "interactive" ? true : false);
+  const useAlternateScreen =
+    input.useAlternateScreen ??
+    (process.platform === "win32" && !loadedConfig.clients
+      ? false
+      : resolvedAltScreen);
   const toolPermissionOverrides =
     loadedConfig.tools?.approval?.overrides || input.options.toolOverride
       ? {
