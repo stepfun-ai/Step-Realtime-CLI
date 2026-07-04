@@ -82,10 +82,13 @@ export default defineConfig({
       ],
       exclude: ["**/*.test.ts", "**/*.spec.ts", "dist/**", "node_modules/**"],
       thresholds: {
-        // Single source of truth for coverage gating (referenced by
-        // CONTRIBUTING.md and docs/TESTING.md — they must not hardcode numbers).
         statements: 80,
         branches: 80,
+        perFile: true,
+        // Module-specific thresholds for high-risk areas
+        "packages/core/src/agent/**/*.ts": { statements: 70, branches: 65 },
+        "packages/core/src/tools/**/*.ts": { statements: 65, branches: 60 },
+        "packages/realtime/src/**/*.ts": { statements: 75, branches: 70 },
       },
     },
   },
