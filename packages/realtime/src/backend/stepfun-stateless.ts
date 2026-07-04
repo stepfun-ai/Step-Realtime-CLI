@@ -457,7 +457,7 @@ export class StepfunStatelessAdapter implements BackendAdapter {
     let msg: any;
     try {
       msg = JSON.parse(raw);
-    } catch (e) {
+    } catch {
       this.log.warn({ raw: raw.slice(0, 200) }, "non-json message");
       return;
     }

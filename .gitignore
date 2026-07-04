@@ -5,3 +5,5 @@ dist
 .DS_Store
 coverage/
 .claude/
+docs/BUG_REPORT.md
+docs/ISSUES_READY.md

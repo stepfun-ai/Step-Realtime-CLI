@@ -14,6 +14,7 @@ import {
   optionalNumber,
   optionalString,
   requireString,
+  ToolArgError,
 } from "./parsers.js";
 
 const SKIP_DIRECTORY_NAMES = new Set([
@@ -164,10 +165,43 @@ function safeParse(rawArgs: string): unknown {
   return JSON.parse(rawArgs);
 }
 
+const DANGEROUS_COMMAND_PATTERNS = [
+  /(^|\s|\||;|&&)rm\s+(-rf?|--recursive)\s+\/(\s|$)/,
+  /(^|\s|\||;|&&)rm\s+(-rf?|--recursive)\s+~(\s|$|\/)/,
+  /(^|\s|\||;|&&)dd\s+/,
+  /(^|\s|\||;|&&)mkfs\.\w+/,
+  /(^|\s|\||;|&&)fdisk\s+/,
+  /(^|\s|\||;|&&)mkswap\s+/,
+  /(^|\s|\||;|&&)shutdown\s+/,
+  /(^|\s|\||;|&&)reboot\s+/,
+  /(^|\s|\||;|&&)chmod\s+777\s+\//,
+  /(^|\s|\||;|&&)chown\s+/,
+  /(^|\s|\||;|&&)>(\s*\/dev\/(sda|sdb|nvme|mmc))/,
+];
+
+function validateShellCommand(command: string): ToolExecutionResult | null {
+  for (const pattern of DANGEROUS_COMMAND_PATTERNS) {
+    if (pattern.test(command)) {
+      const summary =
+        `Bash: command blocked for safety — pattern matched by security guardrail. ` +
+        `If this is a legitimate operation, consider using a more targeted tool or ` +
+        `command. Matched pattern: ${pattern}`;
+      return {
+        ok: false,
+        summary,
+        error: { code: "COMMAND_BLOCKED", message: summary },
+      };
+    }
+  }
+  return null;
+}
+
 async function bashExecute(
   args: BashArgs,
   ctx: ToolExecutionContext,
 ): Promise<ToolExecutionResult> {
+  const blocked = validateShellCommand(args.command);
+  if (blocked) return blocked;
   const timeoutMs = args.timeout ?? ctx.commandTimeoutMs;
   const result = await runShell(args.command, {
     cwd: ctx.workspaceRoot,
@@ -334,6 +368,29 @@ async function runRipgrep(
   });
 }
 
+const REDOS_PATTERNS = [
+  /\(\S+(?:\+\+|\*+|\+\?|\*\?)+\S*\)\s*[+*]/,
+  /\(\S*(?:\|.*){2,}\)\s*[+*]/,
+  /\((?:\w|\|){2,}\)\s*\+/,
+  /\(.*\)\s*\{\d+,\}/,
+];
+
+function hasRedosRisk(pattern: string): boolean {
+  for (const re of REDOS_PATTERNS) {
+    if (re.test(pattern)) return true;
+  }
+  return false;
+}
+
+function createSafeRegex(pattern: string): RegExp | null {
+  try {
+    if (hasRedosRisk(pattern)) return null;
+    return new RegExp(pattern);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Pure-JS regex grep used when ripgrep is unavailable. Skips files larger
  * than JSGREP_MAX_FILE_BYTES and sniffs the first 8KB for a NUL byte so a
@@ -344,7 +401,10 @@ async function jsGrep(
   base: string,
   include?: string,
 ): Promise<string> {
-  const regex = new RegExp(pattern);
+  const regex = createSafeRegex(pattern);
+  if (!regex) {
+    return `(pattern skipped — could not compile or ReDoS guardrail triggered)`;
+  }
   const includeRegex = include ? globToRegex(include) : null;
   const out: string[] = [];
   await walkDir(base, async (file) => {
@@ -397,7 +457,14 @@ function resolveWorkspacePath(
   workspaceRoot: string,
   candidate: string,
 ): string {
-  return path.isAbsolute(candidate)
+  const resolved = path.isAbsolute(candidate)
     ? candidate
     : path.resolve(workspaceRoot, candidate);
+  const normalized = path.resolve(resolved);
+  if (!normalized.startsWith(path.resolve(workspaceRoot))) {
+    throw new ToolArgError(
+      `Path "${candidate}" resolves outside the workspace root "${workspaceRoot}"`,
+    );
+  }
+  return normalized;
 }
