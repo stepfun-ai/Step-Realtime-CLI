@@ -14,6 +14,7 @@ import type {
   ToolSpec,
 } from "@step-cli/protocol";
 import { cloneJsonSchema } from "@step-cli/utils/json-schema.js";
+import { normalizeToolArguments } from "@step-cli/utils/json.js";
 import { scoreFuzzyMatch } from "@step-cli/utils/search.js";
 import {
   buildCodeModeToolBindings,
@@ -456,11 +457,11 @@ export class ToolRuntime implements ToolRuntimeApi {
       }
 
       if (!cachedApproval && decision === "allow-always") {
-        this.approvedFingerprints.add(fingerprint);
-        if (this.approvedFingerprints.size > MAX_APPROVAL_FINGERPRINTS) {
-          this.approvedFingerprints.clear();
-          this.approvedFingerprints.add(fingerprint);
+        if (this.approvedFingerprints.size >= MAX_APPROVAL_FINGERPRINTS) {
+          const oldest = this.approvedFingerprints.values().next().value;
+          if (oldest) this.approvedFingerprints.delete(oldest);
         }
+        this.approvedFingerprints.add(fingerprint);
       }
     }
 
@@ -812,40 +813,8 @@ function createApprovalFingerprint(
     return `${toolName}:${explicitFingerprint}`;
   }
 
-  const normalizedArgs = normalizeArgsForFingerprint(rawArgs);
+  const normalizedArgs = normalizeToolArguments(rawArgs);
   return `${toolName}:${normalizedArgs}`;
-}
-
-function normalizeArgsForFingerprint(rawArgs: string): string {
-  try {
-    const parsed = JSON.parse(rawArgs) as unknown;
-    return stableStringify(parsed);
-  } catch {
-    return rawArgs.replace(/\s+/g, " ").trim();
-  }
-}
-
-function stableStringify(value: unknown): string {
-  return JSON.stringify(sortRecursively(value));
-}
-
-function sortRecursively(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((entry) => sortRecursively(entry));
-  }
-
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(
-      ([left], [right]) => left.localeCompare(right),
-    );
-    const sorted: Record<string, unknown> = {};
-    for (const [key, child] of entries) {
-      sorted[key] = sortRecursively(child);
-    }
-    return sorted;
-  }
-
-  return value;
 }
 
 function parseApprovedFingerprints(state: unknown): string[] | null {

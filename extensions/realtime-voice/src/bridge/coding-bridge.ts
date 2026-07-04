@@ -129,8 +129,9 @@ export class CodingBridge {
         // throw on abort is not reliable (the subprocess can linger), and a
         // run() that never settles would leave currentTask stuck forever →
         // cancel appears to do nothing and no new task can be started.
-        const aborted = new Promise<TaskFinalSummary>((resolve) => {
-          const onAbort = () =>
+        const abortPromise = new Promise<TaskFinalSummary>((resolve) => {
+          const listener = () => {
+            ac.signal.removeEventListener("abort", listener);
             resolve({
               status: "interrupted",
               summary: "任务已取消",
@@ -139,11 +140,12 @@ export class CodingBridge {
                 unknown
               >,
             });
-          if (ac.signal.aborted) onAbort();
-          else ac.signal.addEventListener("abort", onAbort, { once: true });
+          };
+          if (ac.signal.aborted) listener();
+          else ac.signal.addEventListener("abort", listener, { once: true });
         });
         const work = this.runAgent(task, shouldResume, ac, progress, emit);
-        return Promise.race([work, aborted]);
+        return Promise.race([work, abortPromise]);
       },
     });
   }

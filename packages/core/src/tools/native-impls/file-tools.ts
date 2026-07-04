@@ -14,6 +14,7 @@ import {
   optionalBoolean,
   optionalNumber,
   requireString,
+  safeParse,
   ToolArgError,
 } from "./parsers.js";
 
@@ -150,11 +151,6 @@ function parseEditArgs(rawArgs: string): EditArgs {
     new_string: typeof obj.new_string === "string" ? obj.new_string : "",
     replace_all: optionalBoolean(obj, "replace_all"),
   };
-}
-
-function safeParse(rawArgs: string): unknown {
-  if (!rawArgs?.trim()) return {};
-  return JSON.parse(rawArgs);
 }
 
 async function readFileExecute(
