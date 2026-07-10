@@ -249,8 +249,8 @@ function editDistance(a: string, b: string): number {
   if (al === 0) return bl;
   if (bl === 0) return al;
 
-  let prev = new Array(bl + 1);
-  let curr = new Array(bl + 1);
+  let prev = Array.from<number>({ length: bl + 1 });
+  let curr = Array.from<number>({ length: bl + 1 });
   for (let j = 0; j <= bl; j++) prev[j] = j;
 
   for (let i = 1; i <= al; i++) {

@@ -1,23 +1,7 @@
 import { describe, it, expect } from "vitest";
-import type { CompletionRequest } from "@step-cli/protocol";
 import { createChatCompletionClient } from "./factory.js";
 import { AnthropicMessagesClient } from "./anthropic-client.js";
 import { OpenAICompatibleClient } from "./openai-client.js";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Build a minimal CompletionRequest for testing. */
-function baseRequest(
-  overrides: Partial<CompletionRequest> = {},
-): CompletionRequest {
-  return {
-    model: "test-model",
-    messages: [{ role: "user", content: "hello" }],
-    ...overrides,
-  };
-}
 
 /** Create a mock HttpTransport that returns a canned JSON response. */
 function mockTransport(

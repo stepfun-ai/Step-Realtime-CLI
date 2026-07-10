@@ -268,9 +268,16 @@ function resolveWorkspacePath(
   workspaceRoot: string,
   candidate: string,
 ): string {
-  return path.isAbsolute(candidate)
+  const resolved = path.isAbsolute(candidate)
     ? candidate
     : path.resolve(workspaceRoot, candidate);
+  const normalized = path.resolve(resolved);
+  if (!normalized.startsWith(path.resolve(workspaceRoot))) {
+    throw new ToolArgError(
+      `Path "${candidate}" resolves outside the workspace root "${workspaceRoot}"`,
+    );
+  }
+  return normalized;
 }
 
 const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/;
