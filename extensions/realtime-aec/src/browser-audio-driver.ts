@@ -150,23 +150,22 @@ export class BrowserAudioDriver implements AudioDriver {
     void this.ensureStarted().catch((err) =>
       log.error({ err: String(err) }, "ensureStarted (capture) failed"),
     );
-    const self = this;
     const stream: AsyncIterable<Buffer> = {
-      [Symbol.asyncIterator]() {
+      [Symbol.asyncIterator]: () => {
         return {
-          next(): Promise<IteratorResult<Buffer>> {
-            if (self.captureStopped) {
+          next: (): Promise<IteratorResult<Buffer>> => {
+            if (this.captureStopped) {
               return Promise.resolve({ value: undefined, done: true });
             }
-            const queued = self.captureBuf.shift();
+            const queued = this.captureBuf.shift();
             if (queued) {
               return Promise.resolve({ value: queued, done: false });
             }
             return new Promise<IteratorResult<Buffer>>((resolve) => {
-              self.capturePending.push({ resolve });
+              this.capturePending.push({ resolve });
             });
           },
-          return(): Promise<IteratorResult<Buffer>> {
+          return: (): Promise<IteratorResult<Buffer>> => {
             return Promise.resolve({ value: undefined, done: true });
           },
         };
