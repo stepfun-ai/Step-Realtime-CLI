@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
-  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -24,6 +23,23 @@ function createExecutable(
   chmodSync(path, 0o755);
 }
 
+function copySetupScript(root: string, scripts: string): void {
+  const source = join(process.cwd(), "scripts", "setup.sh");
+  const target = join(scripts, "setup.sh");
+  const unavailableChrome = join(root, "unavailable-chrome");
+  const script = readFileSync(source, "utf8")
+    .replace(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      unavailableChrome,
+    )
+    .replace(
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      unavailableChrome,
+    );
+
+  writeFileSync(target, script, "utf8");
+}
+
 function createTestEnvironment(): { home: string; log: string; root: string } {
   const root = mkdtempSync(join(tmpdir(), "step-setup-test-"));
   const scripts = join(root, "scripts");
@@ -34,13 +50,14 @@ function createTestEnvironment(): { home: string; log: string; root: string } {
   mkdirSync(scripts, { recursive: true });
   mkdirSync(bin);
   mkdirSync(home);
-  copyFileSync(
-    join(process.cwd(), "scripts", "setup.sh"),
-    join(scripts, "setup.sh"),
-  );
+  copySetupScript(root, scripts);
 
   createExecutable(bin, "uname", "#!/usr/bin/env bash\necho Darwin\n");
-  createExecutable(bin, "brew", "#!/usr/bin/env bash\nexit 1\n");
+  createExecutable(
+    bin,
+    "brew",
+    '#!/usr/bin/env bash\nprintf \'brew %s\\n\' "$*" >> "$SETUP_TEST_LOG"\nexit 1\n',
+  );
   createExecutable(
     bin,
     "pnpm",
@@ -90,7 +107,9 @@ describe("scripts/setup.sh", () => {
 
       expect(result).toContain("[7/7] Installing");
       expect(result).toContain("AEC skipped");
-      expect(readFileSync(log, "utf8")).toContain(
+      const commands = readFileSync(log, "utf8");
+      expect(commands).toContain("brew install --cask google-chrome");
+      expect(commands).toContain(
         "node scripts/run-step.mjs --stale-only aec off",
       );
     },
