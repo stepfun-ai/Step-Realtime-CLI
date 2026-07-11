@@ -6,6 +6,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     core: "packages/core/src/index.ts",
+    "runtime/local-tui-app": "src/runtime/local-tui-app.ts",
     "runtime/local-opentui-entry": "src/runtime/local-opentui-entry.tsx",
   },
   noExternal: [/^@step-cli\//],
