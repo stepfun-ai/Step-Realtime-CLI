@@ -23,19 +23,13 @@ function createExecutable(
   chmodSync(path, 0o755);
 }
 
-function copySetupScript(root: string, scripts: string): void {
+function copySetupScript(scripts: string): void {
   const source = join(process.cwd(), "scripts", "setup.sh");
   const target = join(scripts, "setup.sh");
-  const unavailableChrome = join(root, "unavailable-chrome");
-  const script = readFileSync(source, "utf8")
-    .replace(
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      unavailableChrome,
-    )
-    .replace(
-      "/Applications/Chromium.app/Contents/MacOS/Chromium",
-      unavailableChrome,
-    );
+  const script = readFileSync(source, "utf8").replace(
+    "AEC_AVAILABLE=0",
+    "detect_chrome() { return 1; }\n\nAEC_AVAILABLE=0",
+  );
 
   writeFileSync(target, script, "utf8");
 }
@@ -50,7 +44,7 @@ function createTestEnvironment(): { home: string; log: string; root: string } {
   mkdirSync(scripts, { recursive: true });
   mkdirSync(bin);
   mkdirSync(home);
-  copySetupScript(root, scripts);
+  copySetupScript(scripts);
 
   createExecutable(bin, "uname", "#!/usr/bin/env bash\necho Darwin\n");
   createExecutable(
@@ -89,16 +83,11 @@ describe("scripts/setup.sh", () => {
     );
   });
 
-  it("isolates macOS Chrome paths in its test fixture", () => {
+  it("forces Chrome detection to fail in its test fixture", () => {
     const { root } = createTestEnvironment();
     const fixture = readFileSync(join(root, "scripts", "setup.sh"), "utf8");
 
-    expect(fixture).not.toContain(
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    );
-    expect(fixture).not.toContain(
-      "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    );
+    expect(fixture).toContain("detect_chrome() { return 1; }");
   });
 
   it.skipIf(process.platform === "win32")(
