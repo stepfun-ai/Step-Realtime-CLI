@@ -31,4 +31,4 @@ echo "  App ID: ${APP_ID:0:8}..."
 echo ""
 
 cd "$BRIDGE_ROOT"
-node src/direct_bridge.cjs
+node direct_bridge.cjs

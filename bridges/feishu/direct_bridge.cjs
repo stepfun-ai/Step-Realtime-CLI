@@ -10,7 +10,6 @@ const { spawn } = require("node:child_process");
 
 const ROOT = normalizeString(process.env.STEP_FEISHU_ROOT) || path.resolve(__dirname, "..");
 const DEFAULT_CONFIG_PATH = path.join(os.homedir(), ".step-cli-feishu", "config.json");
-const DEFAULT_STEP_CLI_DIR = path.join(os.homedir(), ".step-cli");
 const HEALTH_PATH = "/health";
 const STEP_SERVE_URL = process.env.STEP_SERVE_URL || "http://127.0.0.1:47123";
 
@@ -202,7 +201,7 @@ class BridgeConfig {
     this.bindHost = normalizeString(process.env.STEP_FEISHU_BIND_HOST) || "127.0.0.1";
     this.bindPort = Number(process.env.STEP_FEISHU_BIND_PORT || 18944);
     this.workdir = normalizeString(process.env.STEP_FEISHU_WORKDIR) || process.cwd();
-    this.stateDir = normalizeString(process.env.STEP_FEISHU_STATE_DIR) || path.join(ROOT, "state");
+    this.stateDir = normalizeString(process.env.STEP_FEISHU_STATE_DIR) || path.join(__dirname, "state");
     this.requestTimeoutMs = Number(process.env.STEP_FEISHU_TIMEOUT_MS || 180000);
     this.maxSessions = Number(process.env.STEP_FEISHU_MAX_SESSIONS || 200);
     this.maxProcessed = Number(process.env.STEP_FEISHU_MAX_PROCESSED || 1000);
@@ -219,6 +218,10 @@ class BridgeConfig {
     this.dmPolicy = normalizeString(account.dmPolicy || feishu.dmPolicy) || "allowlist";
     this.allowFrom = Array.isArray(account.allowFrom || feishu.allowFrom)
       ? (account.allowFrom || feishu.allowFrom) : [];
+    const envAllowed = normalizeString(process.env.STEP_FEISHU_ALLOWED_USERS);
+    if (envAllowed) {
+      this.allowFrom = envAllowed.split(",").map((s) => s.trim()).filter(Boolean);
+    }
     this.accountId = "step";
   }
 }
@@ -247,29 +250,6 @@ class StepBridge {
     }
     const result = await res.json();
     return result.text || result.transcript || "";
-  }
-
-  async synthesizeSpeech(text) {
-    const apiKey = this._resolveApiKey();
-    const res = await fetch("https://api.stepfun.com/v1/audio/speech", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "step-tts",
-        input: text,
-        voice: "zh-CN-YunxiNeural",
-        speed: 1.1,
-      }),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`TTS failed (${res.status}): ${errText}`);
-    }
-    return Buffer.from(await res.arrayBuffer());
   }
 
   _resolveApiKey() {
@@ -314,69 +294,90 @@ class StepBridge {
   }
 
   async waitForCompletion(sessionId, maxWaitMs = 120000, pollIntervalMs = 3000) {
+    const eventsUrl = `${this.cfg.stepServeUrl}/v1/sessions/${encodeURIComponent(sessionId)}/events`;
     const startTime = Date.now();
-    let lastEventCount = 0;
+    let _lastEventId;
 
     while (Date.now() - startTime < maxWaitMs) {
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
-
-      const snapshotUrl = `${this.cfg.stepServeUrl}/v1/sessions/${encodeURIComponent(sessionId)}/snapshot`;
-      const res = await fetch(snapshotUrl);
-      if (!res.ok) continue;
-
-      const data = await res.json();
-      const session = data?.session;
-      if (!session) continue;
-
-      const eventsPath = path.join(
-        session.runtime?.storageRootDir || DEFAULT_STEP_CLI_DIR,
-        "sessions", sessionId, "events.jsonl"
-      );
-
+      let streamOk = false;
       try {
-        const eventsContent = fs.readFileSync(eventsPath, "utf8");
-        const eventLines = eventsContent.split("\n").filter((l) => l.trim());
-        const currentCount = eventLines.length;
+        const timeoutMs = Math.min(pollIntervalMs + 5000, maxWaitMs - (Date.now() - startTime));
+        const abortController = new AbortController();
+        const timeoutTimer = setTimeout(() => abortController.abort(), timeoutMs);
+        timeoutTimer.unref();
 
-        const lastEvent = eventLines[currentCount - 1];
-        if (lastEvent) {
-          try {
-            const evt = JSON.parse(lastEvent);
-            if (evt.kind === "session.run.finished") {
-              return this.extractAssistantReply(eventLines);
+        const res = await fetch(eventsUrl, {
+          signal: abortController.signal,
+        });
+        clearTimeout(timeoutTimer);
+        if (!res.ok) {
+          await new Promise((r) => setTimeout(r, pollIntervalMs));
+          continue;
+        }
+
+        streamOk = true;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (Date.now() - startTime < maxWaitMs) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const block = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const event = this._parseSseEvent(block);
+            if (event && event.eventId) {
+              _lastEventId = event.eventId;
             }
-          } catch {}
+            if (event && event.kind === "session.run.finished") {
+              reader.cancel();
+              if (event.outcome === "completed") {
+                const text = event.payload?.outputPreview;
+                if (text) return text;
+              }
+              if (event.outcome === "failed" && event.payload?.error) {
+                return `（Step 执行失败：${String(event.payload.error).slice(0, 100)}）`;
+              }
+              return "（Step 执行未产生输出。）";
+            }
+          }
         }
+      } catch {
+        // stream error — retry after pollInterval
+      }
 
-        if (currentCount === lastEventCount && currentCount > 2 && !session.running) {
-          return this.extractAssistantReply(eventLines);
-        }
-        lastEventCount = currentCount;
-      } catch { /* events file not ready */ }
+      if (!streamOk || Date.now() - startTime < maxWaitMs) {
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
     }
 
     return "（Step 执行超时，请稍后查看结果。）";
   }
 
-  extractAssistantReply(eventLines) {
-    for (let i = eventLines.length - 1; i >= 0; i--) {
-      const line = eventLines[i].trim();
-      if (!line) continue;
-      try {
-        const evt = JSON.parse(line);
-        if (evt.kind === "session.message") {
-          const msg = evt.payload?.message;
-          if (msg?.role === "assistant" && msg.content) {
-            let content = msg.content;
-            if (typeof content === "string") return content;
-            if (Array.isArray(content)) {
-              return content.filter((c) => c.type === "text").map((c) => c.text).join("");
-            }
-          }
-        }
-      } catch {}
+  _parseSseEvent(block) {
+    let eventId;
+    let eventType;
+    let data;
+    for (const line of block.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith(":")) continue;
+      if (trimmed.startsWith("id:")) {
+        eventId = trimmed.slice(3).trim();
+      } else if (trimmed.startsWith("event:")) {
+        eventType = trimmed.slice(6).trim();
+      } else if (trimmed.startsWith("data:")) {
+        const raw = trimmed.slice(5).trim();
+        try { data = JSON.parse(raw); } catch { data = null; }
+      }
     }
-    return "（任务已完成，但无文本回复。）";
+    if (!data) return null;
+    data.eventId = eventId;
+    if (eventType && !data.kind) data.kind = eventType;
+    return data;
   }
 }
 
@@ -409,8 +410,8 @@ class DirectBridgeService {
 
   async start() {
     await this.startHttpServer();
-    // Note: This bridge receives events via HTTP POST /forward from claude-feishu-direct
-    // or from lark-cli pipe forwarder. No direct lark-cli subscription needed here.
+    // Note: This bridge receives events via HTTP POST /forward from an external
+    // forwarder (e.g. lark-cli pipe). No direct lark-cli subscription needed here.
     // Only try Lark SDK WebSocket if credentials available
     if (this.cfg.appId && this.cfg.appSecret) {
       await this.startLarkWebSocket();

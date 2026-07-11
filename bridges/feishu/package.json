@@ -3,14 +3,20 @@
   "version": "1.0.0",
   "private": true,
   "description": "Feishu (Lark) bot bridge for Step-Realtime-CLI — drive CLI programming via Feishu voice/text messages",
-  "main": "src/direct_bridge.cjs",
+  "main": "direct_bridge.cjs",
   "scripts": {
-    "start": "node src/direct_bridge.cjs",
-    "dev": "node --watch src/direct_bridge.cjs",
+    "start": "node direct_bridge.cjs",
+    "dev": "node --watch direct_bridge.cjs",
     "health": "curl -s http://127.0.0.1:18944/health | node -e \"process.stdin.resume();process.stdin.on('data',d=>console.log(JSON.stringify(JSON.parse(d),null,2)))\"",
-    "install-launchd": "bash scripts/install-launchd.sh"
+    "install-launchd": "bash install-launchd.sh"
   },
-  "keywords": ["feishu", "lark", "step-cli", "bot", "bridge"],
+  "keywords": [
+    "feishu",
+    "lark",
+    "step-cli",
+    "bot",
+    "bridge"
+  ],
   "license": "MIT",
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.66.1"

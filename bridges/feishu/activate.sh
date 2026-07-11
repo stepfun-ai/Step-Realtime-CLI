@@ -27,7 +27,7 @@ if [ -n "$BRIDGE_PID" ]; then
 else
   cd "$BRIDGE_ROOT"
   STEP_SERVE_URL=http://127.0.0.1:47123 \
-  node src/direct_bridge.cjs &
+  node direct_bridge.cjs &
   BRIDGE_PID=$!
   echo "  PID: $BRIDGE_PID"
   sleep 2

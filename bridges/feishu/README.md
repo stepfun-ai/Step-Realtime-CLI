@@ -26,6 +26,25 @@ See `.env.example` for all available options. Key ones:
 - `STEP_API_KEY` — StepFun API key (required for voice/ASR)
 - `STEP_FEISHU_APP_ID` / `STEP_FEISHU_APP_SECRET` — for Lark SDK direct mode
 - `STEP_FEISHU_FORWARD_SECRET` — optional shared secret for `/forward` auth
+- `STEP_FEISHU_STATE_DIR` — state directory (default: `./state`, contains `sessions.json` and `processed.json`)
+
+## DM Policy
+
+The bridge uses an **allowlist** DM policy by default. This means **nobody gets a reply** until their Feishu open_id is added to the allowlist.
+
+To allow specific users, set `STEP_FEISHU_ALLOWED_USERS` (comma-separated open_ids) or configure via `~/.step-cli-feishu/config.json`:
+
+```json
+{
+  "channels": {
+    "feishu": {
+      "allowFrom": ["ou_xxxxxxxxxxxxxx"]
+    }
+  }
+}
+```
+
+Check `/health` for `policy.allowFromCount` to verify your allowlist is loaded.
 
 ## Graceful Shutdown
 

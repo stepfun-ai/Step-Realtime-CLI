@@ -1,11 +1,11 @@
 #!/bin/bash
 # Install step-feishu-bridge as a macOS launchd service.
-# Usage: bash scripts/install-launchd.sh
+# Usage: bash install-launchd.sh
 
 set -euo pipefail
 
 BRIDGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$BRIDGE_ROOT/scripts/com.step-cli.feishu-forwarder.plist"
+SRC="$BRIDGE_ROOT/com.step-cli.feishu-forwarder.plist"
 DST="$HOME/Library/LaunchAgents/com.step-cli.feishu-forwarder.plist"
 
 echo "=== Install step-feishu-bridge launchd service ==="
@@ -28,9 +28,6 @@ fi
 mkdir -p "$HOME/Library/LaunchAgents"
 cp "$SRC" "$DST"
 
-# Update paths in plist to match actual BRIDGE_ROOT
-sed -i '' "s|/path/to/step-realtime-feishu-bridge|$BRIDGE_ROOT|g" "$DST"
-
 # Load the service
 echo "Loading service..."
 launchctl load "$DST"
@@ -38,4 +35,4 @@ launchctl load "$DST"
 echo ""
 echo "Done! Service installed as com.step-cli.feishu-forwarder"
 echo "Check status: launchctl list com.step-cli.feishu-forwarder"
-echo "View logs: tail -f $BRIDGE_ROOT/logs/forwarder.out.log"
+echo "View logs: tail -f /tmp/step-feishu-forwarder.log"
