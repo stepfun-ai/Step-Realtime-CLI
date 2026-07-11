@@ -89,6 +89,18 @@ describe("scripts/setup.sh", () => {
     );
   });
 
+  it("isolates macOS Chrome paths in its test fixture", () => {
+    const { root } = createTestEnvironment();
+    const fixture = readFileSync(join(root, "scripts", "setup.sh"), "utf8");
+
+    expect(fixture).not.toContain(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    );
+    expect(fixture).not.toContain(
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    );
+  });
+
   it.skipIf(process.platform === "win32")(
     "continues with AEC disabled when Homebrew cannot install Chrome",
     () => {
@@ -97,11 +109,11 @@ describe("scripts/setup.sh", () => {
         cwd: root,
         encoding: "utf8",
         env: {
-          ...process.env,
           HOME: home,
           PATH: `${join(root, "bin")}:/usr/bin:/bin`,
           SETUP_TEST_LOG: log,
           SHELL: "/bin/bash",
+          STEP_CHROME_PATH: "",
         },
       });
 
