@@ -2,7 +2,7 @@
 # One-click activation: Feishu → Step event forwarding
 set -e
 
-BRIDGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BRIDGE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 BRIDGE_URL="${FORWARD_URL:-http://127.0.0.1:18944/forward}"
 
 echo "=== Activate Step Feishu Event Forwarding ==="

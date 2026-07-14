@@ -1,9 +1,9 @@
 #!/bin/bash
 # step-realtime-feishu-bridge startup script
-# Usage: bash scripts/start.sh
+# Usage: bash start.sh
 set -euo pipefail
 
-BRIDGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BRIDGE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # Feishu app credentials (via env vars)
 APP_ID="${STEP_FEISHU_APP_ID:-}"

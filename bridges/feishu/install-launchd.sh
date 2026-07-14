@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-BRIDGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BRIDGE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 SRC="$BRIDGE_ROOT/com.step-cli.feishu-forwarder.plist"
 DST="$HOME/Library/LaunchAgents/com.step-cli.feishu-forwarder.plist"
 
