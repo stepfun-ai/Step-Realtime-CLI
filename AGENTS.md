@@ -183,6 +183,15 @@ SDK 不负责实现 agent loop，不负责持久化真实 session 状态。
 
 客户端只维护本地视图状态，不拥有核心运行时状态。
 
+### `bridges/`
+
+外部集成桥接层，提供 Step-Realtime-CLI 与第三方平台的连接：
+
+- 当前实现：Feishu (Lark) bot bridge (`bridges/feishu/`)
+- 通过 HTTP 调用 `step serve` API，不修改核心代码
+- 依赖：`@larksuiteoapi/node-sdk`（Lark SDK）、`lark-cli`（飞书 CLI 工具）、step serve 本地实例
+- 该层独立运行，通过 HTTP/SSE 与 `src/gateway` 通信，不直接依赖 monorepo 内部包
+
 ## 3. 核心对象归属
 
 ### Workspace
