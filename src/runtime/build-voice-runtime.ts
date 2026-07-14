@@ -22,6 +22,7 @@ import type {
   VoiceBackendId,
   VoiceBootstrapConfig,
 } from "./voice-bootstrap-config.js";
+import { resolveVoiceAudioDriverPlan } from "./voice-audio-driver-selection.js";
 
 export type { VoiceRuntimeBundle };
 
@@ -158,29 +159,47 @@ export async function buildVoiceRuntime(
   await session.backend.connect();
 
   // AEC: enabled via config `voice.defaults.aec` or env override STEP_VOICE_AEC=1.
-  // Routes capture+playback through a headless Chrome helper (getUserMedia
-  // echoCancellation = libwebrtc APM) so duplex doesn't self-trigger on its own
-  // echo. Falls back to sox if no Chrome found.
-  const aecEnabled = voice.aec === true || process.env.STEP_VOICE_AEC === "1";
+  // On Windows, voice always uses the browser audio helper because the Sox
+  // fallback is macOS/Linux-only. macOS/Linux keep the existing fallback.
+  const envAec = process.env.STEP_VOICE_AEC === "1";
+  const aecConfigured = voice.aec === true;
   let audioDriver: AudioDriver;
-  if (aecEnabled) {
-    const aec = await import("@step-cli/realtime-aec");
-    const probe = await new aec.BrowserAudioDriver().probe().catch(() => null);
-    if (probe?.captureAvailable) {
-      audioDriver = new aec.BrowserAudioDriver();
-      rt.logger.info(
-        {},
-        "voice AEC enabled: BrowserAudioDriver (headless Chrome)",
+  const needsBrowserProbe =
+    os.platform() === "win32" || aecConfigured || envAec;
+  const aec = needsBrowserProbe
+    ? await import("@step-cli/realtime-aec")
+    : undefined;
+  const browserProbe = aec
+    ? await new aec.BrowserAudioDriver().probe().catch(() => null)
+    : null;
+  const audioPlan = resolveVoiceAudioDriverPlan({
+    platform: os.platform(),
+    aecConfigured,
+    envAec,
+    browserAvailable: browserProbe?.captureAvailable === true,
+  });
+
+  if (audioPlan.kind === "browser") {
+    if (!aec) {
+      throw new Error(
+        "Internal error: browser audio selected without AEC module",
       );
-    } else {
-      audioDriver = new rv.SoxAudioDriver();
+    }
+    audioDriver = new aec.BrowserAudioDriver();
+    rt.logger.info(
+      { reason: audioPlan.reason },
+      "voice audio: BrowserAudioDriver (headless Chrome)",
+    );
+  } else if (audioPlan.kind === "sox") {
+    audioDriver = new rv.SoxAudioDriver();
+    if (audioPlan.reason === "browser_aec_unavailable_fallback") {
       rt.logger.warn(
         {},
         "AEC requested but no Chrome found; falling back to SoxAudioDriver",
       );
     }
   } else {
-    audioDriver = new rv.SoxAudioDriver();
+    throw new Error(audioPlan.message);
   }
 
   const voiceUi: VoiceUiPlugin = {

@@ -327,6 +327,10 @@ TUI / UI / CLI / Desktop 默认通过 `packages/sdk` 调用 gateway：
 
 如果某个能力会被多个扩展、多个客户端或多个运行时复用，应优先上移到 `packages/*`，而不是留在 app 层。
 
+Windows 语音模式必须使用 `BrowserAudioDriver`（Chrome / Edge / Chromium）；`SoxAudioDriver` 仅作为 macOS / Linux 的命令行音频 fallback，不得在 Windows 上回退到 `arecord` / `aplay` / `sox`。
+
+Windows 脚本不得直接假设 `pnpm` 可被 `spawn("pnpm")` 找到；需要从 Node 脚本调用 pnpm 时，统一使用 `scripts/package-manager-command.mjs` 解析命令和 Windows shim 包装。
+
 ## 7. 开发与协作规范
 
 - 使用 `tsx` 进行开发热重载，`tsdown` 进行生产构建。
@@ -334,6 +338,8 @@ TUI / UI / CLI / Desktop 默认通过 `packages/sdk` 调用 gateway：
 - 提交前必须避免将二进制、构建产物、缓存目录纳入提交。
 - 所有公开接口必须提供完整 TypeScript 类型定义。
 - 重要分层调整必须同步更新本文件与 `.dependency-cruiser.cjs`。
+- 当前暂不接收对 `README.md`、`README_CN.md`、`.gitignore` 的修改。
+- PR review 决策与中英双语评论草稿：遵循 [`docs/skills/pr-review-decision.md`](docs/skills/pr-review-decision.md)。
 
 ## 8. 任务执行协议 (Execution Protocol)
 

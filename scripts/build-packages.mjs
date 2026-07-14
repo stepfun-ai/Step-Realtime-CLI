@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import {
+  resolveCommandInvocation,
+  resolvePnpmCommand,
+} from "./package-manager-command.mjs";
 
 const repoRoot = process.cwd();
 const ignoredDirNames = new Set([
@@ -23,6 +27,10 @@ const buildTargets = [
   {
     name: "@step-cli/core",
     dirPath: "packages/core",
+  },
+  {
+    name: "@step-cli/agent-sdk",
+    dirPath: "packages/agent-sdk",
   },
   {
     name: "@step-cli/sdk",
@@ -94,7 +102,14 @@ for (const decision of decisions) {
   }
 
   process.stderr.write(`build ${decision.name} (${reason})\n`);
-  await runCommand("pnpm", ["--filter", decision.name, "run", "build"]);
+  const pnpm = resolvePnpmCommand();
+  await runCommand(pnpm.command, [
+    ...pnpm.prefixArgs,
+    "--filter",
+    decision.name,
+    "run",
+    "build",
+  ]);
 }
 
 if (dryRun) {
@@ -108,7 +123,9 @@ if (dryRun) {
 
 async function readNewestInputMtimeMs(packageDirPath) {
   let newest = await readFileMtimeMs(path.join(packageDirPath, "package.json"));
-  const srcNewest = await readNewestFileMtimeMs(path.join(packageDirPath, "src"));
+  const srcNewest = await readNewestFileMtimeMs(
+    path.join(packageDirPath, "src"),
+  );
   if (srcNewest !== null && (newest === null || srcNewest > newest)) {
     newest = srcNewest;
   }
@@ -157,7 +174,8 @@ async function readNewestFileMtimeMs(entryPath) {
 
 async function runCommand(command, commandArgs) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, commandArgs, {
+    const invocation = resolveCommandInvocation(command, commandArgs);
+    const child = spawn(invocation.command, invocation.args, {
       cwd: repoRoot,
       env: process.env,
       stdio: "inherit",

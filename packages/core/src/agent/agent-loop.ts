@@ -907,6 +907,9 @@ export class AgentLoop {
         });
       }
     } catch (error) {
+      if (this.signal?.aborted) {
+        throw interruptError(this.signal);
+      }
       // Compaction should never break the main loop.
       const message = `Smart compaction failed unexpectedly: ${shorten(toErrorMessage(error), 160)}`;
       this.memory.recordDecision(message);

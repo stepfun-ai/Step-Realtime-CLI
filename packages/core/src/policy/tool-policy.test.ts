@@ -243,6 +243,25 @@ describe("ToolPolicy", () => {
     expect(decision.reason).toMatch(/dangerous command/i);
   });
 
+  it("denies destructive rm variants with split force and recursive flags", () => {
+    const policy = new ToolPolicy({
+      mode: "auto",
+      nonInteractiveApproval: "allow",
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+
+    for (const command of [
+      "rm -r -f /tmp/test",
+      "rm -r --force /tmp/test",
+      "rm --recursive --force /tmp/test",
+    ]) {
+      const inspection: ToolCallInspection = { command };
+      const decision = policy.evaluate("bash", "{}", spec, inspection);
+      expect(decision.mode).toBe("deny");
+      expect(decision.reason).toMatch(/dangerous command/i);
+    }
+  });
+
   it("denies destructive find delete variants", () => {
     const policy = new ToolPolicy({
       mode: "auto",
@@ -284,6 +303,21 @@ describe("ToolPolicy", () => {
     const decision = policy.evaluate("bash", "{}", spec, inspection);
     expect(decision.mode).toBe("deny");
     expect(decision.reason).toMatch(/dangerous command/i);
+  });
+
+  it("denies git clean forced delete variants regardless of short flag order", () => {
+    const policy = new ToolPolicy({
+      mode: "auto",
+      nonInteractiveApproval: "allow",
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+
+    for (const command of ["git clean -xdf", "git clean -x -d -f"]) {
+      const inspection: ToolCallInspection = { command };
+      const decision = policy.evaluate("bash", "{}", spec, inspection);
+      expect(decision.mode).toBe("deny");
+      expect(decision.reason).toMatch(/dangerous command/i);
+    }
   });
 
   // -- Per-tool override precedence --

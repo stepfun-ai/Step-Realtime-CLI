@@ -202,3 +202,311 @@ describe("resolveStorageRootDirectory additional cases", () => {
     expect(result).not.toContain("~");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Filesystem-touching resolvers (real temp dirs + symlinks)
+// ---------------------------------------------------------------------------
+import {
+  resolveExistingPathInWorkspace,
+  resolveAddressedExistingPathInWorkspace,
+  resolveAddressedPathEntryInWorkspace,
+  resolveWritablePathInWorkspace,
+} from "./path.js";
+
+const isWindows = process.platform === "win32";
+
+async function makeWorkspace(): Promise<string> {
+  // Use realpath so macOS /var -> /private/var symlink does not confuse
+  // workspace-containment checks.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "step-ws-"));
+  return fs.realpath(dir);
+}
+
+describe("resolveExistingPathInWorkspace", () => {
+  it("returns the real path of an existing file inside the workspace", async () => {
+    const root = await makeWorkspace();
+    try {
+      await fs.writeFile(path.join(root, "file.txt"), "hi");
+      const result = await resolveExistingPathInWorkspace(root, "file.txt");
+      expect(result).toBe(path.join(root, "file.txt"));
+    } finally {
+      await fs.rm(root, { recursive: true });
+    }
+  });
+
+  it.skipIf(isWindows)(
+    "resolves a symlink target that lives inside the workspace",
+    async () => {
+      const root = await makeWorkspace();
+      try {
+        await fs.writeFile(path.join(root, "real.txt"), "data");
+        await fs.symlink(
+          path.join(root, "real.txt"),
+          path.join(root, "link.txt"),
+        );
+        const result = await resolveExistingPathInWorkspace(root, "link.txt");
+        // Returns the resolved real target.
+        expect(result).toBe(path.join(root, "real.txt"));
+      } finally {
+        await fs.rm(root, { recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(isWindows)(
+    "throws when a symlink points outside the workspace",
+    async () => {
+      const root = await makeWorkspace();
+      const outside = await makeWorkspace();
+      try {
+        await fs.writeFile(path.join(outside, "secret.txt"), "x");
+        await fs.symlink(
+          path.join(outside, "secret.txt"),
+          path.join(root, "escape.txt"),
+        );
+        await expect(
+          resolveExistingPathInWorkspace(root, "escape.txt"),
+        ).rejects.toThrow("Path escapes workspace root");
+      } finally {
+        await fs.rm(root, { recursive: true });
+        await fs.rm(outside, { recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(isWindows)(
+    "throws when the symlink's parent dir escapes the workspace",
+    async () => {
+      const root = await makeWorkspace();
+      const outside = await makeWorkspace();
+      try {
+        // 'sub' inside root is a symlink to an outside dir; addressing
+        // sub/inner.txt makes the symlink parent check fail.
+        await fs.mkdir(path.join(outside, "real-dir"));
+        await fs.writeFile(path.join(outside, "real-dir", "inner.txt"), "y");
+        await fs.symlink(
+          path.join(outside, "real-dir"),
+          path.join(root, "sub"),
+          "dir",
+        );
+        // 'sub' itself is a symlink whose realpath is outside.
+        await expect(
+          resolveExistingPathInWorkspace(root, "sub"),
+        ).rejects.toThrow("Path escapes workspace root");
+      } finally {
+        await fs.rm(root, { recursive: true });
+        await fs.rm(outside, { recursive: true });
+      }
+    },
+  );
+
+  it("rejects for a non-existent path (ENOENT from realpath)", async () => {
+    const root = await makeWorkspace();
+    try {
+      await expect(
+        resolveExistingPathInWorkspace(root, "missing.txt"),
+      ).rejects.toThrow();
+    } finally {
+      await fs.rm(root, { recursive: true });
+    }
+  });
+});
+
+describe("resolveAddressedExistingPathInWorkspace", () => {
+  it.skipIf(isWindows)(
+    "returns the addressed (non-real) resolved path",
+    async () => {
+      const root = await makeWorkspace();
+      try {
+        await fs.writeFile(path.join(root, "real.txt"), "data");
+        await fs.symlink(
+          path.join(root, "real.txt"),
+          path.join(root, "link.txt"),
+        );
+        const result = await resolveAddressedExistingPathInWorkspace(
+          root,
+          "link.txt",
+        );
+        // Unlike resolveExistingPathInWorkspace, returns the addressed link path.
+        expect(result).toBe(path.join(root, "link.txt"));
+      } finally {
+        await fs.rm(root, { recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(isWindows)("throws when symlink escapes workspace", async () => {
+    const root = await makeWorkspace();
+    const outside = await makeWorkspace();
+    try {
+      await fs.writeFile(path.join(outside, "secret.txt"), "x");
+      await fs.symlink(
+        path.join(outside, "secret.txt"),
+        path.join(root, "escape.txt"),
+      );
+      await expect(
+        resolveAddressedExistingPathInWorkspace(root, "escape.txt"),
+      ).rejects.toThrow("Path escapes workspace root");
+    } finally {
+      await fs.rm(root, { recursive: true });
+      await fs.rm(outside, { recursive: true });
+    }
+  });
+});
+
+describe("resolveAddressedPathEntryInWorkspace", () => {
+  it.skipIf(isWindows)(
+    "returns the resolved path early for a symlink entry",
+    async () => {
+      const root = await makeWorkspace();
+      try {
+        await fs.writeFile(path.join(root, "real.txt"), "data");
+        await fs.symlink(
+          path.join(root, "real.txt"),
+          path.join(root, "link.txt"),
+        );
+        const result = await resolveAddressedPathEntryInWorkspace(
+          root,
+          "link.txt",
+        );
+        expect(result).toBe(path.join(root, "link.txt"));
+      } finally {
+        await fs.rm(root, { recursive: true });
+      }
+    },
+  );
+
+  it("resolves a regular file entry and validates real path", async () => {
+    const root = await makeWorkspace();
+    try {
+      await fs.writeFile(path.join(root, "plain.txt"), "data");
+      const result = await resolveAddressedPathEntryInWorkspace(
+        root,
+        "plain.txt",
+      );
+      expect(result).toBe(path.join(root, "plain.txt"));
+    } finally {
+      await fs.rm(root, { recursive: true });
+    }
+  });
+
+  it.skipIf(isWindows)(
+    "returns resolved symlink even if it escapes (parent check passes)",
+    async () => {
+      const root = await makeWorkspace();
+      const outside = await makeWorkspace();
+      try {
+        await fs.writeFile(path.join(outside, "secret.txt"), "x");
+        // Symlink directly in root; its parent (root) is in the workspace, so the
+        // parent check passes and the symlink branch returns early.
+        await fs.symlink(
+          path.join(outside, "secret.txt"),
+          path.join(root, "link.txt"),
+        );
+        const result = await resolveAddressedPathEntryInWorkspace(
+          root,
+          "link.txt",
+        );
+        expect(result).toBe(path.join(root, "link.txt"));
+      } finally {
+        await fs.rm(root, { recursive: true });
+        await fs.rm(outside, { recursive: true });
+      }
+    },
+  );
+});
+
+describe("resolveWritablePathInWorkspace", () => {
+  it("resolves a non-existent path under an existing dir", async () => {
+    const root = await makeWorkspace();
+    try {
+      const result = await resolveWritablePathInWorkspace(
+        root,
+        "newdir/newfile.txt",
+      );
+      expect(result).toBe(path.join(root, "newdir", "newfile.txt"));
+    } finally {
+      await fs.rm(root, { recursive: true });
+    }
+  });
+
+  it("resolves an existing file path", async () => {
+    const root = await makeWorkspace();
+    try {
+      await fs.writeFile(path.join(root, "exists.txt"), "x");
+      const result = await resolveWritablePathInWorkspace(root, "exists.txt");
+      expect(result).toBe(path.join(root, "exists.txt"));
+    } finally {
+      await fs.rm(root, { recursive: true });
+    }
+  });
+
+  it.skipIf(isWindows)(
+    "follows a symlinked parent dir to an existing location inside workspace",
+    async () => {
+      const root = await makeWorkspace();
+      try {
+        await fs.mkdir(path.join(root, "actual"));
+        await fs.symlink(path.join(root, "actual"), path.join(root, "linkdir"));
+        const result = await resolveWritablePathInWorkspace(
+          root,
+          "linkdir/file.txt",
+        );
+        // Nearest existing path is the symlink's real target, then file.txt.
+        expect(result).toBe(path.join(root, "actual", "file.txt"));
+      } finally {
+        await fs.rm(root, { recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(isWindows)(
+    "throws when the nearest existing ancestor escapes the workspace",
+    async () => {
+      const root = await makeWorkspace();
+      const outside = await makeWorkspace();
+      try {
+        await fs.symlink(outside, path.join(root, "escape"), "dir");
+        await expect(
+          resolveWritablePathInWorkspace(root, "escape/child.txt"),
+        ).rejects.toThrow("Path escapes workspace root");
+      } finally {
+        await fs.rm(root, { recursive: true });
+        await fs.rm(outside, { recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(isWindows)(
+    "rethrows non-ENOENT errors from realpath (ELOOP cycle)",
+    async () => {
+      const root = await makeWorkspace();
+      try {
+        // a -> b, b -> a: realpath fails with ELOOP, which is not ENOENT, so
+        // findNearestExistingPath rethrows it (covers the non-ENOENT branch).
+        await fs.symlink(path.join(root, "b"), path.join(root, "a"));
+        await fs.symlink(path.join(root, "a"), path.join(root, "b"));
+        await expect(
+          resolveWritablePathInWorkspace(root, "a/child.txt"),
+        ).rejects.toThrow(/ELOOP|Symlink cycle|escapes workspace/);
+      } finally {
+        await fs.rm(root, { recursive: true });
+      }
+    },
+  );
+
+  it("resolves a path whose ancestor chain walks up to the workspace root", async () => {
+    const root = await makeWorkspace();
+    try {
+      // Deeply nested non-existent path; findNearestExistingPath unwinds
+      // relativeParts up to the existing root.
+      const result = await resolveWritablePathInWorkspace(
+        root,
+        "x/y/z/deep.txt",
+      );
+      expect(result).toBe(path.join(root, "x", "y", "z", "deep.txt"));
+    } finally {
+      await fs.rm(root, { recursive: true });
+    }
+  });
+});

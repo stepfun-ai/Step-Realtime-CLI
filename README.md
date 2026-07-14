@@ -30,21 +30,25 @@
 
 StepFun operates two independent sites; pick the one that matches where your API key was issued. The two sites do **not** share accounts or keys.
 
-| Region                   | Console                       | API endpoint              | Installer                        |
-| ------------------------ | ----------------------------- | ------------------------- | -------------------------------- |
-| Mainland China (default) | https://platform.stepfun.com/ | `https://api.stepfun.com` | `bash scripts/setup.sh`          |
-| Overseas                 | https://platform.stepfun.ai/  | `https://api.stepfun.ai`  | `bash scripts/setup-overseas.sh` |
+| Region                   | Console                       | API endpoint              | macOS / Linux installer          | Windows installer                                                      |
+| ------------------------ | ----------------------------- | ------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| Mainland China (default) | https://platform.stepfun.com/ | `https://api.stepfun.com` | `bash scripts/setup.sh`          | `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`           |
+| Overseas                 | https://platform.stepfun.ai/  | `https://api.stepfun.ai`  | `bash scripts/setup-overseas.sh` | `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Overseas` |
 
 `scripts/setup-overseas.sh` runs the same flow as `scripts/setup.sh` and then rewrites `~/.step-cli/config.json` so both the realtime WebSocket and the models-proxy base URL point at `api.stepfun.ai`. All other flags (`--skip-build`, `--force-config`, `--uninstall`, …) are forwarded verbatim.
+On Windows, pass `-Overseas` to `scripts/setup.ps1` for the same endpoint rewrite.
 
 ### Audio dependencies
 
 `scripts/setup.sh` (and `scripts/setup-overseas.sh`) enables AEC by default and will detect or install Chrome automatically. In this default mode, audio capture and playback are handled by Chrome (`BrowserAudioDriver`), and no additional system-level audio utilities are required.
 
+On Windows, voice mode always uses `BrowserAudioDriver`; Chrome, Edge, or Chromium is required. Set `STEP_CHROME_PATH` if your browser is installed in a custom location.
+
 When AEC is disabled via `step aec off` (or falls back because Chrome is unavailable), realtime voice switches to the system command-line audio drivers, which require:
 
 - macOS: `sox`, installable via `brew install sox`
 - Linux: ALSA utilities `arecord` / `aplay`, typically provided by `alsa-utils` (e.g. `sudo apt install alsa-utils`)
+- Windows: no command-line audio fallback is used; keep browser audio enabled.
 
 ### One-shot install
 
@@ -54,12 +58,15 @@ cd step-realtime-cli
 
 # Mainland China (platform.stepfun.com)
 bash scripts/setup.sh
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1   # Windows
 
 # Overseas (platform.stepfun.ai)
 # bash scripts/setup-overseas.sh
+# powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Overseas
 ```
 
 The installer installs dependencies, builds the executable, registers `step` on your shell `PATH`, and initializes the voice components (VAD / AEC).
+On Windows, the installer registers a `step.cmd` launcher backed by Node.js, so Bun native compilation is not required.
 
 After installation completes, perform the following two steps:
 
@@ -81,6 +88,7 @@ step "summarize src/index.ts"     # one-shot task
 
 ```bash
 bash scripts/uninstall.sh
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Uninstall   # Windows
 ```
 
 This removes the installed executable and `PATH` entry, while **preserving** `~/.step-cli/config.json` and existing session history.
@@ -158,12 +166,15 @@ step config show        # show the merged effective configuration
 ```bash
 git pull
 bash scripts/setup.sh           # mainland; or scripts/setup-overseas.sh for api.stepfun.ai
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1   # Windows
 step config sync --write
 ```
 
 ## Feedback & contributing
 
 Issues and pull requests are welcome. Please refer to [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) for development conventions.
+
+Core contributors (stepfun CLI team): [@ZouR-Ma](https://github.com/ZouR-Ma) · [@qiushi20260601](https://github.com/qiushi20260601) · [@MelodyVAR](https://github.com/MelodyVAR) · [@beanzhou](https://github.com/beanzhou) · [@icystone](https://github.com/icystone)
 
 ## License
 

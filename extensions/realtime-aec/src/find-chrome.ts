@@ -3,7 +3,15 @@
 // Chromium and point here.
 
 import fs from "node:fs";
-import { platform } from "node:os";
+import { homedir, platform } from "node:os";
+
+type ChromePathProbe = {
+  env?: NodeJS.ProcessEnv;
+  existsSync?: (path: string) => boolean;
+  isExecutable?: (path: string) => boolean;
+  platform?: NodeJS.Platform | string;
+  homeDir?: string;
+};
 
 const CANDIDATES: Record<string, string[]> = {
   darwin: [
@@ -22,18 +30,84 @@ const CANDIDATES: Record<string, string[]> = {
   win32: [
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   ],
 };
 
+export function getChromeCandidates(
+  targetPlatform: NodeJS.Platform | string = platform(),
+  env: NodeJS.ProcessEnv = process.env,
+  homeDir: string = homedir(),
+): string[] {
+  const candidates = [...(CANDIDATES[targetPlatform] ?? [])];
+  if (targetPlatform === "darwin") {
+    for (const candidate of CANDIDATES.darwin) {
+      candidates.push(
+        candidate.replace("/Applications/", `${homeDir}/Applications/`),
+      );
+    }
+  }
+  if (targetPlatform === "win32") {
+    const programFiles = env.ProgramFiles;
+    const programFilesX86 = env["ProgramFiles(x86)"];
+    const localAppData = env.LOCALAPPDATA;
+
+    if (programFiles) {
+      candidates.push(
+        `${programFiles}\\Google\\Chrome\\Application\\chrome.exe`,
+        `${programFiles}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      );
+    }
+    if (programFilesX86) {
+      candidates.push(
+        `${programFilesX86}\\Google\\Chrome\\Application\\chrome.exe`,
+        `${programFilesX86}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      );
+    }
+    if (localAppData) {
+      candidates.push(
+        `${localAppData}\\Google\\Chrome\\Application\\chrome.exe`,
+        `${localAppData}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      );
+    }
+  }
+  return [...new Set(candidates)];
+}
+
+function defaultIsExecutable(path: string): boolean {
+  try {
+    fs.accessSync(path, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isUsableChromePath(
+  path: string | undefined,
+  existsSync: (path: string) => boolean,
+  isExecutable: (path: string) => boolean,
+): path is string {
+  return Boolean(path && existsSync(path) && isExecutable(path));
+}
+
 /** Resolve a Chrome/Chromium executable path, or undefined if none found.
  *  Honors CHROME_PATH / STEP_CHROME_PATH overrides first. */
-export function findChrome(): string | undefined {
-  const envPath = process.env.STEP_CHROME_PATH || process.env.CHROME_PATH;
-  if (envPath && fs.existsSync(envPath)) return envPath;
-  const list = CANDIDATES[platform()] ?? [];
+export function findChrome(options: ChromePathProbe = {}): string | undefined {
+  const env = options.env ?? process.env;
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const isExecutable = options.isExecutable ?? defaultIsExecutable;
+  for (const envPath of [env.STEP_CHROME_PATH, env.CHROME_PATH]) {
+    if (isUsableChromePath(envPath, existsSync, isExecutable)) return envPath;
+  }
+  const list = getChromeCandidates(
+    options.platform,
+    env,
+    options.homeDir ?? homedir(),
+  );
   for (const p of list) {
-    if (fs.existsSync(p)) return p;
+    if (isUsableChromePath(p, existsSync, isExecutable)) return p;
   }
   return undefined;
 }

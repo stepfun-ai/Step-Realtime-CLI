@@ -58,7 +58,7 @@ describe("config loader", () => {
     it("returns path under workspace root", () => {
       const result = getDefaultWorkspaceConfigPath("/my/workspace");
       expect(result).toBe(
-        path.join("/my/workspace", ".step-cli", "config.json"),
+        path.resolve("/my/workspace", ".step-cli", "config.json"),
       );
     });
 
