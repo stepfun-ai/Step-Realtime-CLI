@@ -30,10 +30,21 @@ export interface PluginUserMessage {
   content: string;
 }
 
-export type PluginInjectedMessage = {
-  role: "system" | "user";
-  content: string;
-};
+export type PluginInjectedMessage =
+  | {
+      role: "system";
+      content: string;
+      /**
+       * When true, the message is only for the model context and should not
+       * be rendered in the UI. Only system messages support this flag; the
+       * agent loop stores injected user messages without it.
+       */
+      hidden?: boolean;
+    }
+  | {
+      role: "user";
+      content: string;
+    };
 
 export interface PluginHookContext {
   workspaceRoot: string;

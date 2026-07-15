@@ -1268,6 +1268,7 @@ class BackgroundSubtaskManager {
       messages.push({
         role: "system",
         content: MAIN_ORCHESTRATION_REMINDER,
+        hidden: true,
       });
     }
 

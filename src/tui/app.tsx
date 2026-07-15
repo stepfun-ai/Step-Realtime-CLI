@@ -1914,21 +1914,23 @@ function buildTranscriptItems(
 ): TranscriptItem[] {
   return [
     buildWelcomeTranscriptItem(width),
-    ...entries.map((entry, index) => {
-      const identity = resolveTranscriptIdentity(entry);
-      const body = compactToolTranscriptContent(entry);
-      const lines = wrapMultiline(body, Math.max(12, width - 4));
-      return {
-        id:
-          entry.id ||
-          `message:${index}:${identity.badge}:${identity.caption ?? ""}`,
-        ...identity,
-        backgroundColor: resolveTranscriptBackground(entry, theme),
-        border: false,
-        lines,
-        truncated: false,
-      };
-    }),
+    ...entries
+      .filter((entry) => !entry.hidden)
+      .map((entry, index) => {
+        const identity = resolveTranscriptIdentity(entry);
+        const body = compactToolTranscriptContent(entry);
+        const lines = wrapMultiline(body, Math.max(12, width - 4));
+        return {
+          id:
+            entry.id ||
+            `message:${index}:${identity.badge}:${identity.caption ?? ""}`,
+          ...identity,
+          backgroundColor: resolveTranscriptBackground(entry, theme),
+          border: false,
+          lines,
+          truncated: false,
+        };
+      }),
   ];
 }
 

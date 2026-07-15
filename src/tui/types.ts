@@ -87,6 +87,8 @@ export interface StepCliTuiTranscriptEntry {
   role: "assistant" | "user" | "tool" | "system";
   content: string;
   caption: string | null;
+  /** Internal message that should not be rendered in the transcript. */
+  hidden?: boolean;
 }
 
 export interface StepCliTuiQueuedTurnEntry {
