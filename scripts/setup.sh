@@ -180,12 +180,15 @@ else
       if [[ "$SKIP_CHROME_INSTALL" != 1 ]]; then
         if command -v brew >/dev/null 2>&1; then
           info "Installing Google Chrome via Homebrew…"
-          brew install --cask google-chrome || warn "Chrome install failed — continuing without AEC"
-          if detect_chrome; then
-            ok "Chrome installed"
-            AEC_AVAILABLE=1
+          if brew install --cask google-chrome; then
+            if detect_chrome; then
+              ok "Chrome installed"
+              AEC_AVAILABLE=1
+            else
+              warn "Chrome install succeeded but binary not detected."
+            fi
           else
-            warn "Chrome install succeeded but binary not detected."
+            warn "Chrome install failed — continuing without AEC"
           fi
         else
           info "Homebrew not found. Install Chrome manually:"

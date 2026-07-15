@@ -78,8 +78,9 @@ describe("scripts/setup.sh", () => {
       "utf8",
     );
 
+    expect(script).toContain("if brew install --cask google-chrome; then");
     expect(script).toContain(
-      'brew install --cask google-chrome || warn "Chrome install failed — continuing without AEC"',
+      'warn "Chrome install failed — continuing without AEC"',
     );
   });
 
