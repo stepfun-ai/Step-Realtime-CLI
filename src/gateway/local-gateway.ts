@@ -11,6 +11,7 @@ import type {
   StepCliSessionDescriptor,
   StepCliSessionRunResult,
   StepCliSessionSnapshotResult,
+  StepCliSlashCommandResult,
   StepCliSessionWakeReceipt,
   StepCliSessionWakeRequest,
   StepCliStartGoalRequest,
@@ -115,6 +116,13 @@ export class LocalStepGateway implements StepGateway {
     signal?: AbortSignal,
   ): Promise<StepCliSessionRunResult> {
     return await this.sessions.runPrompt(sessionId, prompt, signal);
+  }
+
+  async executeSlashCommand(
+    sessionId: string,
+    commandLine: string,
+  ): Promise<StepCliSlashCommandResult> {
+    return await this.sessions.executeSlashCommand(sessionId, commandLine);
   }
 
   async getPendingClarification(

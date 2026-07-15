@@ -72,6 +72,7 @@ import {
   type BackgroundSubtaskView,
   type SubagentToolPlugin,
 } from "@step-cli/skills-builtin/subagent-plugin.js";
+import { createSwarmPlugin } from "@step-cli/skills-builtin/swarm-plugin.js";
 import { PluginManager } from "@step-cli/core/plugins/manager.js";
 import type { ToolPluginContext } from "@step-cli/core/plugins/types.js";
 import {
@@ -114,6 +115,7 @@ import {
 import {
   type StepCliInteractiveUi,
   type StepCliInteractiveUiFactory,
+  type StepCliInteractiveUiTone,
 } from "./interactive-ui.js";
 import { createFilesystemAgentRunArtifactStore } from "./artifacts/run-artifact-store.js";
 import { FilesystemConversationTranscriptStore } from "./memory/filesystem-conversation-transcript-store.js";
@@ -149,6 +151,7 @@ import type {
   ToolSearchIndexProfile,
   ToolSpec,
   StepCliInteractionProfile,
+  StepCliSlashCommandResult,
   StepCliVerifierVerdict,
   UserClarificationRuntimeState,
   UserClarificationRequest,
@@ -218,6 +221,10 @@ const REPL_COMMANDS = [
   {
     command: "/teammates",
     description: "Inspect persistent teammate state and pending requests",
+  },
+  {
+    command: "/swarm [on|off|task]",
+    description: "Toggle swarm mode or run a swarm task",
   },
   { command: "/clear", description: "Clear in-memory conversation history" },
   { command: "/history", description: "Inspect memory and token usage" },
@@ -689,6 +696,7 @@ export class StepCli {
           presetRegistry,
           (name) => teammateHooksFactory?.(name),
         ),
+        createSwarmPlugin(),
       ],
       pluginsDir,
     });
@@ -1710,6 +1718,56 @@ export class StepCli {
     this.uiState.tui = null;
   }
 
+  /**
+   * Execute a slash command from an external caller (e.g. the OpenTUI client).
+   *
+   * This wraps the private executeSlashCommand so that the TUI — which
+   * intercepts all "/" input locally — can forward gateway-level commands
+   * (such as /swarm, /clear, /history) to the runtime. For /swarm <task>,
+   * the task text is returned instead of starting a turn directly, so the
+   * caller can submit it through the session service's turn queue.
+   */
+  async executeSlashCommandExternal(
+    commandLine: string,
+  ): Promise<StepCliSlashCommandResult> {
+    const parsed = parseSlashCommandLine(commandLine);
+    if (!parsed) {
+      return { handled: false, message: null, taskText: null };
+    }
+
+    // For /swarm, handle specially to capture taskText without starting a
+    // turn directly. The caller (TUI) submits the task via sdk.runPrompt
+    // to ensure proper queueing through the session service.
+    if (parsed.normalizedCommand === "/swarm") {
+      const swarmResult = this.handleSwarmCommand(parsed.rest);
+      const tui = this.uiState.tui;
+      if (tui && swarmResult.tuiMessage) {
+        tui.addEvent(
+          "swarm",
+          swarmResult.tuiMessage,
+          (swarmResult.tuiTone ?? "accent") as StepCliInteractiveUiTone,
+        );
+      }
+      return {
+        handled: true,
+        message: swarmResult.message,
+        taskText: swarmResult.taskText ?? null,
+      };
+    }
+
+    // For all other commands, delegate to the existing executeSlashCommand.
+    const tui = this.uiState.tui;
+    const surface: SlashCommandSurfaceInput = tui
+      ? { kind: "tui", tui }
+      : { kind: "repl", json: false };
+    const result = await this.executeSlashCommand(parsed, surface);
+    return {
+      handled: result === "handled",
+      message: null,
+      taskText: null,
+    };
+  }
+
   async runTurn(
     prompt: string | UserTurnInput,
     signal?: AbortSignal,
@@ -1767,6 +1825,11 @@ export class StepCli {
         verifier,
       };
     } finally {
+      // Auto-exit swarm mode for task/tool triggers after the turn completes.
+      const swarmMode = this.getSwarmModeState();
+      if (swarmMode?.isActive && swarmMode.trigger !== "manual") {
+        swarmMode.exit();
+      }
       await this.turnRestore.finishTurn();
     }
   }
@@ -2725,6 +2788,87 @@ export class StepCli {
         }
         return "handled";
 
+      case "/swarm": {
+        const swarmResult = this.handleSwarmCommand(parsed.rest);
+        if (surface.kind === "tui") {
+          if (swarmResult.tuiMessage) {
+            surface.tui.addEvent(
+              "swarm",
+              swarmResult.tuiMessage,
+              (swarmResult.tuiTone ?? "accent") as StepCliInteractiveUiTone,
+            );
+          }
+        } else {
+          output.write(`${swarmResult.message}\n`);
+        }
+
+        // For /swarm <task>, submit the task as a prompt after entering task mode.
+        if (swarmResult.taskText) {
+          const taskInput: UserTurnInput = {
+            content: swarmResult.taskText,
+          };
+          if (surface.kind === "tui" && surface.tui) {
+            const activeTeammateName = this.getActiveTeammateName();
+            const controller =
+              this.uiState.activeRunAbortController &&
+              !this.uiState.activeRunAbortController.signal.aborted
+                ? this.uiState.activeRunAbortController
+                : new AbortController();
+            this.uiState.activeRunAbortController = controller;
+            surface.tui.beginRun(taskInput, activeTeammateName);
+            this.uiState.currentAssistantStreamActive = false;
+            this.uiState.currentAssistantLineOpen = false;
+            this.uiState.responseStreamUsed = false;
+            try {
+              const result = await this.runMainTurnNow(
+                taskInput,
+                controller.signal,
+              );
+              if (didTurnSucceed(result)) {
+                if (this.provider !== "anthropic") {
+                  await surface.tui.revealAssistantMessage(
+                    result.output,
+                    activeTeammateName,
+                  );
+                }
+                surface.tui.endRun(true, undefined, activeTeammateName);
+              } else {
+                const failureMessage = describeRunFailure(result);
+                surface.tui.endRun(false, failureMessage, activeTeammateName);
+              }
+            } catch (error) {
+              const message = toErrorMessage(error);
+              if (!isInterruptErrorMessage(message)) {
+                surface.tui.addEvent("error", message, "danger");
+              }
+              surface.tui.endRun(
+                isInterruptErrorMessage(message),
+                isInterruptErrorMessage(message) ? message : undefined,
+                activeTeammateName,
+              );
+            } finally {
+              if (
+                this.uiState.activeRunAbortController === controller &&
+                this.foregroundTurnQueue.length === 0
+              ) {
+                this.uiState.activeRunAbortController = null;
+              }
+              this.uiState.currentAssistantStreamActive = false;
+              this.uiState.currentAssistantLineOpen = false;
+              this.uiState.responseStreamUsed = false;
+            }
+          } else {
+            try {
+              await this.runMainTurnNow(taskInput);
+            } catch {
+              // Non-fatal; swarm mode state is already set.
+            }
+          }
+        }
+
+        return "handled";
+      }
+
       case "/clear":
         this.memory.clear();
         await this.persistSessionIfEnabled();
@@ -3357,6 +3501,107 @@ export class StepCli {
       }
     }
     return null;
+  }
+
+  private getSwarmModeState(): {
+    isActive: boolean;
+    trigger: string | null;
+    enter(trigger: string, prompt?: string): void;
+    exit(): void;
+  } | null {
+    for (const loaded of this.pluginManager.getPlugins()) {
+      const plugin = loaded.plugin as Partial<{
+        id: string;
+        getSwarmMode: () =>
+          | {
+              isActive: boolean;
+              trigger: string | null;
+              enter(trigger: string, prompt?: string): void;
+              exit(): void;
+            }
+          | undefined;
+      }>;
+      if (
+        plugin.id === "swarm-plugin" &&
+        typeof plugin.getSwarmMode === "function"
+      ) {
+        const mode = plugin.getSwarmMode();
+        if (mode) {
+          return mode;
+        }
+      }
+    }
+    return null;
+  }
+
+  private handleSwarmCommand(rest: string[]): {
+    message: string;
+    tuiMessage?: string;
+    tuiTone?: string;
+    taskText?: string;
+  } {
+    const mode = this.getSwarmModeState();
+    if (!mode) {
+      return {
+        message: "Swarm mode is unavailable in this session.",
+        tuiMessage: "Swarm mode unavailable",
+        tuiTone: "warning",
+      };
+    }
+
+    const raw = rest.join(" ").trim();
+    const arg = raw.toLowerCase();
+
+    if (arg === "" || arg === "on") {
+      if (mode.isActive) {
+        const trigger = mode.trigger ?? "unknown";
+        return {
+          message: `Swarm mode is already active (trigger: ${trigger}). Use /swarm off to deactivate.`,
+          tuiMessage: `Swarm active (${trigger}). Use /swarm off.`,
+          tuiTone: "muted",
+        };
+      }
+      mode.enter("manual");
+      return {
+        message:
+          "Swarm mode activated. Use /swarm off to deactivate, or let an AgentSwarm task complete to auto-deactivate.",
+        tuiMessage: "Swarm mode on",
+        tuiTone: "success",
+      };
+    }
+
+    if (arg === "off") {
+      if (!mode.isActive) {
+        return {
+          message: "Swarm mode is not active.",
+          tuiMessage: "Swarm mode already off",
+          tuiTone: "muted",
+        };
+      }
+      mode.exit();
+      return {
+        message: "Swarm mode deactivated.",
+        tuiMessage: "Swarm mode off",
+        tuiTone: "accent",
+      };
+    }
+
+    // Treat everything else as a task: /swarm <task description>
+    if (mode.isActive && mode.trigger === "manual") {
+      return {
+        message: `Swarm mode is already manually active. Use /swarm off first, or just type the task directly.`,
+        tuiMessage: "Already in manual swarm mode",
+        tuiTone: "warning",
+      };
+    }
+
+    mode.enter("task", raw);
+    return {
+      message: `Swarm task submitted: "${raw}". Swarm mode will auto-deactivate after the turn.`,
+      tuiMessage: `Swarm task: ${raw.slice(0, 60)}${raw.length > 60 ? "..." : ""}`,
+      tuiTone: "success",
+      taskText: raw,
+    };
   }
 
   private getBackgroundSubtaskViews(): BackgroundSubtaskView[] {

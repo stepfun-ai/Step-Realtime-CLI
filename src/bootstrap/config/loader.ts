@@ -242,7 +242,7 @@ export function createDefaultConfigTemplate(): string {
       },
       clients: {
         tui: {
-          altScreen: true,
+          altScreen: false,
         },
       },
       voice: {

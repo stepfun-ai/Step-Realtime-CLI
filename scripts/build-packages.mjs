@@ -25,6 +25,10 @@ const buildTargets = [
     dirPath: "packages/utils",
   },
   {
+    name: "@step-cli/agent-sdk",
+    dirPath: "packages/agent-sdk",
+  },
+  {
     name: "@step-cli/core",
     dirPath: "packages/core",
   },

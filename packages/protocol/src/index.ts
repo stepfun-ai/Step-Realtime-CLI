@@ -1065,6 +1065,22 @@ export interface StepCliSessionClarificationSubmissionResult {
   response: UserClarificationResponse;
 }
 
+/**
+ * Result of executing a slash command through the gateway.
+ *
+ * - `handled`: Whether the gateway recognized and handled the command.
+ * - `message`: Human-readable summary of the command result (may be null when
+ *   the gateway already displayed output via the interactive UI).
+ * - `taskText`: When non-null, the caller should submit this text as a regular
+ *   prompt (e.g. `/swarm <task>` enters swarm mode and returns the task text
+ *   for the caller to run through the normal turn queue).
+ */
+export interface StepCliSlashCommandResult {
+  handled: boolean;
+  message: string | null;
+  taskText: string | null;
+}
+
 export interface StepGateway {
   listSessions(): Promise<StepCliSessionDescriptor[]>;
   getSession(sessionId: string): Promise<StepCliSessionDescriptor | null>;
@@ -1122,6 +1138,10 @@ export interface StepGateway {
     prompt: string | UserTurnInput,
     signal?: AbortSignal,
   ): Promise<StepCliSessionRunResult>;
+  executeSlashCommand(
+    sessionId: string,
+    commandLine: string,
+  ): Promise<StepCliSlashCommandResult>;
   getPendingClarification(
     sessionId: string,
   ): Promise<StepCliSessionClarificationResult | null>;
