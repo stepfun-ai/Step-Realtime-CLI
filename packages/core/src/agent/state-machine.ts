@@ -35,9 +35,27 @@ export interface AgentStateSnapshot {
   priority?: AgentPriority;
 }
 
+const ALLOWED_TRANSITIONS: Record<AgentState, AgentState[]> = {
+  goal_start: ["prepare_context", "failed"],
+  prepare_context: ["model_request", "goal_complete", "failed"],
+  before_model_request_hooks: ["model_request", "failed"],
+  context_compaction: ["model_request", "failed"],
+  model_request: ["tool_execution", "final_response", "goal_complete", "failed"],
+  tool_execution: ["apply_tool_results", "model_request", "failed"],
+  apply_tool_results: ["model_request", "final_response", "goal_complete", "failed"],
+  final_response: ["goal_complete", "failed"],
+  goal_complete: [],
+  failed: [],
+};
+
 export class AgentStateMachine {
   private currentState: AgentState = "prepare_context";
   private readonly timeline: AgentStateSnapshot[] = [];
+  private readonly maxTimelineSize: number;
+
+  constructor(maxTimelineSize = 200) {
+    this.maxTimelineSize = maxTimelineSize;
+  }
 
   transition(input: {
     state: AgentState;
@@ -45,6 +63,15 @@ export class AgentStateMachine {
     toolCalls: number;
     note?: string;
   }): AgentStateSnapshot {
+    if (input.state !== this.currentState) {
+      const allowed = ALLOWED_TRANSITIONS[this.currentState];
+      if (allowed && !allowed.includes(input.state)) {
+        throw new Error(
+          `Invalid state transition: ${this.currentState} -> ${input.state}`,
+        );
+      }
+    }
+    this.currentState = input.state;
     this.currentState = input.state;
     const context = getHarnessContext();
     const snapshot: AgentStateSnapshot = {

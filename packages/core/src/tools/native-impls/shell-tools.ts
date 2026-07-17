@@ -14,6 +14,7 @@ import {
   optionalNumber,
   optionalString,
   requireString,
+  safeParse,
 } from "./parsers.js";
 
 const SKIP_DIRECTORY_NAMES = new Set([
@@ -157,11 +158,6 @@ function parseGrepArgs(rawArgs: string): GrepArgs {
     path: optionalString(obj, "path"),
     include: optionalString(obj, "include"),
   };
-}
-
-function safeParse(rawArgs: string): unknown {
-  if (!rawArgs?.trim()) return {};
-  return JSON.parse(rawArgs);
 }
 
 async function bashExecute(

@@ -31,6 +31,7 @@ import {
 } from "@step-cli/utils/assistant-message.js";
 import { toErrorMessage } from "@step-cli/utils/error.js";
 import { clamp } from "@step-cli/utils/math.js";
+import { normalizeToolArguments, stableStringify } from "@step-cli/utils/json.js";
 import { truncateText } from "@step-cli/utils/text.js";
 import { estimateCompletionRequestPromptTokens } from "@step-cli/utils/token-estimator.js";
 import {
@@ -1264,38 +1265,6 @@ function createToolCallFingerprint(toolName: string, rawArgs: string): string {
   const normalizedArgs = normalizeToolArguments(rawArgs);
   const hash = createHash("sha1").update(normalizedArgs).digest("hex");
   return `${toolName}:${hash}`;
-}
-
-function normalizeToolArguments(rawArgs: string): string {
-  try {
-    const parsed = JSON.parse(rawArgs) as unknown;
-    return stableStringify(parsed);
-  } catch {
-    return rawArgs.replace(/\s+/g, " ").trim();
-  }
-}
-
-function stableStringify(value: unknown): string {
-  return JSON.stringify(sortRecursively(value));
-}
-
-function sortRecursively(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((entry) => sortRecursively(entry));
-  }
-
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(
-      ([left], [right]) => left.localeCompare(right),
-    );
-    const sorted: Record<string, unknown> = {};
-    for (const [key, child] of entries) {
-      sorted[key] = sortRecursively(child);
-    }
-    return sorted;
-  }
-
-  return value;
 }
 
 function summarizeToolData(value: unknown, maxChars: number): unknown {

@@ -1374,8 +1374,17 @@ function encodeSessionStorageKey(sessionId: string): string {
   return Buffer.from(sessionId, "utf8").toString("base64url");
 }
 
-async function sleep(delayMs: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, delayMs));
+async function sleep(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, delayMs);
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(new DOMException("The operation was aborted", "AbortError"));
+      }, { once: true });
+    }
+  });
 }
 
 function finalizeTeammateHarness(teammate: LiveTeammate): void {
