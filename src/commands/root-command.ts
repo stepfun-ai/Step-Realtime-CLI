@@ -14,13 +14,43 @@ import { resolveStepCliRuntimeConfig } from "../runtime/runtime-config.js";
 import { createLocalCliClientApp } from "../runtime/local-cli-app.js";
 import {
   isOpenTuiEnabledInCurrentBuild,
+  isOpenTuiRuntimeSupported,
   loadOpenTuiClientAppFactoryAtRuntime,
+  warnWhenOpenTuiRuntimeUnsupported,
 } from "../runtime/open-tui-capability.js";
 
 // Keep this build flag in the command module so rolldown can fold the bundle's
 // TTY startup path away before it ever reaches the OpenTUI loader.
 const OPEN_TUI_COMPILE_TIME_ENABLED =
   process.env.STEP_CLI_ENABLE_OPENTUI !== "0";
+
+export interface ShouldUseTuiInputs {
+  options: { json?: boolean };
+  prompt: string | undefined;
+  attachments: ReadonlyArray<unknown> | undefined;
+  stdinIsTTY: boolean;
+  stdoutIsTTY: boolean;
+}
+
+/**
+ * Decide whether the root command should launch the OpenTUI TUI. Pure
+ * function so it can be unit-tested without spawning commander.
+ */
+export function shouldUseTui(inputs: ShouldUseTuiInputs): boolean {
+  return isTuiOtherwiseEligible(inputs) && isOpenTuiRuntimeSupported();
+}
+
+function isTuiOtherwiseEligible(inputs: ShouldUseTuiInputs): boolean {
+  return (
+    OPEN_TUI_COMPILE_TIME_ENABLED &&
+    isOpenTuiEnabledInCurrentBuild() &&
+    !inputs.options.json &&
+    (inputs.prompt?.trim().length ?? 0) === 0 &&
+    (inputs.attachments?.length ?? 0) === 0 &&
+    inputs.stdinIsTTY === true &&
+    inputs.stdoutIsTTY === true
+  );
+}
 
 export async function runRootCommand(argv: string[]): Promise<void> {
   const program = configureCommanderProgram(new Command());
@@ -76,22 +106,23 @@ export async function runRootCommand(argv: string[]): Promise<void> {
         });
         const cliOptionSources =
           readSharedRuntimeCliOptionSources(actionCommand);
-        const shouldUseTui =
-          OPEN_TUI_COMPILE_TIME_ENABLED &&
-          isOpenTuiEnabledInCurrentBuild() &&
-          !options.json &&
-          (prompt?.trim().length ?? 0) === 0 &&
-          (attachments?.length ?? 0) === 0 &&
-          process.stdin.isTTY === true &&
-          process.stdout.isTTY === true;
+        const tuiInputs = {
+          options,
+          prompt,
+          attachments,
+          stdinIsTTY: process.stdin.isTTY === true,
+          stdoutIsTTY: process.stdout.isTTY === true,
+        } satisfies ShouldUseTuiInputs;
+        const shouldUseTuiResult = shouldUseTui(tuiInputs);
+        warnWhenOpenTuiRuntimeUnsupported(isTuiOtherwiseEligible(tuiInputs));
         const { stepCliConfig } = await resolveStepCliRuntimeConfig({
           options,
           cliOptionSources,
           resumeSession: Boolean(options.resume),
-          useAlternateScreen: shouldUseTui ? options.altScreen : false,
-          interactionSurface: shouldUseTui ? "interactive" : undefined,
+          useAlternateScreen: shouldUseTuiResult ? options.altScreen : false,
+          interactionSurface: shouldUseTuiResult ? "interactive" : undefined,
         });
-        if (shouldUseTui) {
+        if (shouldUseTuiResult) {
           const createLocalTuiClientApp =
             await loadOpenTuiClientAppFactoryAtRuntime();
           const app = await createLocalTuiClientApp(stepCliConfig);

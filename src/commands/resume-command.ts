@@ -12,7 +12,9 @@ import { resolveStepCliRuntimeConfig } from "../runtime/runtime-config.js";
 import { createLocalCliClientApp } from "../runtime/local-cli-app.js";
 import {
   isOpenTuiEnabledInCurrentBuild,
+  isOpenTuiRuntimeSupported,
   loadOpenTuiClientAppFactoryAtRuntime,
+  warnWhenOpenTuiRuntimeUnsupported,
 } from "../runtime/open-tui-capability.js";
 
 // Keep this build flag in the command module so rolldown can fold the bundle's
@@ -42,12 +44,15 @@ export async function runResumeCommand(argv: string[]): Promise<void> {
       actionCommand: Command,
     ) => {
       const cliOptionSources = readSharedRuntimeCliOptionSources(actionCommand);
-      const shouldUseTui =
+      const isTuiOtherwiseEligible =
         OPEN_TUI_COMPILE_TIME_ENABLED &&
         isOpenTuiEnabledInCurrentBuild() &&
         !options.json &&
         process.stdin.isTTY === true &&
         process.stdout.isTTY === true;
+      const shouldUseTui =
+        isTuiOtherwiseEligible && isOpenTuiRuntimeSupported();
+      warnWhenOpenTuiRuntimeUnsupported(isTuiOtherwiseEligible);
       const { stepCliConfig } = await resolveStepCliRuntimeConfig({
         options,
         cliOptionSources,

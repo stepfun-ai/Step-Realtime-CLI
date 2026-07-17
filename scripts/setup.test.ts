@@ -117,3 +117,16 @@ describe("scripts/setup.sh", () => {
     },
   );
 });
+
+describe("scripts/setup.ps1", () => {
+  it("runs the launcher from its install directory before resolving runtime imports", () => {
+    const script = readFileSync(
+      join(process.cwd(), "scripts", "setup.ps1"),
+      "utf8",
+    );
+
+    expect(script).toContain('pushd "%~dp0" || exit /b 1');
+    expect(script).toContain('set "STEP_EXIT_CODE=%ERRORLEVEL%"');
+    expect(script).toContain("popd");
+  });
+});
