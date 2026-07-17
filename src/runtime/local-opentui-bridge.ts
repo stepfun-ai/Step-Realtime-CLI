@@ -887,6 +887,12 @@ function mapChatMessageToTranscriptEntry(
         caption: null,
         content: reasoning,
       };
+      // Reasoning-only messages (e.g. intermediate tool-call steps with an
+      // empty content field) must not produce an empty assistant entry, which
+      // would render as a bare ASSISTANT badge row.
+      if (assistantEntry.content.length === 0) {
+        return [reasoningEntry];
+      }
       return [reasoningEntry, assistantEntry];
     }
     case "user":

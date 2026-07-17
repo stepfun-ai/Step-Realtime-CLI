@@ -45,14 +45,8 @@ import {
 } from "./theme.js";
 import { compactToolTranscriptContent } from "./transcript-preview.js";
 import { buildTranscriptClipboardText } from "./transcript-export.js";
-import {
-  buildCollapsedToolSummary,
-  buildToolTranscriptLines,
-} from "./tool-call-collapsible.js";
-import {
-  buildCollapsedReasoningSummary,
-  buildReasoningTranscriptLines,
-} from "./reasoning-collapsible.js";
+import { buildToolTranscriptLines } from "./tool-call-collapsible.js";
+import { buildReasoningTranscriptLines } from "./reasoning-collapsible.js";
 import type {
   StepCliTuiComposerState,
   StepCliTuiComposerHistoryState,
@@ -1950,19 +1944,16 @@ function buildTranscriptItems(
         const isTool = entry.role === "tool";
         const isReasoning = entry.role === "reasoning";
         const collapsible = isTool || isReasoning;
+        const contentWidth = Math.max(12, width - 4);
+        // Collapsible lines must go through wrapMultiline like every other
+        // transcript line: OpenTUI <text> does not wrap by itself and scroll
+        // heights are computed from wrapped line counts.
         const lines = collapsible
-          ? isTool
-            ? buildToolTranscriptLines(entry, toolOutputExpanded)
-            : buildReasoningTranscriptLines(entry, toolOutputExpanded)
-          : wrapMultiline(
-              compactToolTranscriptContent(entry),
-              Math.max(12, width - 4),
-            );
-        const collapsedSummary = isTool
-          ? buildCollapsedToolSummary(entry)
-          : isReasoning
-            ? buildCollapsedReasoningSummary(entry)
-            : undefined;
+          ? (isTool
+              ? buildToolTranscriptLines(entry, toolOutputExpanded)
+              : buildReasoningTranscriptLines(entry, toolOutputExpanded)
+            ).flatMap((line) => wrapMultiline(line, contentWidth))
+          : wrapMultiline(compactToolTranscriptContent(entry), contentWidth);
         return {
           id:
             entry.id ||
@@ -1974,7 +1965,6 @@ function buildTranscriptItems(
           truncated: false,
           collapsible,
           expanded: collapsible ? toolOutputExpanded : undefined,
-          expandHint: collapsedSummary?.expandHint,
         };
       }),
   ];
@@ -2375,8 +2365,6 @@ interface TranscriptItem {
   collapsible?: boolean;
   /** Current expansion state (only meaningful when collapsible is true). */
   expanded?: boolean;
-  /** Hint shown when collapsed. */
-  expandHint?: string;
 }
 
 interface SlashPaletteState {

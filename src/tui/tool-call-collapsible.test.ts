@@ -62,6 +62,15 @@ describe("buildCollapsedToolSummary", () => {
     expect(summary.previewLines).toEqual(["more output", "third line"]);
     expect(summary.hiddenLineCount).toBe(0);
   });
+
+  it("normalizes CRLF line endings so previews carry no stray \\r", () => {
+    const entry = makeToolEntry(
+      "[completed] completed\r\nargs dir\r\nline 1\r\nline 2",
+    );
+    const summary = buildCollapsedToolSummary(entry);
+    expect(summary.headline).toBe("Bash · [completed] args dir");
+    expect(summary.previewLines).toEqual(["line 1", "line 2"]);
+  });
 });
 
 describe("buildToolTranscriptLines", () => {
@@ -83,6 +92,12 @@ describe("buildToolTranscriptLines", () => {
     const lines = buildToolTranscriptLines(entry, true);
     expect(lines.join("\n")).toContain("line 1");
     expect(lines.join("\n")).toContain("line 2");
+  });
+
+  it("normalizes CRLF line endings when expanded", () => {
+    const entry = makeToolEntry("[completed] completed\r\nline 1\r\nline 2");
+    const lines = buildToolTranscriptLines(entry, true);
+    expect(lines).toEqual(["[completed] completed", "line 1", "line 2"]);
   });
 
   it("does not show expand hint when everything fits in preview", () => {

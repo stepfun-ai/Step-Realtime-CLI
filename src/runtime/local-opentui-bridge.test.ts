@@ -82,5 +82,23 @@ describe("LocalOpenTuiTranscriptBridge", () => {
       expect(entries).toHaveLength(1);
       expect(entries[0]?.role).toBe("assistant");
     });
+
+    it("returns only the reasoning entry when assistant content is empty", () => {
+      const bridge = createBridge();
+      const messages: ChatMessage[] = [
+        {
+          role: "assistant",
+          content: "",
+          reasoning: "Planning the next tool call.",
+        },
+      ];
+
+      bridge.reconcileWithSessionMessages(messages);
+      const entries = bridge.getEntries();
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.role).toBe("reasoning");
+      expect(entries[0]?.content).toBe("Planning the next tool call.");
+    });
   });
 });

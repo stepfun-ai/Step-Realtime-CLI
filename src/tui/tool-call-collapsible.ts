@@ -4,6 +4,12 @@ const COLLAPSED_TOOL_DETAIL_MAX_LENGTH = 80;
 const TOOL_PREVIEW_LINES = 2;
 const STATUS_LINE_RE = /^\[(\w+)\]\s*(.*)$/;
 
+// Tool output on Windows can carry CRLF/CR line endings; normalize before
+// splitting so no stray \r reaches the renderer.
+function splitContentLines(content: string): string[] {
+  return content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+}
+
 export interface CollapsedToolSummary {
   headline: string;
   previewLines: string[];
@@ -15,7 +21,7 @@ export function buildCollapsedToolSummary(
   entry: StepCliTuiTranscriptEntry,
 ): CollapsedToolSummary {
   const caption = entry.caption ?? "tool";
-  const lines = entry.content.split("\n");
+  const lines = splitContentLines(entry.content);
   const firstLine = lines[0]?.trim() ?? "";
   const statusMatch = STATUS_LINE_RE.exec(firstLine);
   const status = statusMatch?.[1] ?? "completed";
@@ -62,7 +68,7 @@ export function buildToolTranscriptLines(
   expanded: boolean,
 ): string[] {
   if (expanded) {
-    return entry.content.split("\n");
+    return splitContentLines(entry.content);
   }
 
   const summary = buildCollapsedToolSummary(entry);

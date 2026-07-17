@@ -2,6 +2,12 @@ import type { StepCliTuiTranscriptEntry } from "./types.js";
 
 export const REASONING_PREVIEW_LINES = 2;
 
+// Reasoning content can carry CRLF/CR line endings; normalize before
+// splitting so no stray \r reaches the renderer.
+function splitContentLines(content: string): string[] {
+  return content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+}
+
 export interface CollapsedReasoningSummary {
   previewLines: string[];
   hiddenLineCount: number;
@@ -11,8 +17,7 @@ export interface CollapsedReasoningSummary {
 export function buildCollapsedReasoningSummary(
   entry: StepCliTuiTranscriptEntry,
 ): CollapsedReasoningSummary {
-  const lines = entry.content
-    .split("\n")
+  const lines = splitContentLines(entry.content)
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
 
@@ -36,7 +41,7 @@ export function buildReasoningTranscriptLines(
   expanded: boolean,
 ): string[] {
   if (expanded) {
-    return entry.content.split("\n");
+    return splitContentLines(entry.content);
   }
 
   const summary = buildCollapsedReasoningSummary(entry);

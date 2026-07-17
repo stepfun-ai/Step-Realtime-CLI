@@ -62,6 +62,12 @@ describe("buildReasoningTranscriptLines", () => {
     expect(lines).toEqual(["line 1", "line 2", "line 3"]);
   });
 
+  it("normalizes CRLF line endings when expanded", () => {
+    const entry = makeReasoningEntry("line 1\r\nline 2\r\nline 3");
+    const lines = buildReasoningTranscriptLines(entry, true);
+    expect(lines).toEqual(["line 1", "line 2", "line 3"]);
+  });
+
   it("does not show expand hint when everything fits in preview", () => {
     const entry = makeReasoningEntry("line 1\nline 2");
     const lines = buildReasoningTranscriptLines(entry, false);
