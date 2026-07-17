@@ -354,16 +354,20 @@ $Launcher = Join-Path $InstallDir "step.cmd"
 $LauncherContent = @"
 @echo off
 setlocal
+pushd "%~dp0" || exit /b 1
 if defined STEP_BUN_BIN (
   "%STEP_BUN_BIN%" "%~dp0bin\step-cli.js" %*
-  exit /b %ERRORLEVEL%
+  goto :exit
 )
 where bun >nul 2>&1 && (
   bun "%~dp0bin\step-cli.js" %*
-  exit /b %ERRORLEVEL%
+  goto :exit
 )
 node "%~dp0bin\step-cli.js" %*
-exit /b %ERRORLEVEL%
+:exit
+set "STEP_EXIT_CODE=%ERRORLEVEL%"
+popd
+exit /b %STEP_EXIT_CODE%
 "@
 Set-Content -Encoding ASCII -Path $Launcher -Value $LauncherContent
 Write-Ok "Installed launcher: $Launcher"
