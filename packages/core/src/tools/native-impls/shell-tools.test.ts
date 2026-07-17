@@ -111,13 +111,26 @@ describe("core shell tools", () => {
       "const needle = 1;\n",
     );
     const grep = buildGrepTool();
-    const found = await grep.execute(
-      grep.parseArgs('{"pattern":"needle","include":"*.ts"}'),
-      context(),
-      undefined as never,
+    const pathKeys = Object.keys(process.env).filter(
+      (key) => key.toUpperCase() === "PATH",
     );
-    expect(found).toMatchObject({ ok: true });
-    expect(found.summary).toContain("needle");
+    const originalPaths = new Map(
+      pathKeys.map((key) => [key, process.env[key]]),
+    );
+    for (const key of pathKeys) delete process.env[key];
+    process.env.PATH = "";
+    try {
+      const found = await grep.execute(
+        grep.parseArgs('{"pattern":"needle","include":"*.ts"}'),
+        context(),
+        undefined as never,
+      );
+      expect(found).toMatchObject({ ok: true });
+      expect(found.summary).toContain("needle");
+    } finally {
+      delete process.env.PATH;
+      for (const [key, value] of originalPaths) process.env[key] = value;
+    }
     const missing = await grep.execute(
       grep.parseArgs('{"pattern":"absent"}'),
       context(),

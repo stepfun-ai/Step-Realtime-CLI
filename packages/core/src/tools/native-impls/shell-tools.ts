@@ -350,7 +350,11 @@ async function jsGrep(
   await walkDir(base, async (file) => {
     if (includeRegex) {
       const rel = toGlobPath(path.relative(base, file));
-      if (!includeRegex.test(rel)) return;
+      // ripgrep treats an include without a path separator as a filename
+      // pattern at every directory depth. Match that behavior in the JS
+      // fallback so environments without `rg` produce the same result.
+      const fileName = path.basename(file);
+      if (!includeRegex.test(rel) && !includeRegex.test(fileName)) return;
     }
     let stat: import("node:fs").Stats;
     try {
