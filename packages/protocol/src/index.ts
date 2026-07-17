@@ -500,6 +500,12 @@ export interface AgentRunConfig {
   maxToolResultCharsInContext: number;
   modelRequestRetries: number;
   toolExecutionRetries: number;
+  /** Base delay in ms for model request retry backoff (default 300). */
+  retryDelayBase?: number;
+  /** Maximum delay in ms for retry backoff (default 2_500). */
+  retryDelayMax?: number;
+  /** Jitter in ms applied to retry delay (default 120). */
+  retryDelayJitter?: number;
 }
 
 export interface MemoryStats {

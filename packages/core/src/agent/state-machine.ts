@@ -38,6 +38,11 @@ export interface AgentStateSnapshot {
 export class AgentStateMachine {
   private currentState: AgentState = "prepare_context";
   private readonly timeline: AgentStateSnapshot[] = [];
+  private readonly maxTimelineSize: number;
+
+  constructor(maxTimelineSize = 200) {
+    this.maxTimelineSize = maxTimelineSize;
+  }
 
   transition(input: {
     state: AgentState;
@@ -59,13 +64,13 @@ export class AgentStateMachine {
       sessionId: context?.sessionId,
       goalId: context?.goalId,
       attemptId: context?.attemptId,
-      workspaceMode: context?.executionProfile.workspaceMode,
-      memoryMode: context?.executionProfile.memoryMode,
-      priority: context?.executionProfile.priority,
+      workspaceMode: context?.executionProfile?.workspaceMode,
+      memoryMode: context?.executionProfile?.memoryMode,
+      priority: context?.executionProfile?.priority,
     };
     this.timeline.push(snapshot);
-    if (this.timeline.length > 200) {
-      this.timeline.splice(0, this.timeline.length - 200);
+    if (this.timeline.length > this.maxTimelineSize) {
+      this.timeline.splice(0, this.timeline.length - this.maxTimelineSize);
     }
     return snapshot;
   }

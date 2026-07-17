@@ -1,5 +1,7 @@
 node_modules
 dist
+docs/BUG_REPORT.md
+docs/ISSUES_READY.md
 .env
 *.log
 .DS_Store
