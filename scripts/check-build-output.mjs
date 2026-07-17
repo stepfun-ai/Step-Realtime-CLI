@@ -9,11 +9,12 @@ import { fileURLToPath } from "node:url";
 // installer smoke test nor CI exercise the interactive TUI path, so an empty
 // chunk can ship undetected. This check surfaces it in CI logs instead.
 //
-// By default the check is NON-BLOCKING: it logs a warning and exits 0. This
-// lets it ship independently of #28 (the build fix that makes the chunk
-// non-empty). On current `main` it will warn until #28 lands; once #28 merges
-// the warning clears automatically. Pass `--enforce` to make a missing/empty
-// chunk fail the run — use this once #28 has landed and you want a hard gate.
+// The check has two modes. Default is NON-BLOCKING: it logs a warning and
+// exits 0, which let it ship independently of #28 (the build fix that makes
+// the chunk non-empty) while that fix was still in flight. Now that #28 has
+// landed on `main`, CI runs this with `--enforce`, which makes a missing/empty
+// chunk fail the run — a real hard gate. The non-blocking default is kept for
+// local runs where you just want a heads-up without a non-zero exit.
 //
 // Run after `pnpm build`.
 
