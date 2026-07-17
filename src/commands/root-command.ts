@@ -16,6 +16,7 @@ import {
   isOpenTuiEnabledInCurrentBuild,
   isOpenTuiRuntimeSupported,
   loadOpenTuiClientAppFactoryAtRuntime,
+  warnWhenOpenTuiRuntimeUnsupported,
 } from "../runtime/open-tui-capability.js";
 
 // Keep this build flag in the command module so rolldown can fold the bundle's
@@ -36,10 +37,13 @@ export interface ShouldUseTuiInputs {
  * function so it can be unit-tested without spawning commander.
  */
 export function shouldUseTui(inputs: ShouldUseTuiInputs): boolean {
+  return isTuiOtherwiseEligible(inputs) && isOpenTuiRuntimeSupported();
+}
+
+function isTuiOtherwiseEligible(inputs: ShouldUseTuiInputs): boolean {
   return (
     OPEN_TUI_COMPILE_TIME_ENABLED &&
     isOpenTuiEnabledInCurrentBuild() &&
-    isOpenTuiRuntimeSupported() &&
     !inputs.options.json &&
     (inputs.prompt?.trim().length ?? 0) === 0 &&
     (inputs.attachments?.length ?? 0) === 0 &&
@@ -102,22 +106,15 @@ export async function runRootCommand(argv: string[]): Promise<void> {
         });
         const cliOptionSources =
           readSharedRuntimeCliOptionSources(actionCommand);
-        const shouldUseTuiResult = shouldUseTui({
+        const tuiInputs = {
           options,
           prompt,
           attachments,
           stdinIsTTY: process.stdin.isTTY === true,
           stdoutIsTTY: process.stdout.isTTY === true,
-        });
-        const runtimeUnsupported =
-          OPEN_TUI_COMPILE_TIME_ENABLED &&
-          isOpenTuiEnabledInCurrentBuild() &&
-          !isOpenTuiRuntimeSupported();
-        if (runtimeUnsupported && process.stderr.isTTY) {
-          process.stderr.write(
-            "warning: OpenTUI TUI requires Bun runtime; falling back to text CLI. Install Bun or use a Bun-based launcher.\n",
-          );
-        }
+        } satisfies ShouldUseTuiInputs;
+        const shouldUseTuiResult = shouldUseTui(tuiInputs);
+        warnWhenOpenTuiRuntimeUnsupported(isTuiOtherwiseEligible(tuiInputs));
         const { stepCliConfig } = await resolveStepCliRuntimeConfig({
           options,
           cliOptionSources,

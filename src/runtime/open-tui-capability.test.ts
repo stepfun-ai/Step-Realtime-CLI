@@ -3,6 +3,7 @@ import {
   isOpenTuiEnabledInCurrentBuild,
   isOpenTuiRuntimeSupported,
   parseOpenTuiEnabledValue,
+  warnWhenOpenTuiRuntimeUnsupported,
 } from "./open-tui-capability.js";
 
 const originalBunVersion = process.versions.bun;
@@ -56,5 +57,41 @@ describe("isOpenTuiRuntimeSupported", () => {
   it("returns false when process.versions.bun is an empty string", () => {
     (process.versions as { bun?: string }).bun = "";
     expect(isOpenTuiRuntimeSupported()).toBe(false);
+  });
+});
+
+describe("warnWhenOpenTuiRuntimeUnsupported", () => {
+  it("warns only when the runtime is the sole blocker for an interactive TUI", () => {
+    delete (process.versions as { bun?: string }).bun;
+    const messages: string[] = [];
+    const stderr = {
+      isTTY: true,
+      write: (message: string) => {
+        messages.push(message);
+        return true;
+      },
+    };
+
+    warnWhenOpenTuiRuntimeUnsupported(true, stderr);
+    warnWhenOpenTuiRuntimeUnsupported(false, stderr);
+
+    expect(messages).toEqual([
+      "warning: OpenTUI TUI requires Bun runtime; falling back to text CLI. Install Bun or use a Bun-based launcher.\n",
+    ]);
+  });
+
+  it("does not warn when Bun supports the TUI runtime", () => {
+    (process.versions as { bun?: string }).bun = "1.1.0";
+    const messages: string[] = [];
+
+    warnWhenOpenTuiRuntimeUnsupported(true, {
+      isTTY: true,
+      write: (message: string) => {
+        messages.push(message);
+        return true;
+      },
+    });
+
+    expect(messages).toEqual([]);
   });
 });

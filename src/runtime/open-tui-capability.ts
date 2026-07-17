@@ -48,3 +48,28 @@ export function isOpenTuiRuntimeSupported(): boolean {
     typeof process.versions.bun === "string" && process.versions.bun !== ""
   );
 }
+
+export interface OpenTuiRuntimeWarningWriter {
+  readonly isTTY?: boolean;
+  write(message: string): boolean;
+}
+
+const OPEN_TUI_RUNTIME_UNSUPPORTED_WARNING =
+  "warning: OpenTUI TUI requires Bun runtime; falling back to text CLI. Install Bun or use a Bun-based launcher.\n";
+
+/**
+ * Warn only when the TUI would otherwise have been selected. This keeps
+ * one-shot, JSON, and piped commands quiet when they never request a TUI.
+ */
+export function warnWhenOpenTuiRuntimeUnsupported(
+  isTuiOtherwiseEligible: boolean,
+  stderr: OpenTuiRuntimeWarningWriter = process.stderr,
+): void {
+  if (
+    isTuiOtherwiseEligible &&
+    !isOpenTuiRuntimeSupported() &&
+    stderr.isTTY === true
+  ) {
+    stderr.write(OPEN_TUI_RUNTIME_UNSUPPORTED_WARNING);
+  }
+}
