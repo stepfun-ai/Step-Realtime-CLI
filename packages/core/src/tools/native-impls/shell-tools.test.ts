@@ -127,15 +127,15 @@ describe("core shell tools", () => {
       );
       expect(found).toMatchObject({ ok: true });
       expect(found.summary).toContain("needle");
+      const missing = await grep.execute(
+        grep.parseArgs('{"pattern":"absent"}'),
+        context(),
+        undefined as never,
+      );
+      expect(missing).toEqual({ ok: true, summary: "(no matches)" });
     } finally {
       delete process.env.PATH;
       for (const [key, value] of originalPaths) process.env[key] = value;
     }
-    const missing = await grep.execute(
-      grep.parseArgs('{"pattern":"absent"}'),
-      context(),
-      undefined as never,
-    );
-    expect(missing).toEqual({ ok: true, summary: "" });
   });
 });
