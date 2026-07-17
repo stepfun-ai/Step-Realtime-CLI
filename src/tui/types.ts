@@ -89,6 +89,8 @@ export interface StepCliTuiTranscriptEntry {
   caption: string | null;
   /** Internal message that should not be rendered in the transcript. */
   hidden?: boolean;
+  /** Whether an assistant Markdown message is still receiving text deltas. */
+  streaming?: boolean;
 }
 
 export interface StepCliTuiQueuedTurnEntry {

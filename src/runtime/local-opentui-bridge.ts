@@ -445,6 +445,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
             role: "assistant",
             caption: null,
             content: text,
+            streaming: true,
           });
           return;
         }
@@ -452,10 +453,12 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
         this.updateLocalEntry(this.currentAssistantEntryId, (entry) => ({
           ...entry,
           content: `${entry.content}${text}`,
+          streaming: true,
         }));
       },
       onModelToolCall: ({ toolName, rawArgs }) => {
         this.discardEmptyAssistantEntry();
+        this.markCurrentAssistantEntryComplete();
         // Reset the streaming assistant entry ID so that any text deltas
         // arriving *after* this tool call (within the same streaming
         // response) create a new assistant entry positioned after the
@@ -485,6 +488,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       },
       onToolStart: (info) => {
         this.discardEmptyAssistantEntry();
+        this.markCurrentAssistantEntryComplete();
         this.currentAssistantEntryId = null;
         const toolName = readString((info as { toolName?: unknown }).toolName);
         const entryId = this.findCurrentToolEntryId(toolName);
@@ -578,6 +582,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       this.updateLocalEntry(this.currentAssistantEntryId, (entry) => ({
         ...entry,
         content: message,
+        streaming: false,
       }));
       this.currentAssistantEntryId = null;
       return;
@@ -592,6 +597,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       this.updateLocalEntry(lastStreamingId, (entry) => ({
         ...entry,
         content: message,
+        streaming: false,
       }));
       return;
     }
@@ -601,6 +607,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       role: "assistant",
       caption: null,
       content: message,
+      streaming: false,
     });
   }
 
@@ -612,6 +619,17 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       kind: "transient",
       turnId: this.currentTurnId,
     });
+  }
+
+  private markCurrentAssistantEntryComplete(): void {
+    if (!this.currentAssistantEntryId) {
+      return;
+    }
+
+    this.updateLocalEntry(this.currentAssistantEntryId, (entry) => ({
+      ...entry,
+      streaming: false,
+    }));
   }
 
   private appendLocalEntry(entry: LocalTranscriptEntry): void {
@@ -801,6 +819,8 @@ function stripLocalTranscriptEntry(
     role: entry.role,
     caption: entry.caption,
     content: entry.content,
+    hidden: entry.hidden,
+    streaming: entry.streaming,
   };
 }
 

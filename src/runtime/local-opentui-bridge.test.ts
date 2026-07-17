@@ -130,6 +130,21 @@ describe("LocalOpenTuiTranscriptBridge", () => {
   });
 
   describe("streaming order", () => {
+    it("marks Markdown entries as streaming until the final assistant message", () => {
+      const bridge = createBridge();
+      const ui = bridge.createInteractiveUiFactory()(createUiFactoryInput());
+
+      bridge.submitUserTurn({ content: "hello" });
+      ui.onModelStreamReset();
+      ui.onModelTextDelta({ text: "```ts" });
+
+      expect(bridge.getEntries().at(-1)?.streaming).toBe(true);
+
+      ui.onAssistantMessage({ text: "```ts\nconst answer = 42;\n```" });
+
+      expect(bridge.getEntries().at(-1)?.streaming).toBe(false);
+    });
+
     it("keeps tool-call entries after the assistant text that triggered them", () => {
       const bridge = createBridge();
       const ui = bridge.createInteractiveUiFactory()(createUiFactoryInput());
