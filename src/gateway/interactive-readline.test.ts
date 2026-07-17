@@ -46,6 +46,26 @@ describe("interactive-readline factory", () => {
     expect(process.stdin.listenerCount("keypress")).toBeLessThanOrEqual(before);
   });
 
+  it("does not remove keypress listeners that existed before the prompt", () => {
+    const existingListener = () => undefined;
+    const leakedPromptListener = () => undefined;
+    process.stdin.on("keypress", existingListener);
+
+    try {
+      const rl = createInteractiveReadline();
+      process.stdin.on("keypress", leakedPromptListener);
+      disposeInteractiveReadline(rl);
+
+      expect(process.stdin.listeners("keypress")).toContain(existingListener);
+      expect(process.stdin.listeners("keypress")).not.toContain(
+        leakedPromptListener,
+      );
+    } finally {
+      process.stdin.removeListener("keypress", existingListener);
+      process.stdin.removeListener("keypress", leakedPromptListener);
+    }
+  });
+
   it("disposeInteractiveReadline is safe to call on an already-closed interface", () => {
     const rl = createInteractiveReadline();
     rl.close();

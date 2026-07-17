@@ -28,6 +28,10 @@ import { appendStderrDevLog } from "../runtime/stderr-dev-log.js";
  * approval prompts that's acceptable; users type one char + Enter.
  */
 let promptInvocationCount = 0;
+const keypressListenersByReadline = new WeakMap<
+  readline.Interface,
+  Function[]
+>();
 
 function isDebugLogEnabled(): boolean {
   const level = process.env.LOG_LEVEL;
@@ -41,17 +45,22 @@ function logApprovalReadlineDebug(message: string): void {
 
 export function createInteractiveReadline(): readline.Interface {
   promptInvocationCount += 1;
+  const keypressListenersBeforeCreate = input.listeners("keypress");
   logApprovalReadlineDebug(
     `create invocation=${promptInvocationCount} terminal=false`,
   );
-  return readline.createInterface({
+  const rl = readline.createInterface({
     input,
     output,
     terminal: false,
   });
+  keypressListenersByReadline.set(rl, keypressListenersBeforeCreate);
+  return rl;
 }
 
 export function disposeInteractiveReadline(rl: readline.Interface): void {
+  const keypressListenersBeforeCreate =
+    keypressListenersByReadline.get(rl) ?? [];
   logApprovalReadlineDebug(
     `dispose invocation=${promptInvocationCount} keypressListeners=${input.listenerCount("keypress")}`,
   );
@@ -59,30 +68,29 @@ export function disposeInteractiveReadline(rl: readline.Interface): void {
   try {
     rl.close();
   } catch {
-    // ignore — may already be closed
+    // Ignore: may already be closed.
   }
 
-  // Windows defensive cleanup. With `terminal: false` this is mostly
-  // belt-and-suspenders (no raw mode, no keypress listener expected), but
-  // we have observed residue in some console hosts.
-  try {
-    if (typeof input.setRawMode === "function") {
-      input.setRawMode(false);
+  // A console host can still leave a keypress listener behind. Remove only
+  // listeners added after this interface was created, never ones owned by
+  // the long-lived REPL readline interface.
+  const retainedListenerCounts = new Map<Function, number>();
+  for (const listener of keypressListenersBeforeCreate) {
+    retainedListenerCounts.set(
+      listener,
+      (retainedListenerCounts.get(listener) ?? 0) + 1,
+    );
+  }
+  for (const listener of input.listeners("keypress")) {
+    const retainedCount = retainedListenerCounts.get(listener) ?? 0;
+    if (retainedCount > 0) {
+      retainedListenerCounts.set(listener, retainedCount - 1);
+      continue;
     }
-  } catch {
-    // ignore — stdin may already be destroyed
-  }
-
-  try {
-    input.pause();
-  } catch {
-    // ignore — stdin may already be destroyed
-  }
-
-  const keypressListeners = input.listeners("keypress") as (() => void)[];
-  for (const listener of keypressListeners) {
     input.removeListener("keypress", listener);
   }
+
+  keypressListenersByReadline.delete(rl);
 }
 
 /** Test-only: reset invocation counter between unit tests. */
