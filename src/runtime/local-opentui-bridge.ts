@@ -159,7 +159,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
     messages: ChatMessage[],
     settledTurnId?: string,
   ): void {
-    const nextSessionEntries = messages.map((message) =>
+    const nextSessionEntries = messages.flatMap((message) =>
       mapChatMessageToTranscriptEntry(message),
     );
     const appendedSessionEntries = nextSessionEntries.slice(
@@ -379,7 +379,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
 
         this.sessionEntries = [
           ...this.sessionEntries,
-          ...(messages as ChatMessage[]).map((message) =>
+          ...(messages as ChatMessage[]).flatMap((message) =>
             mapChatMessageToTranscriptEntry(message),
           ),
         ];
@@ -868,58 +868,80 @@ function matchCoveredOptimisticUserTurnIds(
 
 function mapChatMessageToTranscriptEntry(
   message: ChatMessage,
-): StepCliTuiTranscriptEntry {
+): StepCliTuiTranscriptEntry[] {
   switch (message.role) {
-    case "assistant":
-      return {
+    case "assistant": {
+      const reasoning = extractAssistantReasoning(message);
+      const assistantEntry: StepCliTuiTranscriptEntry = {
         id: randomUUID(),
         role: "assistant",
         caption: null,
-        content: formatAssistantContent(message),
+        content: message.content.trim(),
       };
+      if (!reasoning) {
+        return [assistantEntry];
+      }
+      const reasoningEntry: StepCliTuiTranscriptEntry = {
+        id: randomUUID(),
+        role: "reasoning",
+        caption: null,
+        content: reasoning,
+      };
+      // Reasoning-only messages (e.g. intermediate tool-call steps with an
+      // empty content field) must not produce an empty assistant entry, which
+      // would render as a bare ASSISTANT badge row.
+      if (assistantEntry.content.length === 0) {
+        return [reasoningEntry];
+      }
+      return [reasoningEntry, assistantEntry];
+    }
     case "user":
-      return {
-        id: randomUUID(),
-        role: "user",
-        caption: null,
-        content: formatUserTurnContent({
-          content: message.content,
-          attachments: message.attachments,
-        }),
-      };
+      return [
+        {
+          id: randomUUID(),
+          role: "user",
+          caption: null,
+          content: formatUserTurnContent({
+            content: message.content,
+            attachments: message.attachments,
+          }),
+        },
+      ];
     case "tool":
-      return {
-        id: randomUUID(),
-        role: "tool",
-        caption: message.name,
-        content: formatStoredToolMessageContent(message),
-      };
+      return [
+        {
+          id: randomUUID(),
+          role: "tool",
+          caption: message.name,
+          content: formatStoredToolMessageContent(message),
+        },
+      ];
     case "system":
-      return {
-        id: randomUUID(),
-        role: "system",
-        caption: null,
-        content: message.content,
-        hidden: message.hidden,
-      };
+      return [
+        {
+          id: randomUUID(),
+          role: "system",
+          caption: null,
+          content: message.content,
+          hidden: message.hidden,
+        },
+      ];
   }
 }
 
-function formatAssistantContent(
+function extractAssistantReasoning(
   message: Extract<ChatMessage, { role: "assistant" }>,
-): string {
+): string | null {
   const reasoning =
     message.reasoning_content ??
     message.reasoning ??
     message.thinking ??
     message.analysis ??
     message.redacted_thinking;
-  const reasoningBlock =
-    typeof reasoning === "string" && reasoning.trim().length > 0
-      ? `\n[reasoning] ${reasoning}`
-      : "";
-
-  return `${message.content}${reasoningBlock}`.trim();
+  if (typeof reasoning !== "string" || reasoning.trim().length === 0) {
+    return null;
+  }
+  return reasoning.trim();
 }
 
 function formatLocalHookEntry(

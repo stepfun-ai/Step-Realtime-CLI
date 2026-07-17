@@ -84,7 +84,7 @@ export interface StepCliTuiSessionData {
 
 export interface StepCliTuiTranscriptEntry {
   id: string;
-  role: "assistant" | "user" | "tool" | "system";
+  role: "assistant" | "user" | "tool" | "system" | "reasoning";
   content: string;
   caption: string | null;
   /** Internal message that should not be rendered in the transcript. */
