@@ -212,7 +212,7 @@ async function globExecute(
   const regex = globToRegex(args.pattern);
   const matches: string[] = [];
   await walkDir(base, async (filePath) => {
-    const rel = path.relative(ctx.workspaceRoot, filePath);
+    const rel = toGlobPath(path.relative(ctx.workspaceRoot, filePath));
     if (regex.test(rel)) matches.push(filePath);
   });
   matches.sort();
@@ -349,8 +349,12 @@ async function jsGrep(
   const out: string[] = [];
   await walkDir(base, async (file) => {
     if (includeRegex) {
-      const rel = path.relative(base, file);
-      if (!includeRegex.test(rel)) return;
+      const rel = toGlobPath(path.relative(base, file));
+      // ripgrep treats an include without a path separator as a filename
+      // pattern at every directory depth. Match that behavior in the JS
+      // fallback so environments without `rg` produce the same result.
+      const fileName = path.basename(file);
+      if (!includeRegex.test(rel) && !includeRegex.test(fileName)) return;
     }
     let stat: import("node:fs").Stats;
     try {
@@ -400,4 +404,8 @@ function resolveWorkspacePath(
   return path.isAbsolute(candidate)
     ? candidate
     : path.resolve(workspaceRoot, candidate);
+}
+
+function toGlobPath(filePath: string): string {
+  return filePath.replaceAll("\\", "/");
 }
