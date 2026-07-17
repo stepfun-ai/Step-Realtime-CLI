@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { SystemMessage } from "@step-cli/protocol";
 import {
   ConversationMemory,
@@ -196,6 +196,129 @@ describe("ConversationMemory", () => {
       const exported = memory2.exportState();
       expect(exported.checkpoint).toBeDefined();
       expect(exported.checkpoint!.objective).toHaveLength(1);
+    });
+  });
+
+  describe("context assembly and recovery", () => {
+    it("repairs unmatched tool calls before exporting context", () => {
+      const memory = new ConversationMemory(makeConfig());
+      memory.addAssistant("", [
+        {
+          id: "call-1",
+          type: "function",
+          function: { name: "Read", arguments: "{}" },
+        },
+      ]);
+      expect(memory.repairIncompleteToolCalls()).toBe(1);
+      expect(memory.exportMessages()).toMatchObject([
+        { role: "assistant" },
+        { role: "tool", tool_call_id: "call-1" },
+      ]);
+    });
+
+    it("builds an assembly, compacts oversized tool output, and exposes usage", () => {
+      const memory = new ConversationMemory(
+        makeConfig({
+          maxContextTokens: 300,
+          reserveOutputTokens: 50,
+          minRecentMessages: 1,
+          microCompactKeepRecentToolMessages: 0,
+          microCompactToolContentChars: 20,
+        }),
+      );
+      memory.addUser("task");
+      memory.addAssistant("", [
+        {
+          id: "c1",
+          type: "function",
+          function: { name: "Bash", arguments: "{}" },
+        },
+        {
+          id: "c2",
+          type: "function",
+          function: { name: "Bash", arguments: "{}" },
+        },
+      ]);
+      memory.addTool("c1", "Bash", "x".repeat(500));
+      memory.addTool("c2", "Bash", "y".repeat(500));
+      const assembled = memory.buildContextWithAssembly("system");
+      expect(assembled.messages[0]).toMatchObject({ role: "system" });
+      expect(memory.getLastContextAssembly()).toEqual(assembled.assembly);
+      expect(memory.getLastContextUsage().selectedMessages).toBeGreaterThan(0);
+      expect(memory.getStats().compactedToolMessages).toBeGreaterThan(0);
+    });
+
+    it("reports repeated context-rot issues and saves a fresh-attempt checkpoint", async () => {
+      const transcriptStore = {
+        save: vi
+          .fn()
+          .mockResolvedValue({ transcriptPath: "/tmp/transcript.jsonl" }),
+      };
+      const progressStore = {
+        save: vi.fn().mockResolvedValue("/tmp/progress.md"),
+      };
+      const memory = new ConversationMemory(makeConfig(), {
+        sessionId: "session",
+        transcriptStore: transcriptStore as never,
+        progressStore,
+      });
+      for (let index = 0; index < 3; index += 1) {
+        memory.addTool(
+          `call-${index}`,
+          "Bash",
+          JSON.stringify({
+            ok: false,
+            summary: "same failure",
+            error: { code: "EFAIL", message: "same failure" },
+          }),
+        );
+      }
+      const report = memory.getContextRotReport();
+      expect(report.shouldRestart).toBe(true);
+      const checkpoint = await memory.prepareFreshAttempt({
+        workspaceRoot: "/workspace",
+        reason: "repeated failure",
+        repeatedIssue: report.repeatedIssue,
+      });
+      expect(checkpoint.progressPath).toBe("/tmp/progress.md");
+      expect(checkpoint.summary).toContain("Progress file");
+      expect(memory.exportState().messages).toEqual([]);
+    });
+
+    it("degrades gracefully when stores fail and smart compaction is within budget or aborted", async () => {
+      const memory = new ConversationMemory(makeConfig(), {
+        transcriptStore: {
+          save: vi.fn().mockRejectedValue(new Error("disk")),
+        } as never,
+        progressStore: { save: vi.fn().mockRejectedValue(new Error("disk")) },
+      });
+      memory.addUser("small");
+      const skipped = await memory.smartCompactIfNeeded({
+        systemPrompt: "system",
+        model: "model",
+        workspaceRoot: "/workspace",
+        client: { countPromptTokens: vi.fn().mockResolvedValue(1) } as never,
+      });
+      expect(skipped).toMatchObject({
+        compacted: false,
+        reason: "within_budget",
+      });
+      const checkpoint = await memory.prepareFreshAttempt({
+        workspaceRoot: "/workspace",
+        reason: "disk failure",
+      });
+      expect(checkpoint.progressPath).toBeUndefined();
+      const ac = new AbortController();
+      ac.abort();
+      await expect(
+        memory.smartCompactIfNeeded({
+          systemPrompt: "system",
+          model: "model",
+          workspaceRoot: "/workspace",
+          signal: ac.signal,
+          client: { countPromptTokens: vi.fn() } as never,
+        }),
+      ).rejects.toThrow();
     });
   });
 });

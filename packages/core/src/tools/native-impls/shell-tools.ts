@@ -212,7 +212,7 @@ async function globExecute(
   const regex = globToRegex(args.pattern);
   const matches: string[] = [];
   await walkDir(base, async (filePath) => {
-    const rel = path.relative(ctx.workspaceRoot, filePath);
+    const rel = toGlobPath(path.relative(ctx.workspaceRoot, filePath));
     if (regex.test(rel)) matches.push(filePath);
   });
   matches.sort();
@@ -349,7 +349,7 @@ async function jsGrep(
   const out: string[] = [];
   await walkDir(base, async (file) => {
     if (includeRegex) {
-      const rel = path.relative(base, file);
+      const rel = toGlobPath(path.relative(base, file));
       if (!includeRegex.test(rel)) return;
     }
     let stat: import("node:fs").Stats;
@@ -400,4 +400,8 @@ function resolveWorkspacePath(
   return path.isAbsolute(candidate)
     ? candidate
     : path.resolve(workspaceRoot, candidate);
+}
+
+function toGlobPath(filePath: string): string {
+  return filePath.replaceAll("\\", "/");
 }
