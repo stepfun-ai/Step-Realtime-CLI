@@ -622,7 +622,16 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
 
       const currentComposer = readComposerSnapshot();
       if (currentComposer.value.includes("\n")) {
-        return;
+        const firstLineEnd = currentComposer.value.indexOf("\n");
+        if (currentComposer.cursorIndex > firstLineEnd) {
+          return;
+        }
+
+        if (currentComposer.cursorIndex > 0) {
+          key.preventDefault();
+          replaceComposer({ ...currentComposer, cursorIndex: 0 });
+          return;
+        }
       }
 
       key.preventDefault();
@@ -647,7 +656,19 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
 
       const currentComposer = readComposerSnapshot();
       if (currentComposer.value.includes("\n")) {
-        return;
+        const lastLineStart = currentComposer.value.lastIndexOf("\n") + 1;
+        if (currentComposer.cursorIndex < lastLineStart) {
+          return;
+        }
+
+        if (currentComposer.cursorIndex < currentComposer.value.length) {
+          key.preventDefault();
+          replaceComposer({
+            ...currentComposer,
+            cursorIndex: currentComposer.value.length,
+          });
+          return;
+        }
       }
 
       key.preventDefault();
@@ -706,11 +727,14 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
 
     if (isComposerSubmitKey(key)) {
       key.preventDefault();
-      const autocompleteSlashCommand = shouldAutocompleteSlashCommand(
-        slashPaletteState,
-      )
-        ? slashPaletteState.activeCommand
-        : null;
+      const composerHasArguments = /^\S+\s+\S/.test(
+        readComposerSnapshot().value.trimStart(),
+      );
+      const autocompleteSlashCommand =
+        !composerHasArguments &&
+        shouldAutocompleteSlashCommand(slashPaletteState)
+          ? slashPaletteState.activeCommand
+          : null;
       if (autocompleteSlashCommand) {
         applyComposerEdit(
           applySlashCommandSelection(
@@ -880,7 +904,7 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
 
     if (trimmed.startsWith("/")) {
       const clearComposer = await handleSlashCommand(trimmed);
-      if (clearComposer) {
+      if (clearComposer && readComposerSnapshot().value === inputContent) {
         applyComposerEdit({
           value: "",
           cursorIndex: 0,
@@ -1337,10 +1361,6 @@ export function StepCliTuiScreen(props: StepCliTuiScreenProps) {
         tone: "success",
         label: "Goal",
         detail: formatTuiGoalDetail(result.goal),
-      });
-      replaceComposer({
-        value: "",
-        cursorIndex: 0,
       });
       return true;
     } catch (error) {
