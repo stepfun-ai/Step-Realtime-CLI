@@ -946,7 +946,7 @@ export class AgentLoop {
     if (message.role === "user") {
       this.memory.addUser(content);
     } else {
-      this.memory.addSystem(content);
+      this.memory.addSystem(content, { hidden: message.hidden });
     }
   }
 
