@@ -48,7 +48,7 @@ export type StepCliTuiThemeName = string;
 const BUILTIN_TUI_THEME_COLORS = {
   default: {
     foreground: "#eef6ff",
-    muted: "#7d93ab",
+    muted: "#8eaac8",
     accent: "#62d8ff",
     brand: "#4da3ff",
     success: "#58d6a6",
@@ -59,7 +59,7 @@ const BUILTIN_TUI_THEME_COLORS = {
     panelAlt: "#112033",
     inputBackground: "#1b2431",
     selection: "#173556",
-    line: "#234462",
+    line: "#688fb1",
     assistantBadge: "#102846",
     userBadge: "#0b223d",
     toolBadge: "#0d2b36",
@@ -67,7 +67,7 @@ const BUILTIN_TUI_THEME_COLORS = {
   },
   sage: {
     foreground: "#eef4df",
-    muted: "#818274",
+    muted: "#a7b7a2",
     accent: "#bde038",
     brand: "#a3ab78",
     success: "#bde038",
@@ -78,7 +78,7 @@ const BUILTIN_TUI_THEME_COLORS = {
     panelAlt: "#16515c",
     inputBackground: "#18363b",
     selection: "#245258",
-    line: "#506266",
+    line: "#8ca7aa",
     assistantBadge: "#1a3940",
     userBadge: "#17343a",
     toolBadge: "#233d35",
@@ -97,7 +97,7 @@ const BUILTIN_TUI_THEME_COLORS = {
     panelAlt: "#2b1d3d",
     inputBackground: "#251c35",
     selection: "#382353",
-    line: "#5a4675",
+    line: "#8874b0",
     assistantBadge: "#2a1846",
     userBadge: "#113a37",
     toolBadge: "#3c3712",
@@ -116,7 +116,7 @@ const BUILTIN_TUI_THEME_COLORS = {
     panelAlt: "#0c2a62",
     inputBackground: "#0f2446",
     selection: "#163972",
-    line: "#1c4d8e",
+    line: "#5a8fda",
     assistantBadge: "#0a2752",
     userBadge: "#0a3448",
     toolBadge: "#093b3b",
@@ -135,7 +135,7 @@ const BUILTIN_TUI_THEME_COLORS = {
     panelAlt: "#0c1a2d",
     inputBackground: "#102033",
     selection: "#18304d",
-    line: "#35516e",
+    line: "#607d9d",
     assistantBadge: "#0a1c32",
     userBadge: "#0e2739",
     toolBadge: "#122631",
@@ -209,6 +209,14 @@ export function resolveTuiTheme(
     findTuiTheme(themes, DEFAULT_TUI_THEME_NAME) ??
     getBuiltinTuiTheme()
   );
+}
+
+export function resolveTuiTranscriptRailColor(
+  colors: StepCliTuiThemeColors,
+): string {
+  // Transcript rails are structural markers, so keep them tied to the
+  // contrast-checked line color instead of tone colors that may be too dark.
+  return colors.line;
 }
 
 export function isValidTuiThemeName(value: string): boolean {
