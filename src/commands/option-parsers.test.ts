@@ -35,6 +35,12 @@ describe("parsePositiveInt", () => {
   it("throws for non-numeric strings", () => {
     expect(() => parsePositiveInt("abc")).toThrow("positive integer");
   });
+
+  it("rejects partially parsed and unsafe integer inputs", () => {
+    for (const value of ["12px", "1.5", "1e3", "9007199254740992"]) {
+      expect(() => parsePositiveInt(value)).toThrow("positive integer");
+    }
+  });
 });
 
 describe("parseNonNegativeInt", () => {
@@ -45,6 +51,10 @@ describe("parseNonNegativeInt", () => {
   it("throws for negative", () => {
     expect(() => parseNonNegativeInt("-1")).toThrow("non-negative");
   });
+
+  it("rejects partially parsed values", () => {
+    expect(() => parseNonNegativeInt("0items")).toThrow("non-negative");
+  });
 });
 
 describe("parseNumber", () => {
@@ -54,6 +64,12 @@ describe("parseNumber", () => {
 
   it("throws for non-numeric", () => {
     expect(() => parseNumber("xyz")).toThrow("Expected number");
+  });
+
+  it("rejects malformed numeric values", () => {
+    for (const value of ["3.14ms", "1.2.3", "Infinity"]) {
+      expect(() => parseNumber(value)).toThrow("Expected number");
+    }
   });
 });
 

@@ -90,7 +90,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
     return [
       ...this.sessionEntries,
       ...this.localEntries.map(stripLocalTranscriptEntry),
-    ];
+    ].filter((entry) => !entry.hidden);
   }
 
   subscribe(
@@ -159,7 +159,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
     messages: ChatMessage[],
     settledTurnId?: string,
   ): void {
-    const nextSessionEntries = messages.map((message) =>
+    const nextSessionEntries = messages.flatMap((message) =>
       mapChatMessageToTranscriptEntry(message),
     );
     const appendedSessionEntries = nextSessionEntries.slice(
@@ -379,7 +379,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
 
         this.sessionEntries = [
           ...this.sessionEntries,
-          ...(messages as ChatMessage[]).map((message) =>
+          ...(messages as ChatMessage[]).flatMap((message) =>
             mapChatMessageToTranscriptEntry(message),
           ),
         ];
@@ -456,6 +456,11 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       },
       onModelToolCall: ({ toolName, rawArgs }) => {
         this.discardEmptyAssistantEntry();
+        // Reset the streaming assistant entry ID so that any text deltas
+        // arriving *after* this tool call (within the same streaming
+        // response) create a new assistant entry positioned after the
+        // tool entry, instead of appending to the pre-tool entry.
+        this.currentAssistantEntryId = null;
         const entryId = this.findCurrentToolEntryId(toolName);
         if (entryId) {
           this.updateLocalEntry(entryId, (entry) => ({
@@ -480,6 +485,7 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
       },
       onToolStart: (info) => {
         this.discardEmptyAssistantEntry();
+        this.currentAssistantEntryId = null;
         const toolName = readString((info as { toolName?: unknown }).toolName);
         const entryId = this.findCurrentToolEntryId(toolName);
         if (entryId) {
@@ -574,6 +580,19 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
         content: message,
       }));
       this.currentAssistantEntryId = null;
+      return;
+    }
+
+    // currentAssistantEntryId may be null because onModelToolCall reset it
+    // after the streaming assistant text was finalized. Find the last
+    // transient assistant entry for the current turn and update it with the
+    // final message content.
+    const lastStreamingId = this.findLastStreamingAssistantEntryId();
+    if (lastStreamingId) {
+      this.updateLocalEntry(lastStreamingId, (entry) => ({
+        ...entry,
+        content: message,
+      }));
       return;
     }
 
@@ -707,6 +726,26 @@ export class LocalOpenTuiTranscriptBridge implements StepCliTuiTranscriptControl
     this.emit();
   }
 
+  /**
+   * Find the last transient assistant entry for the current turn. Used by
+   * `commitAssistantMessage` when `currentAssistantEntryId` was reset (e.g.
+   * by `onModelToolCall`) to locate the streaming entry that should receive
+   * the final message content.
+   */
+  private findLastStreamingAssistantEntryId(): string | null {
+    for (let i = this.localEntries.length - 1; i >= 0; i -= 1) {
+      const entry = this.localEntries[i];
+      if (
+        entry.role === "assistant" &&
+        entry.kind === "transient" &&
+        entry.turnId === this.currentTurnId
+      ) {
+        return entry.id;
+      }
+    }
+    return null;
+  }
+
   private emit(): void {
     const entries = this.getEntries();
     for (const listener of this.listeners) {
@@ -816,15 +855,14 @@ function doesSessionAssistantCoverLocalAssistant(
     return false;
   }
 
-  if (normalizedSession === normalizedLocal) {
-    return true;
-  }
-
-  if (!normalizedSession.startsWith(normalizedLocal)) {
-    return false;
-  }
-
-  return normalizedSession.slice(normalizedLocal.length).startsWith("\n[");
+  // A session message covers the local entry when it is identical, or when it
+  // starts with the local content. The latter handles split streaming entries
+  // (e.g. text before/after a tool call) whose combined content is later
+  // settled as a single authoritative session message.
+  return (
+    normalizedSession === normalizedLocal ||
+    normalizedSession.startsWith(normalizedLocal)
+  );
 }
 
 function matchCoveredOptimisticUserTurnIds(
@@ -868,57 +906,80 @@ function matchCoveredOptimisticUserTurnIds(
 
 function mapChatMessageToTranscriptEntry(
   message: ChatMessage,
-): StepCliTuiTranscriptEntry {
+): StepCliTuiTranscriptEntry[] {
   switch (message.role) {
-    case "assistant":
-      return {
+    case "assistant": {
+      const reasoning = extractAssistantReasoning(message);
+      const assistantEntry: StepCliTuiTranscriptEntry = {
         id: randomUUID(),
         role: "assistant",
         caption: null,
-        content: formatAssistantContent(message),
+        content: message.content.trim(),
       };
+      if (!reasoning) {
+        return [assistantEntry];
+      }
+      const reasoningEntry: StepCliTuiTranscriptEntry = {
+        id: randomUUID(),
+        role: "reasoning",
+        caption: null,
+        content: reasoning,
+      };
+      // Reasoning-only messages (e.g. intermediate tool-call steps with an
+      // empty content field) must not produce an empty assistant entry, which
+      // would render as a bare ASSISTANT badge row.
+      if (assistantEntry.content.length === 0) {
+        return [reasoningEntry];
+      }
+      return [reasoningEntry, assistantEntry];
+    }
     case "user":
-      return {
-        id: randomUUID(),
-        role: "user",
-        caption: null,
-        content: formatUserTurnContent({
-          content: message.content,
-          attachments: message.attachments,
-        }),
-      };
+      return [
+        {
+          id: randomUUID(),
+          role: "user",
+          caption: null,
+          content: formatUserTurnContent({
+            content: message.content,
+            attachments: message.attachments,
+          }),
+        },
+      ];
     case "tool":
-      return {
-        id: randomUUID(),
-        role: "tool",
-        caption: message.name,
-        content: formatStoredToolMessageContent(message),
-      };
+      return [
+        {
+          id: randomUUID(),
+          role: "tool",
+          caption: message.name,
+          content: formatStoredToolMessageContent(message),
+        },
+      ];
     case "system":
-      return {
-        id: randomUUID(),
-        role: "system",
-        caption: null,
-        content: message.content,
-      };
+      return [
+        {
+          id: randomUUID(),
+          role: "system",
+          caption: null,
+          content: message.content,
+          hidden: message.hidden,
+        },
+      ];
   }
 }
 
-function formatAssistantContent(
+function extractAssistantReasoning(
   message: Extract<ChatMessage, { role: "assistant" }>,
-): string {
+): string | null {
   const reasoning =
     message.reasoning_content ??
     message.reasoning ??
     message.thinking ??
     message.analysis ??
     message.redacted_thinking;
-  const reasoningBlock =
-    typeof reasoning === "string" && reasoning.trim().length > 0
-      ? `\n[reasoning] ${reasoning}`
-      : "";
-
-  return `${message.content}${reasoningBlock}`.trim();
+  if (typeof reasoning !== "string" || reasoning.trim().length === 0) {
+    return null;
+  }
+  return reasoning.trim();
 }
 
 function formatLocalHookEntry(

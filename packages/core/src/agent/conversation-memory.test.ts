@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { SystemMessage } from "@step-cli/protocol";
 import {
   ConversationMemory,
   type MemoryConfig,
@@ -99,6 +100,23 @@ describe("ConversationMemory", () => {
       const state = memory.exportState();
       expect(state.messages).toHaveLength(1);
       expect(state.messages[0]!.role).toBe("system");
+    });
+
+    it("preserves hidden flag through export/load round-trip", () => {
+      const memory = new ConversationMemory(makeConfig());
+      memory.addSystem("hidden instruction", { hidden: true });
+      memory.addSystem("visible instruction");
+
+      const exported = memory.exportState();
+      const memory2 = new ConversationMemory(makeConfig());
+      memory2.loadState(exported);
+
+      const restored = memory2.exportState();
+      expect(restored.messages).toHaveLength(2);
+      expect(restored.messages[0]!.role).toBe("system");
+      expect((restored.messages[0]! as SystemMessage).hidden).toBe(true);
+      expect(restored.messages[1]!.role).toBe("system");
+      expect((restored.messages[1]! as SystemMessage).hidden).toBeUndefined();
     });
   });
 

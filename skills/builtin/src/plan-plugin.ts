@@ -135,6 +135,7 @@ export function createPlanPlugin(manager: PlanManager): ToolPlugin {
             {
               role: "system",
               content: renderPlanInjectedMessage(snapshot),
+              hidden: true,
             },
           ],
         };

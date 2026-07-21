@@ -208,10 +208,15 @@ export class PluginManager {
           strategy: "head_tail",
         });
 
-        injected.push({
-          role: message.role,
-          content: truncated.text,
-        });
+        injected.push(
+          message.role === "system"
+            ? {
+                role: "system",
+                content: truncated.text,
+                ...(message.hidden ? { hidden: true } : undefined),
+              }
+            : { role: "user", content: truncated.text },
+        );
       }
 
       if (injected.length >= MAX_TOTAL_INJECTED_MESSAGES) {

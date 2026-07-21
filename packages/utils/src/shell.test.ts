@@ -3,14 +3,15 @@ import os from "node:os";
 import { enforceOutputLimit, runShell } from "./shell.js";
 
 const BIG_LIMIT = 1_000_000;
-const longRunningCommand = `${JSON.stringify(
-  process.execPath,
-)} -e "setTimeout(() => {}, 5000)"`;
 
 // Some runShell cases assert POSIX shell semantics (`;` chaining, `exit N`,
 // `for`/`seq`) that cmd.exe does not interpret. Skip those on Windows; the
 // ubuntu/macOS legs still exercise them (so coverage is unaffected).
 const isWindows = process.platform === "win32";
+
+// Cross-platform long-running child for timeout / interrupt tests (POSIX `sleep`
+// is unavailable or unreliable under cmd.exe on some Windows dev machines).
+const LONG_RUNNING_COMMAND = 'node -e "setTimeout(()=>{},5000)"';
 
 // ---------------------------------------------------------------------------
 // shell.ts (from batch2)
@@ -154,7 +155,7 @@ describe("runShell", () => {
   });
 
   it("times out a long-running command and kills it", async () => {
-    const result = await runShell(longRunningCommand, {
+    const result = await runShell(LONG_RUNNING_COMMAND, {
       cwd,
       timeoutMs: 100,
       outputLimit: BIG_LIMIT,
@@ -167,7 +168,7 @@ describe("runShell", () => {
 
   it("interrupts a running command when the signal aborts mid-flight", async () => {
     const controller = new AbortController();
-    const promise = runShell(longRunningCommand, {
+    const promise = runShell(LONG_RUNNING_COMMAND, {
       cwd,
       timeoutMs: 10_000,
       outputLimit: BIG_LIMIT,
@@ -193,7 +194,7 @@ describe("runShell", () => {
   });
 
   it("returns exitCode -1 when the close code is null (killed by timeout)", async () => {
-    const result = await runShell(longRunningCommand, {
+    const result = await runShell(LONG_RUNNING_COMMAND, {
       cwd,
       timeoutMs: 50,
       outputLimit: BIG_LIMIT,

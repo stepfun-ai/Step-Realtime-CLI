@@ -4,6 +4,7 @@ export function buildTranscriptClipboardText(
   entries: readonly StepCliTuiTranscriptEntry[],
 ): string {
   return entries
+    .filter((entry) => !entry.hidden)
     .map((entry) => formatTranscriptClipboardBlock(entry))
     .filter((block) => block.length > 0)
     .join("\n\n")
