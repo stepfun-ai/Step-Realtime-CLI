@@ -9,11 +9,13 @@ import type {
   ToolExecutionResult,
   ToolSpec,
 } from "@step-cli/protocol";
+import { resolveWorkspacePath } from "@step-cli/utils/path.js";
 import {
   asObject,
   optionalBoolean,
   optionalNumber,
   requireString,
+  safeParse,
   ToolArgError,
 } from "./parsers.js";
 
@@ -152,11 +154,6 @@ function parseEditArgs(rawArgs: string): EditArgs {
   };
 }
 
-function safeParse(rawArgs: string): unknown {
-  if (!rawArgs?.trim()) return {};
-  return JSON.parse(rawArgs);
-}
-
 async function readFileExecute(
   args: ReadArgs,
   ctx: ToolExecutionContext,
@@ -262,15 +259,6 @@ async function readSlice(
     reader.close();
   }
   return { ok: true, summary: collected.join("\n") };
-}
-
-function resolveWorkspacePath(
-  workspaceRoot: string,
-  candidate: string,
-): string {
-  return path.isAbsolute(candidate)
-    ? candidate
-    : path.resolve(workspaceRoot, candidate);
 }
 
 const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/;

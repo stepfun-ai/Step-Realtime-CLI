@@ -33,17 +33,45 @@ export function resolveInWorkspace(
   targetPath: string,
 ): string {
   const resolved = path.resolve(workspaceRoot, targetPath);
-  const normalizedRoot = path.resolve(workspaceRoot);
-
-  if (resolved === normalizedRoot) {
-    return resolved;
-  }
-
-  if (!resolved.startsWith(`${normalizedRoot}${path.sep}`)) {
+  if (!isPathInWorkspace(workspaceRoot, resolved)) {
     throw new Error(`Path escapes workspace root: ${targetPath}`);
   }
 
   return resolved;
+}
+
+/**
+ * Resolve a path for native tools that intentionally support absolute paths
+ * outside the workspace as well as workspace-relative paths.
+ */
+export function resolveWorkspacePath(
+  workspaceRoot: string,
+  targetPath: string,
+): string {
+  return path.isAbsolute(targetPath)
+    ? path.resolve(targetPath)
+    : path.resolve(workspaceRoot, targetPath);
+}
+
+export function isPathInWorkspace(
+  workspaceRoot: string,
+  candidatePath: string,
+): boolean {
+  const relative = path.relative(
+    normalizePathForComparison(workspaceRoot),
+    normalizePathForComparison(candidatePath),
+  );
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+}
+
+function normalizePathForComparison(targetPath: string): string {
+  const normalized = path.resolve(targetPath);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 export async function resolveExistingPathInWorkspace(

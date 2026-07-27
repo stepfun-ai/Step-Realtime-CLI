@@ -28,7 +28,7 @@ export function createMockToolRuntime(
 ) {
   return {
     getDefinitions: vi.fn(() => []),
-    executeTool: vi.fn(async (name: string, args: any) => {
+    executeTool: vi.fn(async (name: string, _args: any) => {
       const result = toolResults.get(name);
       if (result) return result;
       return { ok: true, summary: `mock result for ${name}` };

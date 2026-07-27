@@ -145,7 +145,7 @@ describe("ToolPolicy", () => {
 
   // -- evaluate: dangerous command patterns --
 
-  it("denies dangerous command: rm -rf /", () => {
+  it("requires confirmation for dangerous command: rm -rf /", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -153,11 +153,39 @@ describe("ToolPolicy", () => {
     const spec = makeToolSpec({ name: "bash", risk: "execute" });
     const inspection: ToolCallInspection = { command: "rm -rf /" };
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
-    expect(decision.reason).toContain("dangerous command");
+    expect(decision.mode).toBe("confirm");
+    expect(decision.reason).toContain("requires confirmation");
   });
 
-  it("denies dangerous command: shutdown", () => {
+  it("forces confirmation for dangerous commands despite an allow override", () => {
+    const policy = new ToolPolicy({
+      mode: "auto",
+      nonInteractiveApproval: "allow",
+      overrides: { bash: "allow" },
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+    const decision = policy.evaluate("bash", "{}", spec, {
+      command: "rm -rf /",
+    });
+
+    expect(decision.mode).toBe("confirm");
+  });
+
+  it("still honors allow overrides for benign commands", () => {
+    const policy = new ToolPolicy({
+      mode: "confirm",
+      nonInteractiveApproval: "deny",
+      overrides: { bash: "allow" },
+    });
+    const spec = makeToolSpec({ name: "bash", risk: "execute" });
+    const decision = policy.evaluate("bash", "{}", spec, {
+      command: "echo hello",
+    });
+
+    expect(decision.mode).toBe("allow");
+  });
+
+  it("requires confirmation for dangerous command: shutdown", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -165,10 +193,10 @@ describe("ToolPolicy", () => {
     const spec = makeToolSpec({ name: "bash", risk: "execute" });
     const inspection: ToolCallInspection = { command: "sudo shutdown now" };
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
+    expect(decision.mode).toBe("confirm");
   });
 
-  it("denies dangerous command: reboot", () => {
+  it("requires confirmation for dangerous command: reboot", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -176,10 +204,10 @@ describe("ToolPolicy", () => {
     const spec = makeToolSpec({ name: "bash", risk: "execute" });
     const inspection: ToolCallInspection = { command: "reboot" };
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
+    expect(decision.mode).toBe("confirm");
   });
 
-  it("denies dangerous command: mkfs", () => {
+  it("requires confirmation for dangerous command: mkfs", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -187,10 +215,10 @@ describe("ToolPolicy", () => {
     const spec = makeToolSpec({ name: "bash", risk: "execute" });
     const inspection: ToolCallInspection = { command: "mkfs.ext4 /dev/sda1" };
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
+    expect(decision.mode).toBe("confirm");
   });
 
-  it("denies dangerous command: dd if=", () => {
+  it("requires confirmation for dangerous command: dd if=", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -200,10 +228,10 @@ describe("ToolPolicy", () => {
       command: "dd if=/dev/zero of=/dev/sda",
     };
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
+    expect(decision.mode).toBe("confirm");
   });
 
-  it("denies encoded destructive shell commands", () => {
+  it("requires confirmation for encoded destructive shell commands", () => {
     const policy = new ToolPolicy({
       mode: "confirm",
       nonInteractiveApproval: "deny",
@@ -214,8 +242,8 @@ describe("ToolPolicy", () => {
     };
 
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
-    expect(decision.reason).toMatch(/dangerous command/i);
+    expect(decision.mode).toBe("confirm");
+    expect(decision.reason).toMatch(/requires confirmation/i);
   });
 
   it("allows benign encoded text", () => {
@@ -230,7 +258,7 @@ describe("ToolPolicy", () => {
     expect(decision.mode).toBe("confirm");
   });
 
-  it("denies destructive rm paths beyond filesystem root", () => {
+  it("requires confirmation for destructive rm paths beyond filesystem root", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -239,11 +267,11 @@ describe("ToolPolicy", () => {
     const inspection: ToolCallInspection = { command: "rm -rf /tmp/test" };
 
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
-    expect(decision.reason).toMatch(/dangerous command/i);
+    expect(decision.mode).toBe("confirm");
+    expect(decision.reason).toMatch(/requires confirmation/i);
   });
 
-  it("denies destructive rm variants with split force and recursive flags", () => {
+  it("requires confirmation for destructive rm variants with split force and recursive flags", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -257,12 +285,12 @@ describe("ToolPolicy", () => {
     ]) {
       const inspection: ToolCallInspection = { command };
       const decision = policy.evaluate("bash", "{}", spec, inspection);
-      expect(decision.mode).toBe("deny");
-      expect(decision.reason).toMatch(/dangerous command/i);
+      expect(decision.mode).toBe("confirm");
+      expect(decision.reason).toMatch(/requires confirmation/i);
     }
   });
 
-  it("denies destructive find delete variants", () => {
+  it("requires confirmation for destructive find delete variants", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -273,11 +301,11 @@ describe("ToolPolicy", () => {
     };
 
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
-    expect(decision.reason).toMatch(/dangerous command/i);
+    expect(decision.mode).toBe("confirm");
+    expect(decision.reason).toMatch(/requires confirmation/i);
   });
 
-  it("denies destructive workspace wipe variants", () => {
+  it("requires confirmation for destructive workspace wipe variants", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -288,11 +316,11 @@ describe("ToolPolicy", () => {
     };
 
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
-    expect(decision.reason).toMatch(/dangerous command/i);
+    expect(decision.mode).toBe("confirm");
+    expect(decision.reason).toMatch(/requires confirmation/i);
   });
 
-  it("denies git clean forced delete variants", () => {
+  it("requires confirmation for git clean forced delete variants", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -301,11 +329,11 @@ describe("ToolPolicy", () => {
     const inspection: ToolCallInspection = { command: "git clean -fdx" };
 
     const decision = policy.evaluate("bash", "{}", spec, inspection);
-    expect(decision.mode).toBe("deny");
-    expect(decision.reason).toMatch(/dangerous command/i);
+    expect(decision.mode).toBe("confirm");
+    expect(decision.reason).toMatch(/requires confirmation/i);
   });
 
-  it("denies git clean forced delete variants regardless of short flag order", () => {
+  it("requires confirmation for git clean forced delete variants regardless of short flag order", () => {
     const policy = new ToolPolicy({
       mode: "auto",
       nonInteractiveApproval: "allow",
@@ -315,8 +343,8 @@ describe("ToolPolicy", () => {
     for (const command of ["git clean -xdf", "git clean -x -d -f"]) {
       const inspection: ToolCallInspection = { command };
       const decision = policy.evaluate("bash", "{}", spec, inspection);
-      expect(decision.mode).toBe("deny");
-      expect(decision.reason).toMatch(/dangerous command/i);
+      expect(decision.mode).toBe("confirm");
+      expect(decision.reason).toMatch(/requires confirmation/i);
     }
   });
 

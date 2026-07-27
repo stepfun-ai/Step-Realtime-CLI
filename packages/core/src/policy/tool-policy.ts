@@ -69,9 +69,9 @@ export class ToolPolicy implements ToolPermissionPolicy {
     const command = inspection?.command?.trim();
     if (command && isDangerousCommand(command)) {
       return {
-        mode: "deny",
+        mode: "confirm",
         risk,
-        reason: `Blocked dangerous command pattern in ${toolName}: ${shorten(command, 120)}`,
+        reason: `Dangerous command pattern in ${toolName} requires confirmation: ${shorten(command, 120)}`,
       };
     }
 

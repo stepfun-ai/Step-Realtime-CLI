@@ -108,7 +108,12 @@ describe("resolveStorageRootDirectory", () => {
 // ---------------------------------------------------------------------------
 
 // resolveInWorkspace and toWorkspaceRelative need additional imports
-import { resolveInWorkspace, toWorkspaceRelative } from "./path.js";
+import {
+  isPathInWorkspace,
+  resolveInWorkspace,
+  resolveWorkspacePath,
+  toWorkspaceRelative,
+} from "./path.js";
 
 describe("resolveInWorkspace", () => {
   const root = path.resolve("/workspace");
@@ -146,6 +151,41 @@ describe("resolveInWorkspace", () => {
       path.resolve(root, "lib/file.ts"),
     );
   });
+
+  it("rejects a sibling directory sharing the workspace prefix", () => {
+    expect(() => resolveInWorkspace(root, `${root}-evil/file.txt`)).toThrow(
+      "Path escapes workspace root",
+    );
+  });
+});
+
+describe("resolveWorkspacePath", () => {
+  const root = path.resolve("/workspace");
+
+  it("resolves relative paths against the workspace", () => {
+    expect(resolveWorkspacePath(root, "src/file.ts")).toBe(
+      path.resolve(root, "src/file.ts"),
+    );
+  });
+
+  it("preserves native-tool support for absolute paths outside the workspace", () => {
+    expect(resolveWorkspacePath(root, "/tmp/output.txt")).toBe(
+      path.resolve("/tmp/output.txt"),
+    );
+  });
+
+  it("distinguishes a sibling directory with a shared prefix", () => {
+    expect(isPathInWorkspace(root, `${root}-evil/file.txt`)).toBe(false);
+  });
+
+  it.runIf(process.platform === "win32")(
+    "treats workspace paths as case-insensitive on Windows",
+    () => {
+      expect(
+        isPathInWorkspace("C:\\Workspace", "c:\\workspace\\file.txt"),
+      ).toBe(true);
+    },
+  );
 });
 
 describe("toWorkspaceRelative", () => {

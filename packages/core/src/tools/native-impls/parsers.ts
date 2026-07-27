@@ -72,3 +72,8 @@ export function optionalBoolean(
   }
   return value;
 }
+
+export function safeParse(rawArgs: string): unknown {
+  if (!rawArgs?.trim()) return {};
+  return JSON.parse(rawArgs);
+}

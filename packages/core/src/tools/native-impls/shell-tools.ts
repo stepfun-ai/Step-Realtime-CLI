@@ -8,12 +8,15 @@ import type {
   ToolExecutionResult,
   ToolSpec,
 } from "@step-cli/protocol";
+import { resolveWorkspacePath } from "@step-cli/utils/path.js";
 import { runShell } from "@step-cli/utils/shell.js";
+import { createSafeGrepRegex } from "./grep-regex.js";
 import {
   asObject,
   optionalNumber,
   optionalString,
   requireString,
+  safeParse,
 } from "./parsers.js";
 
 const SKIP_DIRECTORY_NAMES = new Set([
@@ -94,6 +97,7 @@ export function buildBashTool(): ToolSpec<BashArgs> {
     definition,
     security: { risk: "execute", defaultMode: "allow" },
     parseArgs: (raw) => parseBashArgs(raw),
+    inspect: ({ args }) => ({ command: args.command }),
     execute: async (args, ctx) => bashExecute(args, ctx),
   };
 }
@@ -157,11 +161,6 @@ function parseGrepArgs(rawArgs: string): GrepArgs {
     path: optionalString(obj, "path"),
     include: optionalString(obj, "include"),
   };
-}
-
-function safeParse(rawArgs: string): unknown {
-  if (!rawArgs?.trim()) return {};
-  return JSON.parse(rawArgs);
 }
 
 async function bashExecute(
@@ -344,7 +343,10 @@ async function jsGrep(
   base: string,
   include?: string,
 ): Promise<string> {
-  const regex = new RegExp(pattern);
+  const regex = createSafeGrepRegex(pattern);
+  if (!regex) {
+    return `(pattern skipped: ${JSON.stringify(pattern)} could not compile or triggered the ReDoS guardrail)`;
+  }
   const includeRegex = include ? globToRegex(include) : null;
   const out: string[] = [];
   await walkDir(base, async (file) => {
@@ -391,13 +393,4 @@ async function looksBinary(file: string): Promise<boolean> {
   } finally {
     await handle?.close().catch(() => undefined);
   }
-}
-
-function resolveWorkspacePath(
-  workspaceRoot: string,
-  candidate: string,
-): string {
-  return path.isAbsolute(candidate)
-    ? candidate
-    : path.resolve(workspaceRoot, candidate);
 }
