@@ -12,6 +12,7 @@ import {
   type TaskFinalSummary,
   type TaskSnapshot,
 } from "@step-cli/realtime";
+import { raceWithAbort } from "./abort-race.js";
 
 const log = logger.child({ component: "coding-bridge" });
 
@@ -129,21 +130,12 @@ export class CodingBridge {
         // throw on abort is not reliable (the subprocess can linger), and a
         // run() that never settles would leave currentTask stuck forever →
         // cancel appears to do nothing and no new task can be started.
-        const aborted = new Promise<TaskFinalSummary>((resolve) => {
-          const onAbort = () =>
-            resolve({
-              status: "interrupted",
-              summary: "任务已取消",
-              detail: makeDetail(progress) as unknown as Record<
-                string,
-                unknown
-              >,
-            });
-          if (ac.signal.aborted) onAbort();
-          else ac.signal.addEventListener("abort", onAbort, { once: true });
-        });
         const work = this.runAgent(task, shouldResume, ac, progress, emit);
-        return Promise.race([work, aborted]);
+        return raceWithAbort(ac.signal, work, () => ({
+          status: "interrupted",
+          summary: "任务已取消",
+          detail: makeDetail(progress) as unknown as Record<string, unknown>,
+        }));
       },
     });
   }
