@@ -291,6 +291,28 @@ export class AgentLoop {
           requestTemplate,
         );
         const stepMaxTokens = computeStepMaxTokens(this.config, promptTokens);
+        if (stepMaxTokens === 0) {
+          const failure =
+            "Context window remains exhausted after compaction; cannot request a model completion.";
+          this.emitState(
+            stateMachine.transition({
+              state: "failed",
+              step,
+              toolCalls: totalToolCalls,
+              note: failure,
+            }),
+          );
+          this.memory.addAssistant(failure);
+          this.memory.recordDecision(failure);
+          return this.finishRun({
+            output: failure,
+            step,
+            toolCalls: totalToolCalls,
+            success: false,
+            stateMachine,
+            actions,
+          });
+        }
         const request = {
           ...requestTemplate,
           max_tokens: stepMaxTokens,
@@ -497,12 +519,18 @@ export class AgentLoop {
             if (hookRejection) {
               result = hookRejection;
             } else {
-              this.hooks?.onToolStart?.({
-                toolName,
-                rawArgs: toolCall.function.arguments,
-                workspaceRoot: this.workspaceRoot,
-                inspection,
-              });
+              try {
+                this.hooks?.onToolStart?.({
+                  toolName,
+                  rawArgs: toolCall.function.arguments,
+                  workspaceRoot: this.workspaceRoot,
+                  inspection,
+                });
+              } catch (error) {
+                this.memory.recordDecision(
+                  `onToolStart hook failed: ${shorten(toErrorMessage(error), 160)}`,
+                );
+              }
               result = await this.executeToolWithRetries(
                 toolName,
                 toolCall.function.arguments,
@@ -511,11 +539,17 @@ export class AgentLoop {
             }
           }
 
-          this.hooks?.onToolResult?.({
-            toolName,
-            toolCallId: toolCall.id,
-            result,
-          });
+          try {
+            this.hooks?.onToolResult?.({
+              toolName,
+              toolCallId: toolCall.id,
+              result,
+            });
+          } catch (error) {
+            this.memory.recordDecision(
+              `onToolResult hook failed: ${shorten(toErrorMessage(error), 160)}`,
+            );
+          }
 
           this.memory.addTool(
             toolCall.id,
@@ -679,7 +713,11 @@ export class AgentLoop {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       this.throwIfInterrupted();
+      const attemptAbort = createDerivedAbortSignal(this.signal);
+      let retryDelayMs: number | undefined;
       try {
+        // Derive a fresh signal per attempt so listeners don't accumulate
+        // on a shared signal object across retries.
         const currentRequest: CompletionRequest = {
           ...request,
           trace: request.trace
@@ -688,7 +726,9 @@ export class AgentLoop {
                 requestAttempt: attempt,
               }
             : undefined,
-          ...(this.signal ? { signal: this.signal } : undefined),
+          ...(attemptAbort.signal
+            ? { signal: attemptAbort.signal }
+            : undefined),
         };
 
         if (this.client.streamChatCompletion) {
@@ -723,11 +763,16 @@ export class AgentLoop {
           break;
         }
 
-        const delayMs = computeRetryDelayMs(attempt);
+        retryDelayMs = computeRetryDelayMs(attempt, this.config);
         this.memory.recordDecision(
-          `Model request failed (attempt ${attempt}/${maxAttempts}): ${shorten(toErrorMessage(error), 180)}; retrying in ${delayMs}ms`,
+          `Model request failed (attempt ${attempt}/${maxAttempts}): ${shorten(toErrorMessage(error), 180)}; retrying in ${retryDelayMs}ms`,
         );
-        await sleep(delayMs, this.signal);
+      } finally {
+        attemptAbort.cleanup();
+      }
+
+      if (retryDelayMs !== undefined) {
+        await sleep(retryDelayMs, this.signal);
       }
     }
 
@@ -962,8 +1007,10 @@ export class AgentLoop {
     try {
       await this.hooks.onCheckpoint({ step, toolCalls, snapshot });
     } catch (error) {
+      const msg = `Checkpoint hook failed: ${shorten(toErrorMessage(error), 160)}`;
+      this.memory.recordDecision(msg);
       this.memory.recordDecision(
-        `Checkpoint hook failed: ${shorten(toErrorMessage(error), 160)}`,
+        "WARNING: checkpoint not persisted — state may be lost on recovery",
       );
     }
   }
@@ -1041,11 +1088,39 @@ function shouldRetryToolResult(result: ToolExecutionResult): boolean {
   return code === "TOOL_EXECUTION_FAILED";
 }
 
-function computeRetryDelayMs(attempt: number): number {
-  const base = 300;
-  const exponential = Math.min(2_500, base * 2 ** (attempt - 1));
-  const jitter = Math.floor(Math.random() * 120);
+function computeRetryDelayMs(
+  attempt: number,
+  config?: Pick<
+    AgentRunConfig,
+    "retryDelayBase" | "retryDelayMax" | "retryDelayJitter"
+  >,
+): number {
+  const base = config?.retryDelayBase ?? 300;
+  const maxDelay = config?.retryDelayMax ?? 2_500;
+  const jitter = Math.floor(Math.random() * (config?.retryDelayJitter ?? 120));
+  const exponential = Math.min(maxDelay, base * 2 ** (attempt - 1));
   return exponential + jitter;
+}
+
+function createDerivedAbortSignal(parent?: AbortSignal): {
+  signal?: AbortSignal;
+  cleanup: () => void;
+} {
+  if (!parent) {
+    return { cleanup: () => undefined };
+  }
+
+  const controller = new AbortController();
+  const abort = () => controller.abort(parent.reason);
+  if (parent.aborted) {
+    abort();
+  } else {
+    parent.addEventListener("abort", abort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => parent.removeEventListener("abort", abort),
+  };
 }
 
 async function sleep(delayMs: number, signal?: AbortSignal): Promise<void> {
@@ -1180,13 +1255,14 @@ function computeStepMaxTokens(
   config: AgentRunConfig,
   promptTokens: number,
 ): number {
+  const remainingBudget =
+    config.maxContextTokens - promptTokens - config.outputTokenSafetyMargin;
+  if (remainingBudget <= 0) return 0;
   const minOutputTokens = Math.min(
     config.minOutputTokens,
     config.maxOutputTokens,
   );
   const maxOutputTokens = Math.max(minOutputTokens, config.maxOutputTokens);
-  const remainingBudget =
-    config.maxContextTokens - promptTokens - config.outputTokenSafetyMargin;
   return clamp(remainingBudget, minOutputTokens, maxOutputTokens);
 }
 
@@ -1254,9 +1330,9 @@ function toRunMetadata(
     goalId: context?.goalId,
     attemptId: context?.attemptId,
     runStartedAt: context?.runStartedAt,
-    workspaceMode: context?.executionProfile.workspaceMode,
-    memoryMode: context?.executionProfile.memoryMode,
-    priority: context?.executionProfile.priority,
+    workspaceMode: context?.executionProfile?.workspaceMode,
+    memoryMode: context?.executionProfile?.memoryMode,
+    priority: context?.executionProfile?.priority,
   };
 }
 

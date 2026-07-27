@@ -50,6 +50,56 @@ describe("AgentStateMachine", () => {
     expect(sm.getTimeline()).toHaveLength(1);
   });
 
+  it("rejects invalid transitions", () => {
+    const sm = new AgentStateMachine();
+
+    expect(() =>
+      sm.transition({ state: "final_response", step: 1, toolCalls: 0 }),
+    ).toThrow("Invalid state transition: prepare_context -> final_response");
+  });
+
+  it("accepts the AgentLoop state transition sequence", () => {
+    const sm = new AgentStateMachine();
+    const states = [
+      "goal_start",
+      "prepare_context",
+      "before_model_request_hooks",
+      "context_compaction",
+      "model_request",
+      "tool_execution",
+      "apply_tool_results",
+      "prepare_context",
+      "context_compaction",
+      "model_request",
+      "final_response",
+      "goal_complete",
+    ] as const;
+
+    expect(() => {
+      for (const [step, state] of states.entries()) {
+        sm.transition({ state, step, toolCalls: 0 });
+      }
+    }).not.toThrow();
+  });
+
+  it("accepts the AgentLoop failure completion sequence", () => {
+    const sm = new AgentStateMachine();
+    const states = [
+      "goal_start",
+      "prepare_context",
+      "context_compaction",
+      "model_request",
+      "failed",
+      "goal_complete",
+    ] as const;
+
+    expect(() => {
+      for (const [step, state] of states.entries()) {
+        sm.transition({ state, step, toolCalls: 0 });
+      }
+    }).not.toThrow();
+  });
+
   it("accumulates multiple transitions in the timeline", () => {
     const sm = new AgentStateMachine();
 

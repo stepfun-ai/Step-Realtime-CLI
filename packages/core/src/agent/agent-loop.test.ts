@@ -131,6 +131,38 @@ describe("AgentLoop", () => {
     });
   });
 
+  it("fails without requesting the model when compaction leaves no output budget", async () => {
+    const memory = new ConversationMemory(makeMemoryConfig());
+    const createChatCompletion = vi.fn();
+    const loop = new AgentLoop({
+      model: "gpt-4o",
+      client: {
+        createChatCompletion,
+        countPromptTokens: vi.fn().mockResolvedValue(128_000),
+      } as never,
+      memory,
+      tools: {
+        getDefinitions: vi.fn().mockReturnValue([]),
+        executeTool: vi.fn(),
+        inspectTool: vi.fn(),
+        getCatalog: vi.fn().mockReturnValue([]),
+        searchTools: vi.fn().mockReturnValue([]),
+        getCodeModeToolBindings: vi.fn().mockReturnValue([]),
+      } as never,
+      systemPrompt: "sys",
+      workspaceRoot: "/tmp",
+      config: makeConfig(),
+    });
+
+    const result = await loop.run("test");
+
+    expect(result.output).toContain("Context window remains exhausted");
+    expect(result.stateTimeline.some((entry) => entry.state === "failed")).toBe(
+      true,
+    );
+    expect(createChatCompletion).not.toHaveBeenCalled();
+  });
+
   describe("AgentLoopOptions types", () => {
     it("options accept hooks", () => {
       const hooks: NonNullable<AgentLoopOptions["hooks"]> = {

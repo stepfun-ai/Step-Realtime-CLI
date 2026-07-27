@@ -20,3 +20,33 @@ export function safeParseJson<T = unknown>(
     return fallback;
   }
 }
+
+function sortRecursively(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sortRecursively(entry));
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(
+      ([left], [right]) => left.localeCompare(right),
+    );
+    const sorted: Record<string, unknown> = {};
+    for (const [key, child] of entries) {
+      sorted[key] = sortRecursively(child);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+export function stableStringify(value: unknown): string {
+  return JSON.stringify(sortRecursively(value));
+}
+
+export function normalizeToolArguments(rawArgs: string): string {
+  try {
+    const parsed = JSON.parse(rawArgs) as unknown;
+    return stableStringify(parsed);
+  } catch {
+    return rawArgs.replace(/\s+/g, " ").trim();
+  }
+}
