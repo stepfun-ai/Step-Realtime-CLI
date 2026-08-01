@@ -1,0 +1,81 @@
+{
+  "name": "step-code",
+  "version": "0.4.0",
+  "description": "Step Code — 阶跃星辰 Step 系列模型驱动的终端编码 agent CLI。",
+  "type": "module",
+  "bin": {
+    "step": "dist/main.js"
+  },
+  "files": [
+    "dist",
+    "licenses",
+    "README.md",
+    "README_CN.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/li-xiu-qi/Step-Realtime-CLI.git"
+  },
+  "homepage": "https://github.com/li-xiu-qi/Step-Realtime-CLI/tree/step-code-explore#readme",
+  "bugs": {
+    "url": "https://github.com/li-xiu-qi/Step-Realtime-CLI/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx src/main.tsx",
+    "build": "tsc -p tsconfig.json",
+    "build:bundle": "npm run build && node scripts/build-bundle.mjs",
+    "build:sea": "npm run build:bundle && node scripts/build-sea.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/main.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "coding-agent",
+    "cli",
+    "stepfun",
+    "step-code",
+    "ink"
+  ],
+  "author": "li-xiu-qi <lixiuqixiaoke@qq.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@mozilla/readability": "^0.6.0",
+    "adm-zip": "^0.6.0",
+    "ajv": "^8.20.0",
+    "chalk": "^5.6.2",
+    "cli-highlight": "^2.1.11",
+    "commander": "^15.0.0",
+    "ink": "^7.1.1",
+    "ink-text-input": "^6.0.0",
+    "jimp": "^1.6.1",
+    "linkedom": "^0.18.13",
+    "marked": "^18.0.7",
+    "quickjs-emscripten": "^0.32.0",
+    "react": "^19.2.7",
+    "smol-toml": "^1.7.0",
+    "undici": "^8.9.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "esbuild": "^0.28.1",
+    "ink-testing-library": "^4.0.0",
+    "postject": "1.0.0-alpha.6",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
