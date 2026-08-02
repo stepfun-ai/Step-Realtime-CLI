@@ -1,6 +1,6 @@
 {
   "name": "step-code",
-  "version": "0.4.0",
+  "version": "0.1.0",
   "description": "Step Code — 阶跃星辰 Step 系列模型驱动的终端编码 agent CLI。",
   "type": "module",
   "bin": {
