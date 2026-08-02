@@ -50,6 +50,8 @@ export interface SubagentRunnerDeps {
   compaction: CompactionThresholds;
   /** 压缩摘要专用模型覆盖（来自 config.compaction.model）；省略 = 用 provider 默认模型。 */
   compactionModel?: string;
+  /** 压缩摘要专用 provider（`[compaction] model` 别名跨渠道时由组合根构造）；省略 = 用各自会话的 provider。 */
+  compactionProvider?: ChatProvider;
   /** 用户原话保真预算覆盖（来自 config.compaction.userMessage*）；省略 = 用 compact.ts 默认。 */
   userMessageBudget?: { maxTokens?: number; headTokens?: number };
   /** 会话级共享计数器（外置于 runner 实例，跨轮累计）。只做配额计数，不承担 id 生成。 */
@@ -290,6 +292,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
               ? { ...deps.compaction, maxContextSize: binding.maxContextSize }
               : deps.compaction,
           compactionModel: deps.compactionModel,
+          compactionProvider: deps.compactionProvider,
           userMessageBudget: deps.userMessageBudget,
         })) {
           if (ev.type === 'tool_start') progress({ kind: 'tool', name: ev.name });

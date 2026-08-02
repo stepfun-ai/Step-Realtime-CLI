@@ -29,6 +29,7 @@ import { buildSkillRegistry, diffSkillRegistries, fingerprintSkillRoots, skillLi
 import { McpManager, mcpInputSchemaToZod, type McpServerConfig } from './mcp/manager.js';
 import { registerDynamicTool } from './tools/index.js';
 import { createProvider } from './provider/factory.js';
+import { resolveCompactionBinding } from './provider/compaction.js';
 import type { ChatProvider } from './provider/types.js';
 import { SessionStore, deriveTitle, type ResumeResult, type SessionData } from './session/store.js';
 import { resumeHintMeta, resumeHintText } from './session/resumeHint.js';
@@ -284,6 +285,13 @@ try {
   logError((e as Error).message);
   process.exit(1);
 }
+
+// 压缩摘要绑定（`[compaction] model`）：命中 [models.<别名>] 时按该别名的渠道建独立 provider，
+// 让摘要能走与主会话不同的渠道（端点/密钥/协议）；裸模型 id 仍只做 model 覆盖。
+// 别名渠道构造失败时内部已降级为「回退主会话模型」，此处不再兜底。
+// 交互模式下 /reload 会用同一函数按新配置重解（见 App 的 reload 分支），故缓存表在此长持有。
+const compactionProviderCache = new Map<string, ChatProvider>();
+const compactionBinding = resolveCompactionBinding(config, compactionProviderCache);
 
 // plugin 发现：启动时重解析清单物化（不缓存快照），plugins.json 里 disabled 的不合流。
 // 能力面：skills 进注册表；MCP 并入 mcpServerConfigs（名已带 <pluginId>: 前缀）；
@@ -691,7 +699,8 @@ async function runPrint(prompt: string): Promise<void> {
         triggerRatio: config.compaction.triggerRatio,
         reservedTokens: config.compaction.reservedTokens,
       },
-      compactionModel: config.compaction.model,
+      compactionModel: compactionBinding.model,
+      compactionProvider: compactionBinding.provider,
       userMessageBudget: {
         maxTokens: config.compaction.userMessageMaxTokens,
         headTokens: config.compaction.userMessageHeadTokens,
@@ -719,7 +728,8 @@ async function runPrint(prompt: string): Promise<void> {
       triggerRatio: config.compaction.triggerRatio,
       reservedTokens: config.compaction.reservedTokens,
     },
-    compactionModel: config.compaction.model,
+    compactionModel: compactionBinding.model,
+    compactionProvider: compactionBinding.provider,
     userMessageBudget: {
       maxTokens: config.compaction.userMessageMaxTokens,
       headTokens: config.compaction.userMessageHeadTokens,
