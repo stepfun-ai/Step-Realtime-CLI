@@ -7,7 +7,11 @@ export type Behavior =
   | { throw: unknown }
   | {
       textChunks: string[];
-      /** 思考增量（在 textChunks 之前按序吐出，模拟 thinking 块先于正文）。 */
+      /**
+       * 思考增量（在 textChunks 之前按序吐出，模拟 thinking 块先于正文）。
+       * 给出（含空数组）即按协议包一层 content_block_start[thinking] → …deltas… →
+       * signature_delta → content_block_stop；空数组即「无痕思考」（只吐 signature 的模型）。
+       */
       thinkingChunks?: string[];
       finalContent: Anthropic.ContentBlock[];
       stopReason?: Anthropic.Message['stop_reason'];
@@ -34,12 +38,25 @@ export function makeFakeProvider(behaviors: Behavior[]): {
       }
       const b = behavior;
       async function* iter(): AsyncGenerator<Anthropic.MessageStreamEvent> {
-        for (const thinking of b.thinkingChunks ?? []) {
+        if (b.thinkingChunks !== undefined) {
+          yield {
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'thinking', thinking: '', signature: '' },
+          } as unknown as Anthropic.MessageStreamEvent;
+          for (const thinking of b.thinkingChunks) {
+            yield {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'thinking_delta', thinking },
+            } as unknown as Anthropic.MessageStreamEvent;
+          }
           yield {
             type: 'content_block_delta',
             index: 0,
-            delta: { type: 'thinking_delta', thinking },
+            delta: { type: 'signature_delta', signature: 'sig-1' },
           } as unknown as Anthropic.MessageStreamEvent;
+          yield { type: 'content_block_stop', index: 0 } as unknown as Anthropic.MessageStreamEvent;
         }
         for (const text of b.textChunks) {
           yield {
