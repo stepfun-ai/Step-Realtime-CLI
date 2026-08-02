@@ -13,7 +13,7 @@ export const WORKING_TIPS: string[] = [
   '/sessions 浏览历史会话 · /resume 恢复',
   '/reflect 回顾对话、沉淀可复用方法论',
   '/fork 从当前会话分叉副本',
-  '/loop 查看定时或循环任务',
+  '/loop 建定时或循环任务',
 ];
 
 /** 英文提示池：与中文池逐条对应的翻译。 */
@@ -29,7 +29,7 @@ export const WORKING_TIPS_EN: string[] = [
   '/sessions to browse past sessions · /resume to restore',
   '/reflect reviews the conversation and distills reusable methodology',
   '/fork to branch a copy of the current session',
-  '/loop to view scheduled or recurring tasks',
+  '/loop to create scheduled or recurring tasks',
 ];
 
 /** 取当前界面语言对应的提示池。 */
@@ -38,30 +38,34 @@ function tipPool(): string[] {
 }
 
 /**
- * 忙碌态状态词池（spinner 行的动词，如「思考中」「推理中」）。
- * mount 时随机取一次、整轮固定（随机词 + 词尾加「…」）。
+ * 忙碌态状态词池（spinner 行的动词，如「处理中」「推进中」）。
+ * mount 时随机取一次、整轮固定（参考主流 CLI 的做法：随机词 + 词尾加「…」）。
  * 与 tip 不同：状态词是 spinner 行本体的一部分，短、无命令；tip 是下方独立一行的用法提示。
+ *
+ * 刻意不含「思考/推理」类词：这个词是随机的、与模型实际状态无关，用思考类词等于无条件声称
+ * 模型在思考（没思考时是谎话，真在思考时也传达不出新信息）。思考状态由 ThinkingPreview
+ * 的「思考中…」标题独家表达——它由 thinking_start/thinking_end 事件驱动，说的是真事。
  */
 export const WORKING_VERBS: string[] = [
-  '思考中',
-  '推理中',
-  '琢磨中',
-  '梳理中',
-  '盘算中',
-  '构思中',
-  '斟酌中',
-  '组织中',
+  '处理中',
+  '推进中',
+  '运转中',
+  '忙活中',
+  '张罗中',
+  '鼓捣中',
+  '折腾中',
+  '拾掇中',
 ];
 
 export const WORKING_VERBS_EN: string[] = [
-  'Thinking',
-  'Reasoning',
-  'Pondering',
-  'Musing',
-  'Cogitating',
-  'Deliberating',
-  'Composing',
-  'Ruminating',
+  'Working',
+  'Crunching',
+  'Churning',
+  'Cooking',
+  'Brewing',
+  'Whirring',
+  'Tinkering',
+  'Hustling',
 ];
 
 /** 随机取一个状态词（不含尾部省略号，调用方自行拼「…」）。 */

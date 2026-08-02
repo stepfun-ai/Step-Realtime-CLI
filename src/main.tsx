@@ -599,8 +599,10 @@ async function runPrint(prompt: string): Promise<void> {
       case 'text':
         process.stdout.write(ev.text);
         break;
+      case 'thinking_start':
       case 'thinking_delta':
-        // 思考过程不进 stdout：保持 -p 输出可管道（只出正文）
+      case 'thinking_end':
+        // 思考过程与其边界不进 stdout：保持 -p 输出可管道（只出正文）
         break;
       case 'tool_start':
         process.stderr.write(`\n[tool] ${ev.name} ${JSON.stringify(ev.input)}\n`);

@@ -298,6 +298,12 @@ describe('ThinkingPreview 流式预览', () => {
     expect(out).toContain('推理中');
   });
 
+  it('文本为空（无痕思考）只出「思考中…」标题，不出空白正文行', () => {
+    const { lastFrame } = render(<ThinkingPreview text={''} maxLines={0} />);
+    const out = stripAnsi(lastFrame() ?? '').replace(/\n+$/, '');
+    expect(out).toBe('思考中…');
+  });
+
   it('长文本只保留尾部 3 行（滚动预览）', () => {
     const text = ['AA', 'BB', 'CC', 'DD', 'EE', 'FF', 'GG', 'HH', 'II', 'JJ'].join('\n');
     const { lastFrame } = render(<ThinkingPreview text={text} />);

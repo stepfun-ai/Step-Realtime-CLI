@@ -8,8 +8,11 @@ import { t } from '../i18n.js';
 /**
  * 忙碌态状态行（独立块，挂在输入框正上方）：
  *
- *   ⠋ 思考中… (12s · ↓ 585 tokens)
+ *   ⠋ 处理中… (12s · ↓ 585 tokens)
  *   · 提示：↑/↓ 回溯输入历史
+ *
+ * 状态词不声称「思考」（见 workingTips 的 WORKING_VERBS 注释）：思考态由上方 ThinkingPreview
+ * 的「思考中…」标题表达，只在真的收到 thinking_start 后出现。
  *
  * 设计要点（消除旧版「spinner 与文字挤在输入框行内、换帧时文字抖动」）：
  * - spinner 独占行、与输入框分离（column 布局 + marginTop），换帧不挤压其他元素。

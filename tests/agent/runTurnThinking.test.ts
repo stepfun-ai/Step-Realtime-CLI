@@ -21,14 +21,47 @@ describe('runTurn thinking 事件与历史', () => {
       runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages }),
     );
 
-    const stream = events.filter((e) => e.type === 'thinking_delta' || e.type === 'text');
+    const stream = events.filter(
+      (e) =>
+        e.type === 'thinking_start' ||
+        e.type === 'thinking_delta' ||
+        e.type === 'thinking_end' ||
+        e.type === 'text',
+    );
     expect(stream).toEqual([
+      { type: 'thinking_start' },
       { type: 'thinking_delta', text: '先分析' },
       { type: 'thinking_delta', text: '问题' },
+      { type: 'thinking_end' },
       { type: 'text', text: '答案' },
       { type: 'text', text: '如下' },
     ]);
     expect(events.at(-1)!.type).toBe('turn_done');
+  });
+
+  it('无痕思考（只吐 signature、无 thinking_delta）仍产出 thinking_start/thinking_end', async () => {
+    const { provider } = makeFakeProvider([
+      {
+        thinkingChunks: [],
+        textChunks: ['答案'],
+        finalContent: [thinkingBlock('', 'sig-only'), textBlock('答案')],
+      },
+    ]);
+    const messages: StoredMessage[] = [sm('问')];
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages }),
+    );
+
+    // signature_delta 不上抛，故全程零 thinking_delta：UI 只能靠这对边界事件显示「思考中」
+    expect(events.filter((e) => e.type === 'thinking_delta')).toEqual([]);
+    expect(events.filter((e) => e.type === 'thinking_start' || e.type === 'thinking_end')).toEqual([
+      { type: 'thinking_start' },
+      { type: 'thinking_end' },
+    ]);
+    // 边界事件在正文之前，且不妨碍正文
+    expect(events.findIndex((e) => e.type === 'thinking_end')).toBeLessThan(
+      events.findIndex((e) => e.type === 'text'),
+    );
   });
 
   it('finalMessage 的 thinking 块（带 signature）随 assistant 消息进历史', async () => {
@@ -64,7 +97,10 @@ describe('runTurn thinking 事件与历史', () => {
       runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages }),
     );
 
-    expect(events[0]).toEqual({ type: 'thinking_delta', text: '需要读文件' });
+    expect(events.slice(0, 2)).toEqual([
+      { type: 'thinking_start' },
+      { type: 'thinking_delta', text: '需要读文件' },
+    ]);
     expect(events.some((e) => e.type === 'tool_start')).toBe(true);
     expect(events.at(-1)!.type).toBe('turn_done');
     const assistant = messages.find((m) => m.origin.kind === 'assistant');
