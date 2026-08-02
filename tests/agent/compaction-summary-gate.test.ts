@@ -38,7 +38,7 @@ const GARBAGE_SUMMARY = '[早期对话摘要]\n[调用工具 bash] 搜索 step-c
 /** 构造一段「older 足够大 + 用户原话带关键事实」的历史。 */
 function historyWithFacts(): StoredMessage[] {
   return [
-    stored({ role: 'user', content: '项目在 D:/work/demo-repo' }, 'user'),
+    stored({ role: 'user', content: '项目在 D:/work/demo-repo/packages/core' }, 'user'),
     bulkAssistant('A1'),
     stored({ role: 'user', content: '注意 key 在 keys.json' }, 'user'),
     bulkAssistant('A2'),
@@ -174,7 +174,7 @@ describe('fullCompact 摘要质量闸门', () => {
     const out = await fullCompact(provider, historyWithFacts(), 2);
     const verbatim = out.filter((m) => m.origin.kind === 'user_verbatim').map((m) => String(m.message.content));
     // 摘要输入被收缩，但保真选择基于完整 older 段，故最早那条路径原话不会丢
-    expect(verbatim.some((t) => t.includes('step-code-suite'))).toBe(true);
+    expect(verbatim.some((t) => t.includes('D:/work/demo-repo'))).toBe(true);
     expect(verbatim.some((t) => t.includes('keys.json'))).toBe(true);
   });
 });

@@ -321,7 +321,7 @@ export function App({
   const imageCount = useMemo(() => imageStore.current.activeIds(input).length, [input]);
   const pendingPlanRef = useRef<PendingPlan | null>(null);
   const planResolver = useRef<((approved: boolean) => void) | null>(null);
-  // 询问用户：双 ref 模式（照抄审批/计划）。发起时存 resolve + setPending 触发渲染，答完/取消 resolve 恢复 generator。
+  // 询问用户：双 ref 模式（沿用审批/计划）。发起时存 resolve + setPending 触发渲染，答完/取消 resolve 恢复 generator。
   const pendingQuestionRef = useRef<AskUserRequest | null>(null);
   const questionResolver = useRef<((answers: QuestionAnswers) => void) | null>(null);
   // 发送缓冲队列：busy 时输入入队（FIFO），回合结束自动逐条发送。

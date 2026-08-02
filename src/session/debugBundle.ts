@@ -2,7 +2,7 @@
  * 调试导出（export-debug-zip）：把当前会话的落盘产物 + 脱敏后的配置 + 运行日志现场 +
  * 环境自描述 manifest 打成一个 zip，供用户私下发给我们排查 bug。
  *
- * 设计取舍要点：
+ * 设计取舍：
  * - 打包当前会话的 `<id>.json` + `<id>.full.jsonl`（会话本身就是 bug 复现脚本）。
  * - config.toml / mcp.json 按 key 名确定性脱敏后纳入（provider/model/MCP 列表对排查关键）。
  * - errors.log 取自 logger 的内存环形缓冲 dump。

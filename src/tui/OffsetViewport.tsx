@@ -14,7 +14,7 @@ import { MAX_SYNC_MEASURE_CHAIN } from './LiveViewport.js';
  * 因此不再需要尾部锚定与「已隐藏 N 行」指示。
  *
  * 测量：useLayoutEffect 在 commit 阶段同步量内层自然高（含流式增长），
- * 经 onNaturalHeight 回调上报，供外层 clamp offset。级联保险照抄 LiveViewport：
+ * 经 onNaturalHeight 回调上报，供外层 clamp offset。级联保险沿用 LiveViewport：
  * 同一宏任务拍内连续同步 dispatch 超过 MAX_SYNC_MEASURE_CHAIN 就退到下一拍——
  * 本组件挂在 busy 流式会话上，同样可能踩「Maximum update depth exceeded」。
  */

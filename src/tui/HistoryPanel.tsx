@@ -49,7 +49,7 @@ export function collectHistoryItems(history: StoredMessage[]): HistoryPanelItem[
 }
 
 /**
- * /history 统一回顾回退面板（/history 与 /undo 同入口唤起，替换输入区，照抄 ThinkPicker 的弹层模式）：
+ * /history 统一回顾回退面板（/history 与 /undo 同入口唤起，替换输入区，复用 ThinkPicker 的弹层模式）：
  * 列本会话真人用户输入（最近在上），指针 › + 输入摘要（左列）+ 时间（右列灰色）；
  * ↑↓ 移动（越界 clamp 不循环）；Enter = 回退到该轮（撤销该轮及其后所有轮，输入文本放回输入框可编辑重发），
  * 不可回退项（压缩点之前）Enter 退化为仅取回文本；Tab = 仅取回文本不回退；Esc 关闭。

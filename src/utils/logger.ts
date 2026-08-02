@@ -1,7 +1,7 @@
 /**
  * 运行日志（诊断通道）。会话记录走 SessionStore 的 `.full.jsonl`，与此无关。
  *
- * 设计要点：
+ * 设计：
  * - 一条通道，同时写全局文件 `~/.step-code/logs/step-code.log` 和进程内环形缓冲。
  * - TUI 交互模式：只进文件 + 缓冲，绝不写 stderr/stdout（Ink 独占终端，写终端会打乱渲染）。
  * - headless（`-p` 一次性执行）模式：才允许写 stderr，默认只 error 级。
