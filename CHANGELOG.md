@@ -62,6 +62,7 @@
 - **`disabled_skills` 配置**：config.toml 按名排除 skill，合并完成后统一过滤，任何来源（含插件）的同名 skill 都不加载；用于屏蔽共享/团队目录（如团队仓库提交的 `.agents/skills/`）里不归你管的个别 skill。
 - **`agents_md_max_bytes` 配置与 AGENTS.md 截断提示**：AGENTS.md 总量预算从写死 32KB 变为 config.toml 可调（UTF-8 字节计），`0` 或负数 = 禁用 AGENTS.md 加载。预算不足发生截断或整篇丢弃时，启动后在转录区一次性提示受影响的文件路径、原始大小与实际注入量，不再静默截断。
 - **子 agent 会话身份：持久化、按 id 续跑与留存策略**：每个子 agent 落盘为独立子会话（`<工作目录键>/subagents/` 下快照 + 全量日志 + 运行期活跃锁），不进主会话列表、不污染 `/resume` 与 `--continue`。`step subagents list / show <id> / delete <id>` 无头管理——show 完整回看子 agent 历史，解决子 agent 出错时父侧只收一句摘要、过程全丢的调试痛点；`/resume` 选择器新增「子 agent 会话」区，只读下钻完整历史。`spawn_agent` 加 `resume` 参数按 id 续跑：新指令追加为一条 user 消息、不替换已有历史，上次执行断在工具调用中途时自动补一条中断结果再续，持活跃锁的目标明确拒绝，续跑不占单会话派生配额；工具返回串带回子会话 id 供模型后续引用。新增 `[subagent.retention]` 配置：`delete_with_parent`（默认开，删主会话级联删子会话）、`max_sessions` 与 `ttl_days`（默认全 0 不主动删），清理只在进程启动时执行一次且一律跳过持锁会话；skill 激活计数随子会话快照持久化，resume 带回，递归防护不被续跑重置。
+- **GitHub Release 分发（SEA 可执行文件 + npm tarball）**：v0.1.0 起每个版本发布两个产物——SEA 可执行文件（单文件、无需 Node 环境）与 npm tarball（`.tgz`、内含预编译 `dist/`）。用户可从 Releases 直接下载运行，或 `npm install -g <tarball-url>` 安装；源码安装与 `pnpm link --global` 路径继续保留。`package.json` 新增 `prepack` 钩子，确保 `npm pack` 在干净环境自动 build `dist/`，tarball 装完即用。
 
 ### Changed
 
