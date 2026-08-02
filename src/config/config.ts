@@ -76,6 +76,35 @@ export interface BackgroundConfig {
 }
 
 /**
+ * 联网搜索配置（[search] / [search.web] / [search.image] 段）。
+ * 搜索是阶跃平台专属增值能力，与主会话模型渠道在业务上不等价——主会话切到非阶跃
+ * 渠道时，复用其 base_url + apiKey 会把搜索请求打到错误地址（404）。因此搜索配置独立。
+ *
+ * 三层结构：[search] 是通用兜底，[search.web] / [search.image] 分别覆盖内容搜索与文搜图。
+ * 字段全部可选，缺省键不进结果对象。消费方按「专用段 → 通用段 → 主会话渠道」的优先级解析，
+ * 最终都缺时回退主会话 provider（向后兼容兜底，见工具内注释）。
+ *
+ * url 是「已含协议路径」的完整 Base URL，工具只在末尾拼 /search 或 /search-image，
+ * 不做 resolveSearchBaseUrl 式裁剪——独立配置视为用户的精确意图。
+ */
+export interface SearchEndpointConfig {
+  /** Base URL（如 https://api.stepfun.com/v1 或 .../step_plan/v1）。 */
+  url?: string;
+  /** 鉴权 key。 */
+  key?: string;
+}
+
+export interface SearchConfig {
+  /** 通用段 [search]：内容搜索与文搜图的默认 url/key。 */
+  url?: string;
+  key?: string;
+  /** 内容搜索专用段 [search.web]，覆盖通用段。 */
+  web?: SearchEndpointConfig;
+  /** 文搜图专用段 [search.image]，覆盖通用段。 */
+  image?: SearchEndpointConfig;
+}
+
+/**
  * thinking（推理过程）请求配置（[thinking] 段）。
  * enabled 默认 false：不主动发 thinking 字段，保持既有请求行为（部分服务端对该字段 400）；
  * budget_tokens 可选，Anthropic 协议要求 ≥1024 且 < max_tokens。
@@ -182,6 +211,8 @@ export interface StepCodeConfig {
   background?: BackgroundConfig;
   /** thinking（推理过程）请求配置（[thinking] 段）。loadConfig 恒赋值（默认 { enabled: false }），消费方仍按可选处理。 */
   thinking?: ThinkingConfig;
+  /** 联网搜索配置（[search] 段）。loadConfig 恒赋值（可能为空对象 {}），消费方按「专用段 → 通用段 → 主会话渠道」解析。 */
+  search?: SearchConfig;
   /** 界面语言（TUI/CLI 给人看的文案）。缺省 'zh'；给模型看的文案恒中文，不受其影响。 */
   language?: Locale;
   /**
@@ -363,6 +394,7 @@ interface TomlConfigShape {
   compaction?: unknown;
   background?: unknown;
   thinking?: unknown;
+  search?: unknown;
   language?: unknown;
   permission_mode?: unknown;
   proxy?: unknown;
@@ -527,6 +559,51 @@ export function resolveBackgroundConfig(raw: unknown): BackgroundConfig {
   const notifyTerm = t['notify_terminal'];
   if (typeof notifyTerm === 'boolean') cfg.notifyTerminal = notifyTerm;
   return cfg;
+}
+
+/**
+ * 解析 [search] 段的联网搜索配置。纯函数，便于单测。
+ * raw 非对象 → 返回空对象 {}（所有字段缺省，消费方回退主会话渠道）。
+ * 通用段 url/key 与 [search.web]/[search.image] 子段的 url/key 全部可选，
+ * 类型非法的键不进结果对象（下游 toEqual 精确断言依赖此形态）。
+ * @param raw config.toml 里 [search] 段的原始值（可能为 undefined / 非对象）。
+ */
+export function resolveSearchConfig(raw: unknown): SearchConfig {
+  const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const cfg: SearchConfig = {};
+  const url = asString(t['url']);
+  if (url !== undefined) cfg.url = url;
+  const key = asString(t['key']);
+  if (key !== undefined) cfg.key = key;
+  for (const sub of ['web', 'image'] as const) {
+    const s = t[sub];
+    if (typeof s !== 'object' || s === null) continue;
+    const st = s as Record<string, unknown>;
+    const endpoint: SearchEndpointConfig = {};
+    const subUrl = asString(st['url']);
+    if (subUrl !== undefined) endpoint.url = subUrl;
+    const subKey = asString(st['key']);
+    if (subKey !== undefined) endpoint.key = subKey;
+    if (endpoint.url !== undefined || endpoint.key !== undefined) cfg[sub] = endpoint;
+  }
+  return cfg;
+}
+
+/**
+ * 按「专用段 → 通用段」解析某个搜索工具的生效 endpoint。
+ * 返回的 url/key 可能为 undefined，由调用方决定是否回退主会话渠道。
+ * @param cfg 已解析的 [search] 配置（可能为 undefined）。
+ * @param kind 'web' 内容搜索 / 'image' 文搜图。
+ */
+export function resolveSearchEndpoint(
+  cfg: SearchConfig | undefined,
+  kind: 'web' | 'image',
+): SearchEndpointConfig {
+  const sub = cfg?.[kind];
+  return {
+    url: sub?.url ?? cfg?.url,
+    key: sub?.key ?? cfg?.key,
+  };
 }
 
 /**
@@ -840,6 +917,8 @@ export function loadConfig(cwd: string = process.cwd(), overrides: ConfigOverrid
   };
   // thinking 请求配置：余量校验以最终生效的 maxTokens 为基准（启用且余量不足时抛配置错误）
   cfg.thinking = resolveThinkingConfig(toml.thinking, cfg.maxTokens);
+  // 联网搜索配置：所有字段可选，缺省时消费方回退主会话渠道（向后兼容）
+  cfg.search = resolveSearchConfig(toml.search);
   // 自定义加载路径：未配置或非法时键不进结果对象（下游 toEqual 精确断言依赖此形态）
   const agentsPaths = resolveStringArray(toml.agents_paths);
   if (agentsPaths !== undefined) cfg.agentsPaths = agentsPaths;

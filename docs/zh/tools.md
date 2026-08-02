@@ -238,14 +238,15 @@ POSIX 平台不做这套探测，直接用 `$SHELL`，缺省 `/bin/bash`。
 
 ### `web_search`
 
-接阶跃星辰官方网页搜索接口（`POST <base>/step_plan/v1/search`），用与模型同一个 API key，走 Step Plan 通道，**消耗 Step Plan Credit**。
+接阶跃星辰官方网页搜索接口，按阶跃平台搜索计价（api 通道按量 / plan 通道消耗 Credit）。
 
-> **渠道依赖（重要）**：搜索请求发到「当前会话渠道的 `base_url` 去掉 `/v1` 后缀后拼 `/step_plan/v1/search`」，key 用的也是当前会话渠道的 API key。两个后果：
+> **endpoint 解析（重要）**：搜索请求的 url 与 key 按「`[search.web]` → `[search]` → 主会话渠道」的优先级解析：
 >
-> - **主会话必须走阶跃渠道**（`api.stepfun.com` 或你的阶跃网关地址），搜索才可用。如果主会话切到了非阶跃渠道（其他厂商模型、自建网关），请求会打到那个渠道的地址上，必然 404 或鉴权失败。
-> - **子 agent 的搜索跟随主会话渠道**，不跟随子 agent 自己的 `model` 别名。主会话走阶跃时，即使子 agent 通过别名绑定了其他渠道的模型，它的 `web_search` / `web_image_search` 依然走主会话的阶跃 key，正常使用。
+> - **配了 `[search]` 段**：搜索走独立配置的 url + key，与主会话用什么模型渠道完全无关。这是推荐做法，见[配置参考](./configuration.md#search-联网搜索)。
+> - **没配 `[search]` 段（默认）**：回退到主会话渠道的 `base_url` + `api_key`。此时主会话必须走阶跃渠道，切到非阶跃渠道（其他厂商模型、自建网关）会 404 失败。
+> - **子 agent 的搜索跟随主会话的搜索配置**，不跟随子 agent 自己的 `model` 别名。主会话搜索可用时，即使子 agent 绑定了其他渠道的模型，它的 `web_search` / `web_image_search` 也正常。
 >
-> 简言之：想让联网搜索可用，保证主会话当前渠道是阶跃渠道即可，搜索功能与模型别名体系无关。
+> 内容搜索支持阶跃 api（`/v1/search`）与 plan（`/step_plan/v1/search`）双通道，文搜图仅 plan 通道，详见配置参考。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -253,11 +254,11 @@ POSIX 平台不做这套探测，直接用 `$SHELL`，缺省 `/bin/bash`。
 | `n` | 整数 1–20，可选 | 结果条数，默认 10 |
 | `category` | 枚举，可选 | `programming` / `research` / `gov` / `business`；省略则全网 |
 
-返回每条的序号、标题、URL 与摘要（摘要截断到 500 字符）。未配置 API key 时报错。
+返回每条的序号、标题、URL 与摘要（摘要截断到 500 字符）。未配置 API key 时报错，并提示可在 `[search]` 段配置独立的搜索 url 与 key。
 
 接口返回的结果若带完整正文，会写进进程内缓存供 `web_fetch` 复用，并在结果末尾标注 `[Cached N URLs with full content for web_fetch]`。
 
-HTTP 错误按状态码分流，其中 **451 是内容安全审核拦截**（检索词或返回内容未过审），与 key、额度无关；401/403 指向 key 问题，429 指向限流或 Step Plan 额度；404 或连接失败先检查当前渠道是不是阶跃渠道（见上方渠道依赖说明）。
+HTTP 错误按状态码分流，其中 **451 是内容安全审核拦截**（检索词或返回内容未过审），与 key、额度无关；401/403 指向 key 问题，429 指向限流或 Step Plan 额度；404 或连接失败先检查搜索 endpoint 配置是否正确（见上方解析说明）。
 
 ### `web_image_search`
 
