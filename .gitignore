@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-bundle/
 dist-sea/
+dist-branch/
 *.log
 
 # 环境变量（保留示例文件）

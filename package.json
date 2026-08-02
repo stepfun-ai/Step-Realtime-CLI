@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "licenses",
+    "scripts/prepare.mjs",
     "README.md",
     "README_CN.md"
   ],
@@ -35,6 +36,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node dist/main.js",
+    "prepare": "node scripts/prepare.mjs",
     "prepublishOnly": "npm run build",
     "prepack": "npm run build"
   },
