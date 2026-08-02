@@ -1,0 +1,386 @@
+import type Anthropic from '@anthropic-ai/sdk';
+import {
+  httpErrorToApiError,
+  mapUsage,
+  type OpenAiUsage,
+  parseSseStream,
+  parseToolArguments,
+} from './openaiCommon.js';
+import type { ChatProvider } from './types.js';
+
+/** {@link OpenAiResponsesProvider} 构造参数。 */
+export interface OpenAiResponsesProviderOptions {
+  apiKey: string;
+  /** 带 /v1 的 base_url（拼 /responses）。 */
+  baseUrl: string;
+  model: string;
+  maxTokens: number;
+  /** 注入的 fetch 实现（测试用 mock）；缺省用全局 fetch。 */
+  fetchImpl?: typeof fetch;
+}
+
+/** Responses API 的一条对话 input 项（role + 纯文本内容）。 */
+interface ResponsesMessageItem {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+/** Responses API 的一次工具调用 input 项（回灌 assistant 的 tool_use 用）。 */
+interface ResponsesFunctionCallItem {
+  type: 'function_call';
+  name: string;
+  call_id: string;
+  /** 入参 JSON 字符串（协议要求字符串，不是对象）。 */
+  arguments: string;
+}
+
+/** Responses API 的一条工具结果 input 项（回灌 user 的 tool_result 用）。 */
+interface ResponsesFunctionCallOutputItem {
+  type: 'function_call_output';
+  call_id: string;
+  output: string;
+}
+
+type ResponsesInputItem =
+  | ResponsesMessageItem
+  | ResponsesFunctionCallItem
+  | ResponsesFunctionCallOutputItem;
+
+/** Responses API 的一个工具定义：字段平铺在 item 上，不像 Chat 那样嵌在 function 里。 */
+interface ResponsesTool {
+  type: 'function';
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+}
+
+/** Anthropic.Tool[] → Responses 平铺工具定义数组（input_schema → parameters）。 */
+export function toolsToResponses(tools: Anthropic.Tool[]): ResponsesTool[] {
+  return tools.map((tool) => {
+    const out: ResponsesTool = {
+      type: 'function',
+      name: tool.name,
+      parameters: (tool.input_schema ?? {}) as Record<string, unknown>,
+    };
+    if (typeof tool.description === 'string' && tool.description.length > 0) {
+      out.description = tool.description;
+    }
+    return out;
+  });
+}
+
+/** 把 Anthropic content block 数组里的纯文本拼接成一个字符串（忽略非文本块）。 */
+function blocksToText(content: Anthropic.ContentBlockParam[]): string {
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block.type === 'text') parts.push(block.text);
+  }
+  return parts.join('');
+}
+
+/** tool_result 块的 content 折成纯文本（string 原样；数组取其中 text 块拼接）。 */
+function toolResultText(block: Anthropic.ToolResultBlockParam): string {
+  const c = block.content;
+  if (c === undefined) return '';
+  if (typeof c === 'string') return c;
+  const parts: string[] = [];
+  for (const part of c) {
+    if (part.type === 'text') parts.push(part.text);
+  }
+  return parts.join('');
+}
+
+/**
+ * 把 Anthropic 请求（system + messages）翻译成 Responses 的 input 数组。
+ *
+ * 工具往返在 Responses 里不用 Chat 那种 role:'tool' 消息，而是两种独立 item 靠 call_id 关联：
+ * assistant 的 tool_use → {type:'function_call'}、user 的 tool_result → {type:'function_call_output'}。
+ * tool_use.id 即 call_id，因此回灌链路只要 build 侧取的是权威 call_id 就自然对得上。
+ * thinking 块不回传（服务端不接受回灌 reasoning）。
+ */
+export function messagesToResponsesInput(
+  system: string,
+  messages: Anthropic.MessageParam[],
+): ResponsesInputItem[] {
+  const out: ResponsesInputItem[] = [];
+  if (system.length > 0) out.push({ role: 'system', content: system });
+
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      out.push({ role: msg.role, content: msg.content });
+      continue;
+    }
+    const blocks = msg.content;
+    if (msg.role === 'user') {
+      const toolResults = blocks.filter(
+        (b): b is Anthropic.ToolResultBlockParam => b.type === 'tool_result',
+      );
+      const nonToolText = blocksToText(blocks.filter((b) => b.type !== 'tool_result'));
+      // 无工具结果时即使正文为空也要留一条 user 项，保持对话轮次完整
+      if (nonToolText.length > 0 || toolResults.length === 0) {
+        out.push({ role: 'user', content: nonToolText });
+      }
+      for (const tr of toolResults) {
+        out.push({
+          type: 'function_call_output',
+          call_id: tr.tool_use_id,
+          output: toolResultText(tr),
+        });
+      }
+      continue;
+    }
+    // assistant：正文与工具调用各自成项，正文在前
+    const text = blocksToText(blocks);
+    if (text.length > 0) out.push({ role: 'assistant', content: text });
+    for (const block of blocks) {
+      if (block.type !== 'tool_use') continue;
+      out.push({
+        type: 'function_call',
+        name: block.name,
+        call_id: block.id,
+        arguments: JSON.stringify(block.input ?? {}),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * OpenAI Responses 协议 provider（/v1/responses），流式，支持工具调用。
+ *
+ * 请求侧把 Anthropic 形状的 system/tools/messages 翻译成 Responses 形状（tools 平铺、
+ * 工具往返用 function_call / function_call_output 两类 input 项）；响应侧 fetch 流式 +
+ * 手写 SSE 解析，把 reasoning_text.delta→thinking_delta、output_text.delta→text_delta 吐出。
+ *
+ * finalMessage() 一律从 `response.completed` 事件带回的完整 response 对象重建，不用流式中间
+ * 事件累积：实测流式 output_item.added 给的 call_id 与 response.completed 里同一调用的 call_id
+ * 不是同一个值，只有后者能用于工具结果回灌，取错则下一轮 call_id 对不上。中间事件因此只负责
+ * 产出增量、不参与最终形状。
+ */
+export class OpenAiResponsesProvider implements ChatProvider {
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly model: string;
+  readonly maxTokens: number;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(options: OpenAiResponsesProviderOptions) {
+    this.apiKey = options.apiKey;
+    this.baseUrl = options.baseUrl.replace(/\/$/, '');
+    this.model = options.model;
+    this.maxTokens = options.maxTokens;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  stream(params: {
+    system: string;
+    tools: Anthropic.Tool[];
+    messages: Anthropic.MessageParam[];
+    signal?: AbortSignal;
+    model?: string;
+    /** thinking 覆盖：openai_responses 协议无 thinking 请求字段，忽略此参数（仅为对齐 ChatProvider 签名）。 */
+    thinking?: { budgetTokens?: number } | null;
+  }): ReturnType<Anthropic['messages']['stream']> {
+    const model = params.model ?? this.model;
+    const body: Record<string, unknown> = {
+      model,
+      input: messagesToResponsesInput(params.system, params.messages),
+      max_output_tokens: this.maxTokens,
+      stream: true,
+    };
+    const tools = toolsToResponses(params.tools);
+    if (tools.length > 0) body['tools'] = tools;
+
+    const fetchImpl = this.fetchImpl;
+    const url = `${this.baseUrl}/responses`;
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      authorization: `Bearer ${this.apiKey}`,
+    };
+    const maxTokens = this.maxTokens;
+
+    // 最终 response 对象（response.completed 的权威值）；未收到时用 undefined 兜底为空消息。
+    let completed: ResponsesResponse | undefined;
+
+    async function* iterate(): AsyncGenerator<Anthropic.MessageStreamEvent> {
+      const res = await fetchImpl(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        ...(params.signal !== undefined ? { signal: params.signal } : {}),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw httpErrorToApiError(res.status, errText, res.headers);
+      }
+      if (res.body === null) {
+        throw httpErrorToApiError(502, 'empty response body', res.headers);
+      }
+      for await (const raw of parseSseStream(res.body)) {
+        const event = raw as ResponsesStreamEvent;
+        if (event.type === 'response.reasoning_text.delta') {
+          if (typeof event.delta === 'string' && event.delta.length > 0) {
+            yield {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'thinking_delta', thinking: event.delta },
+            } as unknown as Anthropic.MessageStreamEvent;
+          }
+        } else if (event.type === 'response.output_text.delta') {
+          if (typeof event.delta === 'string' && event.delta.length > 0) {
+            yield {
+              type: 'content_block_delta',
+              index: 0,
+              delta: { type: 'text_delta', text: event.delta },
+            } as unknown as Anthropic.MessageStreamEvent;
+          }
+        } else if (event.type === 'response.completed' || event.type === 'response.incomplete') {
+          if (event.response !== undefined && event.response !== null) completed = event.response;
+        }
+      }
+    }
+
+    // 共享一个 generator 实例：for await 与 finalMessage() 都消费它；
+    // finalMessage() 若被单独 await（流未迭代），先把剩余事件 drain 完再 build。
+    const gen = iterate();
+    let drained = false;
+    const drain = async (): Promise<void> => {
+      if (drained) return;
+      for await (const _ of gen) {
+        /* 消费剩余事件以拿到 response.completed */
+      }
+      drained = true;
+    };
+
+    const streamLike = {
+      [Symbol.asyncIterator](): AsyncGenerator<Anthropic.MessageStreamEvent> {
+        const inner = gen;
+        return {
+          async next(...args: [] | [undefined]) {
+            const r = await inner.next(...args);
+            if (r.done === true) drained = true;
+            return r;
+          },
+          async return(value?: unknown) {
+            drained = true;
+            return inner.return(value as never);
+          },
+          async throw(e?: unknown) {
+            return inner.throw(e);
+          },
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+        } as AsyncGenerator<Anthropic.MessageStreamEvent>;
+      },
+      async finalMessage(): Promise<Anthropic.Message> {
+        await drain();
+        return buildResponsesMessage(completed ?? {}, model, maxTokens);
+      },
+    };
+    return streamLike as unknown as ReturnType<Anthropic['messages']['stream']>;
+  }
+}
+
+/** Responses API 响应形状（宽松：容忍缺字段）。 */
+interface ResponsesResponse {
+  output?: ResponsesOutputItem[];
+  usage?: OpenAiResponsesUsage | null;
+}
+
+/** output 数组里的一项：reasoning / message / function_call 三类共用宽松形状。 */
+interface ResponsesOutputItem {
+  type?: string;
+  content?: Array<{ type?: string; text?: string }>;
+  /** function_call 项：工具名。 */
+  name?: string;
+  /** function_call 项：入参 JSON 字符串。 */
+  arguments?: string;
+  /** function_call 项：回灌用的关联 id（与 item 自身的 id 不同，不能混用）。 */
+  call_id?: string;
+  id?: string;
+}
+
+/** Responses 流式事件形状（宽松：只取本适配器用到的字段）。 */
+interface ResponsesStreamEvent {
+  type?: string;
+  delta?: string;
+  response?: ResponsesResponse | null;
+}
+
+interface OpenAiResponsesUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  input_tokens_details?: { cached_tokens?: number };
+}
+
+/**
+ * 把 Responses 的 output 数组组装成 Anthropic.Message
+ * （reasoning→thinking、message→text、function_call→tool_use）。
+ * tool_use.id 取 call_id 而非 item 的 id：只有 call_id 能在下一轮 function_call_output 里关联上。
+ */
+export function buildResponsesMessage(
+  json: { output?: ResponsesResponse['output']; usage?: OpenAiResponsesUsage | null },
+  model: string,
+  _maxTokens: number,
+): Anthropic.Message {
+  let thinking = '';
+  let text = '';
+  const toolUses: Anthropic.ContentBlock[] = [];
+  for (const item of json.output ?? []) {
+    if (item.type === 'reasoning') {
+      for (const c of item.content ?? []) {
+        if (c.type === 'reasoning_text' && typeof c.text === 'string') thinking += c.text;
+      }
+    } else if (item.type === 'message') {
+      for (const c of item.content ?? []) {
+        if (c.type === 'output_text' && typeof c.text === 'string') text += c.text;
+      }
+    } else if (item.type === 'function_call') {
+      toolUses.push({
+        type: 'tool_use',
+        id: item.call_id ?? item.id ?? '',
+        name: item.name ?? '',
+        input: parseToolArguments(item.arguments ?? ''),
+      } as unknown as Anthropic.ContentBlock);
+    }
+  }
+  const content: Anthropic.ContentBlock[] = [];
+  if (thinking.length > 0) {
+    content.push({ type: 'thinking', thinking, signature: '' } as unknown as Anthropic.ContentBlock);
+  }
+  if (text.length > 0) {
+    content.push({ type: 'text', text, citations: null } as unknown as Anthropic.ContentBlock);
+  }
+  content.push(...toolUses);
+  return {
+    id: '',
+    type: 'message',
+    role: 'assistant',
+    model,
+    content,
+    stop_reason: toolUses.length > 0 ? 'tool_use' : 'end_turn',
+    stop_sequence: null,
+    usage: json.usage != null ? mapResponsesUsage(json.usage) : emptyUsage(),
+  } as unknown as Anthropic.Message;
+}
+
+/** Responses usage（input_tokens/output_tokens）→ Anthropic.Usage，复用 Chat 的 mapUsage 语义。 */
+function mapResponsesUsage(usage: OpenAiResponsesUsage): Anthropic.Usage {
+  const shim: OpenAiUsage = {
+    prompt_tokens: usage.input_tokens ?? 0,
+    completion_tokens: usage.output_tokens ?? 0,
+  };
+  const cached = usage.input_tokens_details?.cached_tokens;
+  if (typeof cached === 'number') shim.prompt_tokens_details = { cached_tokens: cached };
+  return mapUsage(shim);
+}
+
+function emptyUsage(): Anthropic.Usage {
+  return {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  } as unknown as Anthropic.Usage;
+}
