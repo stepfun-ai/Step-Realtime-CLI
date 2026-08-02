@@ -35,10 +35,61 @@ describe('markdown 表格渲染', () => {
     const out = stripAnsi(lastFrame() ?? '');
     const lines = out.split('\n').filter((l) => l.includes('│'));
     // 表头与两行数据的列分隔符位置一致（中文按 2 列补齐后对齐）
-    // 表头与两行数据的列分隔符显示列一致（中文按 2 列计算，不能用字符串下标）
     const sepCols = lines.map((l) => displayWidth(l.slice(0, l.indexOf('│'))));
     expect(lines.length).toBeGreaterThanOrEqual(3);
     expect(new Set(sepCols).size).toBe(1);
+  });
+
+  it('无 width 时走自然宽度，不收缩', () => {
+    const md = ['| 列1 | 列2 |', '| --- | --- |', '| 很长很长很长的内容 | 短 |'].join('\n');
+    const { lastFrame } = render(React.createElement(Markdown, { text: md }));
+    const out = stripAnsi(lastFrame() ?? '');
+    const lines = out.split('\n').filter((l) => l.includes('│'));
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(out).toContain('很长很长很长的内容');
+  });
+
+  it('width 充足时保持自然宽度', () => {
+    const md = ['| a | b |', '| --- | --- |', '| 1 | 2 |'].join('\n');
+    const { lastFrame } = render(React.createElement(Markdown, { text: md, width: 120 }));
+    const out = stripAnsi(lastFrame() ?? '');
+    const lines = out.split('\n').filter((l) => l.includes('│'));
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(out).toContain('a');
+    expect(out).toContain('b');
+  });
+
+  it('宽度紧张时列宽按比例收缩', () => {
+    const md = ['| 列1 | 列2 | 列3 |', '| --- | --- | --- |', '| a | b | c |'].join('\n');
+    const { lastFrame } = render(React.createElement(Markdown, { text: md, width: 20 }));
+    const out = stripAnsi(lastFrame() ?? '');
+    const lines = out.split('\n').filter((l) => l.includes('│'));
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(out).toContain('a');
+    expect(out).toContain('b');
+    expect(out).toContain('c');
+  });
+
+  it('极窄终端回退原始 markdown', () => {
+    const md = ['| a | b | c |', '| --- | --- | --- |', '| 1 | 2 | 3 |'].join('\n');
+    const { lastFrame } = render(React.createElement(Markdown, { text: md, width: 5 }));
+    const out = stripAnsi(lastFrame() ?? '');
+    expect(out).toContain('1');
+    expect(out).toContain('2');
+    expect(out).toContain('3');
+    // 窄屏回退时不维持列结构，原始 markdown 文本直接进入普通折行
+    const hasTableSeparator = out.includes('│') || out.includes('┼');
+    expect(hasTableSeparator).toBe(false);
+  });
+
+  it('宽字符列参与宽度分配', () => {
+    const md = ['| 名称 | 值 |', '| --- | --- |', '| 宽度 | abc |'].join('\n');
+    const { lastFrame } = render(React.createElement(Markdown, { text: md, width: 20 }));
+    const out = stripAnsi(lastFrame() ?? '');
+    const lines = out.split('\n').filter((l) => l.includes('│'));
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(out).toContain('宽度');
+    expect(out).toContain('abc');
   });
 });
 
