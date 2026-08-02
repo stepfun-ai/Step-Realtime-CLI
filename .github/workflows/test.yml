@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [step-code-explore]
+  pull_request:
+
+# 同一分支/ PR 上新推送时取消旧的运行，节省额度。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # esbuild 是 onlyBuiltDependencies，冻结安装不会触发其 build 脚本；
+      # typecheck / build(tsc) / test(vitest) 均不依赖 esbuild，故无需 approve-builds。
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Test
+        run: pnpm run test
