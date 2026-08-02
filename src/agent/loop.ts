@@ -16,7 +16,7 @@ import {
 } from './compaction/compact.js';
 import type { AgentEvent } from './events.js';
 import { type LoopHooks, resolveContinuation } from './hooks.js';
-import { type StoredMessage } from './message.js';
+import { type StoredMessage, stored } from './message.js';
 import { buildSettleMessage, notificationIdFor } from './background/notify.js';
 import type { WireEvent } from './wirelog.js';
 import { runTurn } from './runTurn.js';
@@ -188,6 +188,15 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
 
     switch (outcome.stopReason) {
       case 'aborted':
+        messages.push(
+          stored(
+            {
+              role: 'user',
+              content: '用户中断了模型的本次输出。这不是系统错误，请等待用户的下一步指示。',
+            },
+            'injection',
+          ),
+        );
         yield { type: 'aborted' };
         return;
       case 'error':
