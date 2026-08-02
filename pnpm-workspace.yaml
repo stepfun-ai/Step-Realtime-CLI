@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: false
+onlyBuiltDependencies:
+  - esbuild
+verifyDepsBeforeRun: false
