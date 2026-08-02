@@ -8,9 +8,9 @@
 - **pnpm**（包管理）
 - Windows 用户：`bash` 工具优先使用 Git Bash（推荐安装 [Git for Windows](https://git-scm.com/download/win)），未安装时依次回退 WSL、busybox-w32、PowerShell。Git Bash 装在非标准路径时，可把 `bash.exe` 绝对路径设到环境变量 `STEP_SHELL_PATH`。
 
-## 从源码安装
+## 从源码安装（当前推荐）
 
-目前推荐直接 clone `step-code-explore` 分支，它包含 step-code 最新功能迭代；`main` 分支保留稳定快照。
+当前主要安装方式是从 `step-code-explore` 分支 clone 并构建。`step-code` 包尚未注册到 npm 公共 registry，注册完成前请使用此方式。
 
 ```bash
 git clone -b step-code-explore https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -27,7 +27,25 @@ pnpm link --global
 step
 ```
 
+想用稳定分支时手动切换：
+
+```bash
+git checkout main
+pnpm install && pnpm build
+```
+
+## npm 全局安装（v0.1.0 起计划注册）
+
+```bash
+npm install -g step-code
+step --version
+```
+
+> 当前 npm 公共 registry 尚未注册 `step-code` 包，此命令在注册完成后才可用。在此之前请使用上面的源码安装方式。
+
 ## 升级
+
+### 源码安装升级
 
 源码安装即软链接安装，拉取最新代码后重新构建即可，无需重新 link。注意当前工作分支，推荐在 `step-code-explore` 上拉取更新：
 
@@ -38,11 +56,30 @@ pnpm install    # 依赖有变化时
 pnpm build
 ```
 
-## 卸载
+### npm 全局安装升级（v0.1.0 起计划注册）
 
 ```bash
+npm update -g step-code
+```
+
+> 当前 npm 公共 registry 尚未注册 `step-code` 包，此命令在注册完成后才可用。在此之前请使用上面的源码升级方式。
+
+## 卸载
+
+### 源码安装卸载
+
+```bash
+cd Step-Realtime-CLI
 pnpm unlink --global   # 移除全局 step 命令
 ```
+
+### npm 全局安装卸载（v0.1.0 起计划注册）
+
+```bash
+npm uninstall -g step-code
+```
+
+> 当前 npm 公共 registry 尚未注册 `step-code` 包，此命令在注册完成后才可用。在此之前请使用上面的源码卸载方式。
 
 配置、会话记录等数据在 `~/.step-code/`，卸载命令不会动它；要彻底清理手动删除该目录。
 

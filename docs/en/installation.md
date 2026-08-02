@@ -13,20 +13,9 @@
 - **pnpm** (package management)
 - Windows users: the `bash` tool prefers Git Bash (installing [Git for Windows](https://git-scm.com/download/win) is recommended); when it is absent, it falls back to WSL, busybox-w32, and PowerShell in that order. If Git Bash is installed in a non-standard location, set the absolute path of `bash.exe` in the `STEP_SHELL_PATH` environment variable.
 
-## Installing with npm (recommended)
+## Installing from source (recommended)
 
-Since v0.4.0, Step Code is published to the npm public registry. The fastest way to install is a global npm install:
-
-```bash
-npm install -g step-code
-step --version
-```
-
-This does not require cloning or building locally.
-
-## Installing from source
-
-To develop, debug unreleased features, or if npm access is restricted by your network environment, install from source. The current development branch is `step-code-explore`:
+To install Step Code today, clone the `step-code-explore` branch and build from source. This is the current main installation path while the npm package registration is still pending.
 
 ```bash
 git clone -b step-code-explore https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -50,13 +39,18 @@ git checkout main
 pnpm install && pnpm build
 ```
 
-## Upgrading
+## Installing with npm (planned for v0.1.0)
 
-### npm install
+Once `step-code` is published to the npm public registry, a global npm install will be the fastest way:
 
 ```bash
-npm update -g step-code
+npm install -g step-code
+step --version
 ```
+
+> The npm package is not yet registered. Until it is, please use the source install above.
+
+## Upgrading
 
 ### Source install
 
@@ -70,13 +64,17 @@ pnpm install    # when dependencies have changed
 pnpm build
 ```
 
-## Uninstalling
+### npm install (planned for v0.1.0)
 
-### npm install
+Once the package is published to npm:
 
 ```bash
-npm uninstall -g step-code
+npm update -g step-code
 ```
+
+> The npm package is not yet registered. Until it is, use the source upgrade path above.
+
+## Uninstalling
 
 ### Source install
 
@@ -84,6 +82,16 @@ npm uninstall -g step-code
 cd Step-Realtime-CLI
 pnpm unlink --global   # removes the global step command
 ```
+
+### npm install (planned for v0.1.0)
+
+Once the package is published to npm:
+
+```bash
+npm uninstall -g step-code
+```
+
+> The npm package is not yet registered. Until it is, use the source uninstall path above.
 
 Configuration, session records, and other data live in `~/.step-code/`, and the uninstall command does not touch them; delete that directory manually for a full cleanup.
 
