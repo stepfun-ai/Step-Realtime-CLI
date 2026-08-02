@@ -2722,6 +2722,7 @@ export function App({
   const liveMaxRows = budget.liveMaxRows;
   // 全屏弹层（Ctrl+O 查看器 / /tasks 浏览器）打开时 chrome 与输入槽整体让位
   const overlayOpen = expandViewerOpen || tasksViewerOpen;
+  const termWidth = stdout?.columns;
 
   return (
     <Box flexDirection="column">
@@ -2733,7 +2734,7 @@ export function App({
             // Static 恒折叠渲染：ink <Static> append-only，条目进 scrollback 时渲染结果即冻结，
             // 历史恒紧凑。完整工具输出不再走全局展开态，由 Ctrl+O 全屏查看器（ExpandViewer）
             // 在动态区位置单独铺开，不触碰 scrollback。
-            <MessageItem key={i} item={entry} expanded={false} />
+            <MessageItem key={i} item={entry} expanded={false} termWidth={termWidth} />
           )
         }
       </Static>
@@ -2747,6 +2748,7 @@ export function App({
           items={items}
           maxRows={stdout?.rows !== undefined ? Math.max(stdout.rows - STATUS_BAR_ROWS, 3) : undefined}
           onClose={() => setExpandViewerOpen(false)}
+          termWidth={termWidth}
         />
       ) : tasksViewerOpen ? (
         <TasksViewer
@@ -2755,7 +2757,7 @@ export function App({
           onClose={() => setTasksViewerOpen(false)}
         />
       ) : (
-        <MessageList items={liveItems} busy={busy} maxRows={liveMaxRows} />
+        <MessageList items={liveItems} busy={busy} maxRows={liveMaxRows} termWidth={termWidth} />
       )}
       {!overlayOpen && budget.thinkingRows > 0 ? <ThinkingPreview text={thinkingPreview} maxLines={budget.thinkingRows - 1} /> : null}
       {!overlayOpen ? <AgentGroup agents={subagents} /> : null}

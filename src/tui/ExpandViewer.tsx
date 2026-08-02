@@ -85,11 +85,13 @@ export function ExpandViewer({
   items,
   maxRows,
   onClose,
+  termWidth,
 }: {
   items: readonly DisplayItem[];
   /** 可用行高（含标题栏与底栏，调用方给）；undefined = 不窗口化（非 TTY / 测试环境）。 */
   maxRows?: number;
   onClose: () => void;
+  termWidth?: number;
 }): React.ReactElement {
   const groups = collectExpandable(items);
   const entryCount = groups.reduce((n, g) => n + g.entries.length, 0);
@@ -178,7 +180,7 @@ export function ExpandViewer({
         })}
       </Text>
       {g.entries.map((entry, ei) => (
-        <MessageItem key={entry.kind === 'tool' ? entry.id : `thinking-${ei}`} item={entry} expanded={true} />
+        <MessageItem key={entry.kind === 'tool' ? entry.id : `thinking-${ei}`} item={entry} expanded={true} termWidth={termWidth} />
       ))}
     </Box>
   ));

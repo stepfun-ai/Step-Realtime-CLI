@@ -113,11 +113,13 @@ export function MessageItem({
   item,
   expanded,
   transient = false,
+  termWidth,
 }: {
   item: DisplayItem;
   expanded: boolean;
   /** 流式中的最后一条 assistant 用 transient（关语法高亮，避免闪烁）；完成后上高亮。 */
   transient?: boolean;
+  termWidth?: number;
 }): React.ReactElement {
   switch (item.kind) {
     case 'user':
@@ -137,7 +139,7 @@ export function MessageItem({
     case 'assistant':
       return (
         <Box marginTop={1}>
-          <Markdown text={item.text} transient={transient} />
+          <Markdown text={item.text} transient={transient} width={termWidth} />
         </Box>
       );
     case 'thinking': {
@@ -191,18 +193,20 @@ export function MessageList({
   items,
   busy = false,
   maxRows,
+  termWidth,
 }: {
   items: DisplayItem[];
   busy?: boolean;
   /** 动态区高度预算行数；undefined = 不窗口化（非 TTY / 测试环境）。 */
   maxRows?: number;
+  termWidth?: number;
 }): React.ReactElement {
   const lastAssistantIdx = (() => {
     for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === 'assistant') return i;
     return -1;
   })();
   const body = items.map((item, i) => (
-    <MessageItem key={i} item={item} expanded={false} transient={busy && i === lastAssistantIdx} />
+    <MessageItem key={i} item={item} expanded={false} transient={busy && i === lastAssistantIdx} termWidth={termWidth} />
   ));
   if (maxRows === undefined) {
     return <Box flexDirection="column">{body}</Box>;
