@@ -6,19 +6,15 @@ when_to_use: 用户想安装、构建、升级、卸载 Step Code，或安装过
 
 本 skill 只讲一件事：把 Step Code 装到能跑起来。功能怎么用不在这里，装完见仓库 `docs/`（中文 `docs/zh/`、英文 `docs/en/`）。
 
-> **当前推荐安装方式**：npm 全局安装（v0.4.0 起已发布到 npm 公共 registry）。
-> ```bash
-> npm install -g step-code
-> step --version
-> ```
-> 一条命令即可使用，无需本地构建。
-
-> **源码安装（开发者或想使用最新未发版功能）**：Step Code 主仓库的 `step-code-explore` 分支。
+> **当前推荐安装方式**：源码安装（当前主要方式）。Step Code 主仓库的 `step-code-explore` 分支。
 > ```bash
 > git clone -b step-code-explore https://github.com/li-xiu-qi/Step-Realtime-CLI.git
 > cd Step-Realtime-CLI
 > pnpm install && pnpm build && pnpm link --global
 > ```
+> 四步完成后 `step` 命令全局可用。
+
+> **npm 全局安装（后续方式）**：v0.1.0 起计划注册到 npm 公共 registry，注册完成后可执行 `npm install -g step-code` 一键安装。当前 npm 尚未注册 `step-code` 包，在此之前请使用源码安装。
 > 这个分支汇聚最新 step-code 功能迭代，想提前用未发版功能时用它。`main` 分支保留稳定快照，需要时再切。
 
 > **怎么让你的 agent 用上它**：本目录不在各家 CLI 的自动扫描路径里（刻意如此，避免与工具目录冲突）。两种用法——把 `skills/step-code-install/` 整个拷进你 agent 的技能目录（Claude Code 与本项目的兼容目录是 `.agents/skills/`，本项目原生目录是 `.step-code/skills/`）；或者直接把本文件路径丢给 agent 让它读。
@@ -40,18 +36,7 @@ Node 版本不够时，用版本管理器装 22（如 fnm、nvm、Volta），不
 
 ## 安装
 
-### 推荐：npm 全局安装（v0.4.0 起已发布）
-
-```bash
-npm install -g step-code
-step --version
-```
-
-一条命令即可，不需要本地 clone 和构建。npm 全局装完后，`step` 命令直接可用。
-
-### 备选：源码安装
-
-想参与开发、调试最新未发版功能，或 npm 安装受网络环境限制时，用源码安装。日常优先从 `step-code-explore` 分支拉取：
+### 推荐：源码安装（当前主要方式）
 
 ```bash
 git clone -b step-code-explore https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -62,6 +47,15 @@ pnpm link --global
 ```
 
 四步作用：`git clone -b step-code-explore` 拉取当前开发分支；`pnpm install` 装依赖；`pnpm build` 执行 `tsc -p tsconfig.json` 编译到 `dist/`；`pnpm link --global` 把 `step` 命令软链接到全局，之后任意目录可用。
+
+### 后续：npm 全局安装（v0.1.0 起计划注册 npm 公共 registry）
+
+```bash
+npm install -g step-code
+step --version
+```
+
+> 当前 npm 公共 registry 尚未注册 `step-code` 包，此命令在注册完成后才可用。在此之前请使用上面的源码安装方式。
 
 想用稳定分支时手动切换：
 
