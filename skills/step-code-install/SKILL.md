@@ -93,7 +93,7 @@ tarball 内含预编译的 `dist/`，`npm i -g <url>` 会解包并链接 `bin.st
 
 ### 从源码安装
 
-当前分支 `step-code-explore` 仍在快速迭代，Release 不一定追平最新代码。需要最新特性时可以从源码构建：
+要改代码、跑测试、参与开发时走这条。它给的是完整开发环境，`step` 命令来自软链接，改完重新构建即时生效：
 
 ```bash
 git clone -b step-code-explore https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -222,7 +222,7 @@ pnpm unlink --global   # 移除全局 step 命令
 
 **构建报类型错误**：先 `pnpm install` 确保依赖完整，再 `pnpm build`；仍失败跑 `pnpm typecheck` 看具体位置。
 
-**SEA 可执行文件报错找不到模块**：产物是把运行时与代码注入同一个文件的单文件形态，不依赖任何同级文件。出现这类报错说明文件在下载或改名过程中被截断，重新下载并用附带的 `.sha256` 校验。
+**单文件可执行报错找不到模块**：产物是把运行时与代码注入同一个文件的单文件形态，不依赖任何同级文件。出现这类报错说明文件在下载或改名过程中被截断，重新下载并用附带的 `.sha256` 校验。
 
 **Windows 下载后被 SmartScreen 拦**：产物未做代码签名，SmartScreen 会对下载量低的可执行文件给出提示。可先用 `.sha256` 核对文件完整性，再在提示里选择继续运行。
 
