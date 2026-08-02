@@ -360,6 +360,9 @@ export function App({
   // 思考完成后落成 kind:'thinking' 定稿条目并清空（流式只进状态行，完成才落历史）。
   const thinkingRef = useRef('');
   const [thinkingPreview, setThinkingPreview] = useState('');
+  // 思考块是否在途（thinking_start 起、thinking_end 或任何非思考事件止）。
+  // 与 thinkingPreview 分开：无痕思考（只吐 signature）预览恒为空，靠这个标志显示「思考中」。
+  const [thinkingActive, setThinkingActive] = useState(false);
   // 输入框命令历史：按工作目录隔离，启动全量载入内存，提交时 append 落盘。
   const inputHistoryStore = useRef<InputHistoryStore>(new InputHistoryStore(ctx.cwd));
   const [inputHistory, setInputHistory] = useState<string[]>(() => inputHistoryStore.current.load());
@@ -497,11 +500,13 @@ export function App({
   }, []);
 
   // busy 上升沿：记本回合起始时间 + 清零本轮产出字符数（供 WorkingStatus 显示 elapsed/token）。
+  // 顺带复位思考指示：上轮若因非事件路径收尾（斜杠命令等）残留 active，新一轮不该继续显示「思考中」。
   useEffect(() => {
     if (busy) {
       setTurnStartAt(Date.now());
       turnOutputCharsRef.current = 0;
       setTurnOutputChars(0);
+      setThinkingActive(false);
     }
   }, [busy]);
 
@@ -995,8 +1000,16 @@ export function App({
   });
 
   const applyEvent = useCallback((ev: AgentEvent) => {
+    // 思考块开始：只点亮状态行的「思考中」，不进历史区。
+    // 无痕思考（模型只吐 signature、无 thinking_delta）全程仅有这一个信号。
+    if (ev.type === 'thinking_start') {
+      setThinkingActive(true);
+      return;
+    }
     // thinking 流式：只累积进状态行预览，不进历史区
     if (ev.type === 'thinking_delta') {
+      // 也在此点亮：openai / openai_responses 协议只合成 delta、不产边界事件
+      setThinkingActive(true);
       thinkingRef.current += ev.text;
       setThinkingPreview(thinkingRef.current);
       // 思考也消耗 output 预算，计入本轮产出估算（WorkingStatus 的「↓ N tokens」）
@@ -1004,13 +1017,16 @@ export function App({
       setTurnOutputChars(turnOutputCharsRef.current);
       return;
     }
-    // 任何非 thinking 事件到来 = 思考块已结束：落成定稿条目（暗色斜体块）
+    // 思考块结束事件、或任何非思考事件到来 = 思考块已结束：收起「思考中」，
+    // 已累积的思考文本落成定稿条目（暗色斜体块）
+    setThinkingActive(false);
     if (thinkingRef.current !== '') {
       const thinkingText = thinkingRef.current;
       thinkingRef.current = '';
       setThinkingPreview('');
       setItems((prev) => [...prev, { kind: 'thinking', text: thinkingText }]);
     }
+    if (ev.type === 'thinking_end') return;
     // workflow 工具调用跟踪：start 入栈 / end 出栈，供 onWorkflowStep 与 wf- 子 agent 事件定位面板
     if (ev.type === 'tool_start' && ev.name === 'workflow') activeWorkflowRef.current.push(ev.id);
     if (ev.type === 'tool_end' && ev.name === 'workflow') {
@@ -2688,9 +2704,14 @@ export function App({
         : 0,
     // 图片横幅：单行
     imageRows: imageCount > 0 ? 1 : 0,
-    // 思考流式预览：标题 1 + 尾部 ≤THINKING_PREVIEW_LINES 行（各行 wrap=truncate）
+    // 思考流式预览：标题 1 + 尾部 ≤THINKING_PREVIEW_LINES 行（各行 wrap=truncate）。
+    // 思考在途但无可见文本（无痕思考）时只有标题 1 行——「思考中…」本身就是要传达的信息。
     thinkingRows:
-      thinkingPreview !== '' ? 1 + Math.min(thinkingPreview.split('\n').length, THINKING_PREVIEW_LINES) : 0,
+      thinkingPreview !== ''
+        ? 1 + Math.min(thinkingPreview.split('\n').length, THINKING_PREVIEW_LINES)
+        : thinkingActive
+          ? 1
+          : 0,
     // WorkingStatus 忙碌态状态行：margin 1 + spinner 行 1 + tip 行 1（busy 且已记起始时间才显示）
     workingRows: busy && turnStartAt > 0 ? 3 : 0,
   });
