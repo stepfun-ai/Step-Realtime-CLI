@@ -3,23 +3,69 @@ import type { SubagentResult } from '../agent/subagent/types.js';
 import { fail, ok, type ToolContext, type ToolDef } from './types.js';
 
 const schema = z.object({
-  description: z.string().optional().describe('子任务简述（3-5 词）。'),
-  prompt: z.string().optional().describe('完整任务描述（背景写全，子 agent 看不到父上下文）。'),
+  description: z.string().optional().describe('子任务简述（3-5 词），显示在用户界面的进度卡片上。'),
+  prompt: z
+    .string()
+    .optional()
+    .describe('完整任务描述。子 agent 看不到父上下文，所有必要背景都要写进来。'),
   subagent_type: z
     .string()
     .optional()
-    .describe('子 agent 类型：general（全能）或 explore（只读调查），省略默认 general。'),
-  run_in_background: z.boolean().optional().describe('后台异步执行，立即返回 task_id。'),
+    .describe(
+      '子 agent 角色名。可选角色见 system prompt 的「可派生的子 agent 角色」清单；省略默认 general。',
+    ),
+  run_in_background: z
+    .boolean()
+    .optional()
+    .describe(
+      '后台异步执行，立即返回 task_id，终态自动通知。只在你还有别的活要干、且不需要它的结果就能继续时才用。' +
+        '不要后台派生后立刻 task_output 轮询或空等——那样只是白白阻塞回合，这种情况直接用前台。',
+    ),
   resume: z
     .string()
     .optional()
     .describe('恢复指定 id 的子会话：从历史断点续跑（prompt 作为新指令追加）。与派生新子 agent 二选一；目标会话正在运行时会被拒绝。'),
 });
 
+/**
+ * 结构化结果头：让父 agent 能可靠区分「做完了」与「失败但有部分产出」，resume 决策有据可依。
+ * 用纯文本 `key: value` 而非 XML 包裹——工具结果是纯文本通道，标签会和正文里的代码块混淆。
+ */
+function formatSubagentResult(
+  subagentType: string,
+  status: 'done' | 'error',
+  summary: string,
+  sessionId: string | undefined,
+): string {
+  const head =
+    sessionId !== undefined
+      ? `subagent: ${subagentType} | status: ${status} | session: ${sessionId}`
+      : `subagent: ${subagentType} | status: ${status}`;
+  const tail =
+    status === 'error' && sessionId !== undefined
+      ? `\n\n（需要在它已有工作基础上继续时，用 spawn_agent 的 resume="${sessionId}" 续跑）`
+      : '';
+  return `${head}\n\n${summary}${tail}`;
+}
+
 export const spawnAgentTool: ToolDef<z.infer<typeof schema>> = {
   name: 'spawn_agent',
   description:
-    '派生一个子 agent 处理子任务（全新上下文、受限工具、只回摘要）。subagent_type 选 general（全能）或 explore（只读调查）。run_in_background=true 后台异步。返回串会带上子会话 id，需要子 agent 在已有工作上继续时用 resume=<id> 续跑（不新建会话、不占派生配额）。一次要并行几个独立子任务，可在同一轮里发多个 spawn_agent（全为只读 explore 时并行执行）；带依赖的多阶段编排或大批量同构 fan-out 请改用 workflow 工具。',
+    '派生一个子 agent 处理子任务（全新上下文、受限工具、只回摘要）。委派同时把大量中间过程（文件原文、搜索结果）挡在你的上下文之外——你拿回的是结论，不是一堆原始输出。\n' +
+    '可选角色见 system prompt 的「可派生的子 agent 角色」清单，subagent_type 省略时用 general。\n' +
+    '\n' +
+    '写 prompt：\n' +
+    '- 子 agent 零上下文，没看过这段对话。像给刚进门的同事交接一样写：目标是什么、你已经知道什么、具体要它做什么。\n' +
+    '- 查找类任务（读某个文件、跑某条命令）：把准确路径或命令写进 prompt，别让它去搜你已经知道的东西。\n' +
+    '- 调查类任务（搞清楚 X、查为什么 Y）：给问题，别给规定步骤——前提一旦不成立，预设步骤就成了累赘。\n' +
+    '- 不要委派理解。别写「基于你的调研，把它实现掉」这类句式，那是把本该你做的综合推给了子 agent。任务依赖某个文件路径或行号时，自己先定位好再写进 prompt。\n' +
+    '\n' +
+    '不要派生的情况：路径已知的单文件读取、2-3 个文件内的定向搜索、一两步就能做完的事——自己做更快。委派有上下文交接成本，任务够重才划算。\n' +
+    '\n' +
+    '派生之后：那块范围就交给它了。不要并行重做它正在做的搜索和读取，也不要中途放弃自己接管——两者都会抵消委派本身省下的上下文。\n' +
+    '\n' +
+    '返回串带子会话 id，需要在它已有工作基础上继续时用 resume=<id> 续跑（不新建会话、不占派生配额）。\n' +
+    '一次要并行几个独立子任务，在同一轮里发多个 spawn_agent（全为只读 explore 时并行执行）；带依赖的多阶段编排或大批量同构 fan-out 改用 workflow 工具。',
   schema,
   // 只读 explore 无本地副作用（可并行）；general 可写必须独占（自然串行）
   access: (input) => ((input.subagent_type ?? 'general') === 'explore' ? { kind: 'none' } : { kind: 'all' }),
@@ -61,13 +107,13 @@ export const spawnAgentTool: ToolDef<z.infer<typeof schema>> = {
 
     const result = await runForegroundSubagent(input, ctx, subagentType, prompt);
     // cause 透传给调度层：429 限流失败时父侧据此重排队尾（第二道防线）
-    if (result.isError) return { ...fail(result.summary), cause: result.cause };
-    // 返回串带上子会话 id：模型后续可用 resume 参数在同一子会话上续跑
-    return ok(
-      result.sessionId !== undefined
-        ? `${result.summary}\n\n（子会话 id：${result.sessionId}，需要在其工作基础上继续时用 resume 参数续跑）`
-        : result.summary,
-    );
+    if (result.isError) {
+      return {
+        ...fail(formatSubagentResult(subagentType, 'error', result.summary, result.sessionId)),
+        cause: result.cause,
+      };
+    }
+    return ok(formatSubagentResult(subagentType, 'done', result.summary, result.sessionId));
   },
 };
 

@@ -15,6 +15,7 @@ import { stored, type StoredMessage } from '../../src/agent/message.js';
 import { parseSkillMd, type SkillRegistry } from '../../src/skill/registry.js';
 import { SessionStore } from '../../src/session/store.js';
 import { spawnAgentTool } from '../../src/tools/spawnAgent.js';
+import { subagentListing } from '../../src/agent/systemPrompt.js';
 import { collect, makeFakeProvider, textBlock, toolUseBlock } from '../helpers/fakeProvider.js';
 import { runAgent } from '../../src/agent/loop.js';
 
@@ -428,7 +429,8 @@ describe('spawn_agent 工具', () => {
       },
     );
     expect(r.isError).toBe(false);
-    expect(r.content).toBe('done:explore');
+    // 结构化结果头 + 原样 summary 正文（无 sessionId 时头部省略 session 段）
+    expect(r.content).toBe('subagent: explore | status: done\n\ndone:explore');
   });
 
   it('description 透传到 runSubagent 请求（进度卡片短标签的数据源）', async () => {
@@ -1037,7 +1039,7 @@ describe('前台子 agent 的转后台（Ctrl+B detach）', () => {
       },
     );
     expect(r.isError).toBe(false);
-    expect(r.content).toBe('ok');
+    expect(r.content).toBe('subagent: general | status: done\n\nok');
     expect(mgr.list()).toEqual([]); // 没有留下任务
   });
 
@@ -1187,5 +1189,133 @@ describe('F.6 skill 激活计数器随子会话持久化', () => {
     expect(r2.isError).toBe(false);
     // 本轮未再激活 skill：计数原样带回（若被 resume 重置会读出 0 之外的错误基线）
     expect(d.subagentStore.loadSnapshot(d.cwd, r1.sessionId!)!.skillActivations).toBe(3);
+  });
+});
+
+describe('角色定义的 whenToUse 字段', () => {
+  it('内置 general / explore 都带 whenToUse（供主 agent 选型）', () => {
+    const reg = buildAgentRegistry(mkdtempSync(join(tmpdir(), 'stepcode-empty-')));
+    expect(reg.get('general')!.whenToUse).toBeTruthy();
+    expect(reg.get('explore')!.whenToUse).toBeTruthy();
+  });
+
+  it('markdown frontmatter 的 whenToUse 驼峰写法可解析', () => {
+    const def = parseAgentMarkdown(
+      `---\nname: r\ndescription: d\nwhenToUse: 需要独立复核时用它\n---\n${'正文'.repeat(20)}`,
+      'r',
+    );
+    expect(def!.whenToUse).toBe('需要独立复核时用它');
+  });
+
+  it('markdown frontmatter 的 when_to_use 蛇形写法同样可解析（与 skill 命名对齐）', () => {
+    const def = parseAgentMarkdown(
+      `---\nname: r\ndescription: d\nwhen_to_use: 蛇形也认\n---\n${'正文'.repeat(20)}`,
+      'r',
+    );
+    expect(def!.whenToUse).toBe('蛇形也认');
+  });
+
+  it('未写 whenToUse 时为 undefined（存量自定义 agent 不因新字段失效）', () => {
+    const def = parseAgentMarkdown(
+      `---\nname: r\ndescription: d\n---\n${'正文'.repeat(20)}`,
+      'r',
+    );
+    expect(def).not.toBeNull();
+    expect(def!.whenToUse).toBeUndefined();
+  });
+});
+
+describe('subagentListing 角色清单', () => {
+  it('列出全部角色（含内置 general / explore），不再只列自定义', () => {
+    const out = subagentListing([
+      { name: 'general', description: '通用', whenToUse: '要动手时' },
+      { name: 'explore', description: '只读', whenToUse: '要调查时' },
+      { name: 'reviewer', description: '复核', whenToUse: '要复核时' },
+    ]);
+    expect(out).toContain('general');
+    expect(out).toContain('explore');
+    expect(out).toContain('reviewer');
+  });
+
+  it('whenToUse 拼进清单；缺省时只渲染 description', () => {
+    const out = subagentListing([
+      { name: 'a', description: '甲角色', whenToUse: '甲的时机' },
+      { name: 'b', description: '乙角色' },
+    ]);
+    expect(out).toContain('- a：甲角色 何时用：甲的时机');
+    expect(out).toContain('- b：乙角色');
+    expect(out).not.toContain('- b：乙角色 何时用');
+  });
+
+  it('空注册表返回空串（不产出只有标题的空段）', () => {
+    expect(subagentListing([])).toBe('');
+  });
+
+  it('超预算先压缩描述：丢 whenToUse、description 只留首句', () => {
+    const roles = Array.from({ length: 8 }, (_, i) => ({
+      name: `role${String(i)}`,
+      description: `第${String(i)}个角色。后面还有很长的补充说明用来撑爆预算${'补'.repeat(40)}`,
+      whenToUse: `时机${String(i)}${'详'.repeat(40)}`,
+    }));
+    const out = subagentListing(roles, 600);
+    expect(out).not.toContain('何时用'); // 压缩档丢掉 whenToUse
+    expect(out).toContain('第0个角色'); // 首句保留
+    expect(out).not.toContain('补补补'); // 首句之后的内容被截
+  });
+
+  it('压缩后仍超预算：按预算截断并注明省略条数', () => {
+    const roles = Array.from({ length: 30 }, (_, i) => ({
+      name: `role${String(i)}`,
+      description: `这是第${String(i)}个角色的说明文字用来占预算`,
+    }));
+    const out = subagentListing(roles, 400);
+    expect(out).toMatch(/另有 \d+ 个角色因篇幅省略/);
+    expect(out.length).toBeLessThanOrEqual(400);
+  });
+});
+
+describe('子 agent 结果结构化回灌', () => {
+  it('成功：头部含角色、status done 与子会话 id，正文原样保留', async () => {
+    const r = await spawnAgentTool.execute(
+      { description: 'd', prompt: 'p', subagent_type: 'explore' },
+      {
+        cwd: process.cwd(),
+        depth: 0,
+        runSubagent: async () => ({ summary: '调查结论正文', isError: false, sessionId: 'sess-1' }),
+      },
+    );
+    expect(r.isError).toBe(false);
+    expect(r.content).toBe(
+      'subagent: explore | status: done | session: sess-1\n\n调查结论正文',
+    );
+  });
+
+  it('失败：status error 且尾部给出 resume 提示（父侧据此决定是否续跑）', async () => {
+    const r = await spawnAgentTool.execute(
+      { description: 'd', prompt: 'p', subagent_type: 'general' },
+      {
+        cwd: process.cwd(),
+        depth: 0,
+        runSubagent: async () => ({ summary: '跑到一半失败了', isError: true, sessionId: 'sess-2' }),
+      },
+    );
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('subagent: general | status: error | session: sess-2');
+    expect(r.content).toContain('跑到一半失败了');
+    expect(r.content).toContain('resume="sess-2"');
+  });
+
+  it('无 sessionId（起步前被拒）：头部省略 session 段，也不给 resume 提示', async () => {
+    const r = await spawnAgentTool.execute(
+      { description: 'd', prompt: 'p', subagent_type: 'general' },
+      {
+        cwd: process.cwd(),
+        depth: 0,
+        runSubagent: async () => ({ summary: '未知子 agent 类型', isError: true }),
+      },
+    );
+    expect(r.isError).toBe(true);
+    expect(r.content).toBe('subagent: general | status: error\n\n未知子 agent 类型');
+    expect(r.content).not.toContain('resume=');
   });
 });
