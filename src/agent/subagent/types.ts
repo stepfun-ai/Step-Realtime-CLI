@@ -1,8 +1,14 @@
 /** 子 agent 角色定义。来源：内置代码 + 用户/项目的 markdown（YAML frontmatter）。 */
 export interface AgentDefinition {
   name: string;
-  /** 供主 agent 自动选型的说明。 */
+  /** 供主 agent 自动选型的说明：这个角色「是什么」。 */
   description: string;
+  /**
+   * 供主 agent 自动选型的说明：「什么时候该选它」。与 description 分工——
+   * 前者答「是什么」，后者答「何时用」，两者都进 system prompt 的角色清单。
+   * 可选：已有的自定义 agent markdown 没写这个字段，不能因此失效。
+   */
+  whenToUse?: string;
   /** 工具名白名单；undefined = 该角色可用全部工具（运行时会再强制剔除 spawn_agent）。 */
   tools?: string[];
   /** 模型覆盖；undefined = 继承父 agent 的模型。 */
