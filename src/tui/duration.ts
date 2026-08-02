@@ -1,5 +1,5 @@
 /**
- * 子 agent 卡片用的墙钟时长格式（对齐 某竞品CLI 卡片口径）：
+ * 子 agent 卡片用的墙钟时长格式：
  * <60s → "45s"；<60m → "2m 28s"（分钟级带秒）；更长 → "1h 3m"。
  * 与 formatElapsed（分钟级不带秒，goal 徽标/状态栏共用）刻意分开，互不影响。
  */
@@ -14,7 +14,7 @@ export function formatDuration(ms: number): string {
 
 /**
  * 千进制紧凑计数（1000 进制：107k / 1.2M），StatusBar context 显示与子 agent
- * 卡片 tok 段共用——与状态栏同口径比与 某竞品（1024 进制）逐字一致重要。
+ * 卡片 tok 段共用——两处必须同口径，宁可与 1024 进制的习惯写法不同，也不能自相矛盾。
  */
 export function formatCount(n: number): string {
   if (n >= 1_000_000) return `${trimZero(n / 1_000_000)}M`;
