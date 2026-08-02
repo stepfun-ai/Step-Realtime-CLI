@@ -26,6 +26,7 @@ import { subagentListing } from '../agent/systemPrompt.js';
 import { PROVIDER_PRESETS, resolveModelEntry, saveDefaultModel, saveLanguage } from '../config/config.js';
 import { getLocale, setLocale, t, type Locale } from '../i18n.js';
 import { createProvider } from '../provider/factory.js';
+import { resolveCompactionBinding } from '../provider/compaction.js';
 import type { ChatProvider } from '../provider/types.js';
 import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload } from './reload.js';
 import type { ToolContext } from '../tools/types.js';
@@ -275,6 +276,11 @@ export function App({
   // 逐轮现取派读取点（submit/runAgent 参数组装、/model /think /provider 各 case、选择器候选、
   // settle 回调的 background 开关）全部经 configRef.current 取，下一轮请求即按新配置生效。
   const configRef = useRef(config);
+  // 压缩摘要绑定（`[compaction] model`）：命中 [models.<别名>] 时按别名渠道建独立 provider，
+  // 摘要请求打该渠道自己的端点与密钥（跨渠道大小模型协同）。/reload 后按新配置重解。
+  // provider 实例按别名缓存，避免每轮组装参数时重建 SDK 客户端。
+  const compactionProviderCache = useRef(new Map<string, ChatProvider>());
+  const compactionBindingRef = useRef(resolveCompactionBinding(config, compactionProviderCache.current));
   // 当前模型的别名绑定：/model 别名切换成功记别名、裸 id 切换置 null（/provider 切换亦置 null——
   // 别名绑定已断）；/resume 经 applyModelAlias 反查路径同步维护。/reload 据此决定 provider 重建策略。
   const currentModelAliasRef = useRef<string | null>(
@@ -1850,11 +1856,11 @@ export function App({
           void (async () => {
             try {
               const compacted = await fullCompact(
-                providerRef.current,
+                compactionBindingRef.current.provider ?? providerRef.current,
                 history.current,
                 6,
                 todos.current,
-                configRef.current.compaction.model,
+                compactionBindingRef.current.model,
                 {
                   maxTokens: configRef.current.compaction.userMessageMaxTokens,
                   headTokens: configRef.current.compaction.userMessageHeadTokens,
@@ -2040,6 +2046,10 @@ export function App({
           // 且无论 provider 重建与否都要刷（capabilities 不在 providerSlice 内，unchanged 短路跳不过它）。
           ctx.capabilities = resolveCapabilitiesOnReload(next, currentModelAliasRef.current);
           ctx.searchConfig = next.search; // [search] 段热重载
+          // 压缩摘要绑定热重载：[compaction] model 或它指向的别名/渠道改动后，下一次压缩即按新绑定走。
+          // 缓存清空是必须的：别名名字没变但其 model/base_url/api_key 改了时，旧实例仍打旧端点。
+          compactionProviderCache.current.clear();
+          compactionBindingRef.current = resolveCompactionBinding(next, compactionProviderCache.current);
           // provider 重建决策（设计 3.3 四路）：别名仍在→按新 resolved 重建；别名被删/无法解析/重建失败→沿用旧 provider
           const plan = planProviderReload(prev, next, modelRef.current, currentModelAliasRef.current);
           let providerNote = '';
@@ -2231,7 +2241,8 @@ export function App({
           triggerRatio: configRef.current.compaction.triggerRatio,
           reservedTokens: configRef.current.compaction.reservedTokens,
         },
-        compactionModel: configRef.current.compaction.model,
+        compactionModel: compactionBindingRef.current.model,
+        compactionProvider: compactionBindingRef.current.provider,
         userMessageBudget: {
           maxTokens: configRef.current.compaction.userMessageMaxTokens,
           headTokens: configRef.current.compaction.userMessageHeadTokens,
@@ -2334,7 +2345,8 @@ export function App({
             triggerRatio: configRef.current.compaction.triggerRatio,
             reservedTokens: configRef.current.compaction.reservedTokens,
           },
-          compactionModel: configRef.current.compaction.model,
+          compactionModel: compactionBindingRef.current.model,
+          compactionProvider: compactionBindingRef.current.provider,
           userMessageBudget: {
             maxTokens: configRef.current.compaction.userMessageMaxTokens,
             headTokens: configRef.current.compaction.userMessageHeadTokens,

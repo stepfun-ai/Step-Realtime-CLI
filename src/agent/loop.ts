@@ -53,6 +53,11 @@ export interface RunAgentOptions {
   /** 压缩摘要专用模型覆盖（大小模型协同）。省略 = 用 provider 默认模型压缩。 */
   compactionModel?: string;
   /**
+   * 压缩摘要专用 provider（`[compaction] model` 指向的别名跨渠道时由组合根构造）。
+   * 省略 = 用主会话 provider（同渠道换模型或未配置的情形）。
+   */
+  compactionProvider?: ChatProvider;
+  /**
    * 用户原话保真预算覆盖（压缩时在摘要之外单独保留的用户原始消息）。
    * 省略 = 用 compact.ts 的默认值（20K / 头 2K）。溢出重试时会在此基础上再按收缩比缩小。
    */
@@ -100,6 +105,7 @@ async function maybeCompact(
   compactionModel?: string,
   userMessageBudget?: { maxTokens?: number; headTokens?: number },
   onWireEvent?: (event: WireEvent) => void,
+  compactionProvider?: ChatProvider,
 ): Promise<boolean> {
   if (!shouldCompact(usedTokens, thresholds)) return false;
   let acted = false;
@@ -117,7 +123,7 @@ async function maybeCompact(
   // micro 后无新 usage，用字符估算重判是否仍需 full
   if (shouldCompact(estimateTokens(messages), thresholds)) {
     const compacted = await fullCompact(
-      provider,
+      compactionProvider ?? provider,
       messages,
       KEEP_RECENT,
       todos,
@@ -227,7 +233,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
           acted = true;
         }
         const compacted = await fullCompact(
-          provider,
+          opts.compactionProvider ?? provider,
           messages,
           keepRecent,
           opts.todos,
@@ -309,7 +315,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
             outcome.usage !== undefined
               ? usageTotalTokens(outcome.usage) + estimateTokens(messages.slice(lenBefore))
               : estimateTokens(messages);
-          if (await maybeCompact(provider, messages, used, compaction, opts.todos, opts.compactionModel, opts.userMessageBudget, opts.onWireEvent)) {
+          if (await maybeCompact(provider, messages, used, compaction, opts.todos, opts.compactionModel, opts.userMessageBudget, opts.onWireEvent, opts.compactionProvider)) {
             yield { type: 'notice', message: t('loop.autoCompacted') };
             // 压缩后上下文占用已回落，但下一条真实 usage 要等下一回合 API 响应才到，
             // 期间状态栏会一直停在压缩前的旧值（实测：用户以为压缩没生效）。
