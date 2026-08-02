@@ -218,6 +218,7 @@ What D in the panel deletes is a custom channel in config.toml: after confirmati
 The Step 3.x family are always-thinking models, so responses come with a reasoning process. The TUI renders it unconditionally:
 
 - **During streaming**: the status line shows "Thinking…" plus a scrolling preview of the last few lines, dimmed, and it does not enter the formal conversation stream.
+- **When there is no visible thinking text**: some models return only a thinking signature with no thinking body. In that case the status line shows a single "Thinking…" line for the whole thinking block (no scrolling preview), which is dismissed when the block ends — this distinguishes "the model is silently thinking" from "the request is stuck". The busy spinner's random status verbs have been changed to neutral ones ("working/processing/…") and no longer unconditionally claim the model is thinking.
 - **After completion**: a dim italic collapsed block is committed, showing at most the first 5 lines, with anything beyond that folded into "… (N lines total)".
 
 Whether the model **actively sends** the thinking request field, and the thinking budget, are controlled by the `[thinking]` section of config.toml (see [Configuration](./configuration.md)); but regardless of whether it is sent, an always-thinking model's response may still carry thinking blocks, and the rendering is always in effect. In non-interactive `-p` mode, thinking content does not go to stdout, keeping the output pipeable.

@@ -127,6 +127,9 @@ export async function* runTurn(
     try {
       const wireOpts = ctx.attachments !== undefined ? { attachments: ctx.attachments, cwd: ctx.cwd } : undefined;
       const stream = provider.stream({ system, tools, messages: toWire(messages, wireOpts), signal, model, thinking });
+      // 在途 thinking 块的 index：content_block_start[thinking] 记下，同 index 的 content_block_stop 清掉。
+      // 边界事件独立上抛，使「只吐 signature、不吐可见思考」的模型也能被 UI 显示为思考中。
+      let thinkingIndex: number | undefined;
       for await (const event of stream) {
         if (signal?.aborted) break;
         if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
@@ -136,6 +139,17 @@ export async function* runTurn(
           // 思考增量上抛给 UI（流式预览）；同样标记已吐字——已流出的思考重试会重复展示
           emittedText = true;
           yield { type: 'thinking_delta', text: event.delta.thinking };
+        } else if (
+          event.type === 'content_block_start' &&
+          // redacted_thinking（加密思考）同样一个字都不吐，是「无痕思考」的另一种来源
+          (event.content_block.type === 'thinking' || event.content_block.type === 'redacted_thinking')
+        ) {
+          thinkingIndex = event.index;
+          // 不标记 emittedText：边界事件不含内容，重试不会重复展示任何东西，无痕思考仍应可重试
+          yield { type: 'thinking_start' };
+        } else if (event.type === 'content_block_stop' && event.index === thinkingIndex) {
+          thinkingIndex = undefined;
+          yield { type: 'thinking_end' };
         }
         // signature_delta 不上抛：signature 由 SDK 聚合进 finalMessage 的 thinking 块，
         // 随 assistant 消息进历史并原样回灌（Anthropic 协议要求 tool-use 轮带 signature）。

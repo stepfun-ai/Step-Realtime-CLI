@@ -15,10 +15,12 @@ export const THINKING_PREVIEW_LINES = 3;
 /**
  * 流式期思考预览（挂在动态区状态行位置，不进历史区）：
  * 「思考中…」+ 尾部数行暗色滚动预览；思考完成后由 App 落成 kind:'thinking' 定稿条目。
+ * text 为空即「思考在途但模型不吐可见思考」（只吐 signature 的无痕思考）：只出标题行，
+ * 让忙碌态可区分「模型在想」与「卡住了」。
  */
 export function ThinkingPreview({ text, maxLines = THINKING_PREVIEW_LINES }: { text: string; maxLines?: number }): React.ReactElement {
   // maxLines 由 App 的 chrome 降级预算给出（可能小于默认值）；保底 1 行避免 slice(-0) 全量返回
-  const tail = text.split('\n').slice(-Math.max(maxLines, 1));
+  const tail = text === '' ? [] : text.split('\n').slice(-Math.max(maxLines, 1));
   return (
     <Box flexDirection="column">
       <Text color="gray" wrap="truncate">{t('thinking.streaming')}</Text>
