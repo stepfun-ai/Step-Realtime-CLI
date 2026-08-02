@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { searchHttpError } from './searchError.js';
-import { resolveSearchBaseUrl } from './searchBase.js';
+import { resolveSearchToolEndpoint } from './searchBase.js';
 import { fail, ok, type ToolDef } from './types.js';
 import { webResultCache } from './webCache.js';
 
@@ -31,9 +31,10 @@ interface SearchResult {
 const MAX_SNIPPET = 500;
 
 /**
- * 联网搜索工具，接阶跃星辰官方网页搜索接口（POST <baseUrl>/step_plan/v1/search，走 Step Plan 通道）。
- * 默认自带，用同一个 STEPFUN API key，作为内置联网搜索能力。
- * 计费：按阶跃平台网络搜索计价，消耗 Step Plan Credit。
+ * 联网搜索工具，接阶跃星辰官方网页搜索接口。
+ * endpoint 按「[search.web] → [search] → 主会话渠道」解析；独立配置视为精确意图，
+ * 兜底沿用主会话渠道归一化后拼 step_plan 路径（兼容旧行为）。api 与 plan 双通道均可用。
+ * 计费：按阶跃平台网络搜索计价（api 通道按量 / plan 通道消耗 Credit）。
  */
 export const webSearchTool: ToolDef<z.infer<typeof schema>> = {
   name: 'web_search',
@@ -43,11 +44,16 @@ export const webSearchTool: ToolDef<z.infer<typeof schema>> = {
   schema,
   access: () => ({ kind: 'none' }), // 纯网络调用，无本地副作用
   async execute(input, ctx) {
-    if (ctx.apiKey === undefined || ctx.apiKey === '') {
-      return fail('未配置 StepFun API key，无法联网搜索。');
+    const endpoint = resolveSearchToolEndpoint(
+      ctx.searchConfig,
+      'web',
+      { apiKey: ctx.apiKey, baseUrl: ctx.baseUrl },
+      '/search',
+    );
+    if (endpoint.key === undefined || endpoint.key === '') {
+      return fail('未配置 StepFun API key，无法联网搜索。可在 config.toml 的 [search] 段配置独立的搜索 url 与 key。');
     }
-    const base = resolveSearchBaseUrl(ctx.baseUrl);
-    const url = `${base}/step_plan/v1/search`;
+    const url = endpoint.url;
     const body: Record<string, unknown> = { query: input.query, n: input.n ?? 10 };
     if (input.category !== undefined) body['category'] = input.category;
 
@@ -56,7 +62,7 @@ export const webSearchTool: ToolDef<z.infer<typeof schema>> = {
       res = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${ctx.apiKey}`,
+          Authorization: `Bearer ${endpoint.key}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),

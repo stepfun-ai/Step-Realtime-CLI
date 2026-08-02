@@ -238,6 +238,8 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         cwd: deps.cwd,
         apiKey: deps.apiKey,
         baseUrl: deps.baseUrl,
+        // 搜索配置继承主会话（子 agent 自己的 model 别名只换模型 provider，不改变搜索配置归属）
+        searchConfig: deps.config?.search,
         signal: req.signal,
         depth: req.depth + 1,
         runSubagent: selfRunner,

@@ -243,14 +243,15 @@ The interpreter in effect also determines the syntax hints in the system prompt,
 
 ### `web_search`
 
-Connects to StepFun's official web search endpoint (`POST <base>/step_plan/v1/search`), using the same API key as the model, over the Step Plan channel, which **consumes Step Plan Credit**.
+Connects to StepFun's official web search endpoint, billed per the StepFun platform (pay-as-you-go on the api channel / Credit on the plan channel).
 
-> **Channel dependency (important)**: search requests go to "the current session channel's `base_url` with the `/v1` suffix stripped, plus `/step_plan/v1/search`", authenticated with that channel's API key. Two consequences:
+> **Endpoint resolution (important)**: the search request's url and key resolve by the priority "`[search.web]` → `[search]` → main session channel":
 >
-> - **The main session must be on a StepFun channel** (`api.stepfun.com` or your StepFun gateway) for search to work. If the main session switches to a non-StepFun channel (another vendor's model, a self-hosted gateway), the request hits that channel's address and fails with 404 or an auth error.
-> - **A sub-agent's search follows the main session's channel**, not the sub-agent's own `model` alias. When the main session is on StepFun, even a sub-agent bound to another channel's model via an alias still searches with the main session's StepFun key and works normally.
+> - **With `[search]` configured**: search uses the independently configured url + key, completely independent of the main session's model channel. This is the recommended setup; see [Configuration](./configuration.md#search-web-search).
+> - **Without `[search]` (default)**: falls back to the main session channel's `base_url` + `api_key`. In that case the main session must be on a StepFun channel — switching to a non-StepFun channel (another vendor's model, a self-hosted gateway) fails with 404.
+> - **A sub-agent's search follows the main session's search configuration**, not the sub-agent's own `model` alias. As long as the main session's search works, a sub-agent bound to another channel's model still searches normally.
 >
-> In short: keep the main session's current channel on StepFun and web search works, independent of the model alias system.
+> Content search supports both StepFun channels — api (`/v1/search`) and plan (`/step_plan/v1/search`) — while image search is plan-only. See Configuration for details.
 
 | Parameter | Type | Description |
 |------|------|------|
@@ -258,11 +259,11 @@ Connects to StepFun's official web search endpoint (`POST <base>/step_plan/v1/se
 | `n` | integer 1–20, optional | Number of results, defaults to 10 |
 | `category` | enum, optional | `programming` / `research` / `gov` / `business`; omit to search the whole web |
 
-Returns the index, title, URL, and snippet of each result (snippets truncated to 500 characters). It errors out when no API key is configured.
+Returns the index, title, URL, and snippet of each result (snippets truncated to 500 characters). It errors out when no API key is configured, with a hint that an independent search url and key can be set in the `[search]` section.
 
 If the results returned by the endpoint carry full page content, that content is written into the in-process cache for `web_fetch` to reuse, and `[Cached N URLs with full content for web_fetch]` is noted at the end of the result.
 
-HTTP errors are routed by status code, where **451 means a content moderation block** (the search terms or returned content did not pass review), unrelated to the key or your quota; 401/403 point at a key problem, 429 points at rate limiting or Step Plan quota; for 404 or connection failures, first check whether the current channel is a StepFun channel (see the channel dependency note above).
+HTTP errors are routed by status code, where **451 means a content moderation block** (the search terms or returned content did not pass review), unrelated to the key or your quota; 401/403 point at a key problem, 429 points at rate limiting or Step Plan quota; for 404 or connection failures, first check whether the search endpoint is configured correctly (see the resolution note above).
 
 ### `web_image_search`
 

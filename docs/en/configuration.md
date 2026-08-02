@@ -309,6 +309,41 @@ The two layers behind `notify_terminal`: the BEL bell works in every terminal, w
 
 A non-boolean value in a bool field, or a non-numeric value in `bash_task_timeout_s`, makes the field count as unset and fall back to its default.
 
+### `[search]`: web search
+
+Web search (`web_search` for content, `web_image_search` for images) is a StepFun-platform-specific capability, independent of which model or channel the main session uses. By default it reuses the main session channel's `base_url` + `api_key` — this works out of the box when the main session is on a StepFun channel, but once the main session switches to a non-StepFun channel (another vendor's model, a self-hosted gateway), search requests hit the wrong address and fail.
+
+The `[search]` section decouples search configuration, with three layers: `[search]` is the shared fallback, `[search.web]` overrides content search, and `[search.image]` overrides image search. All fields are optional.
+
+```toml
+# Shared section: default url/key for both search tools
+[search]
+url = "https://api.stepfun.com/v1"
+key = "sk-xxxxxxxx"
+
+# Content-search-specific section (overrides the shared section)
+[search.web]
+url = "https://api.stepfun.com/v1"
+key = "sk-xxxxxxxx"
+
+# Image-search-specific section (image search is only offered on the Step Plan channel, so configure it explicitly)
+[search.image]
+url = "https://api.stepfun.com/step_plan/v1"
+key = "sp-xxxxxxxx"
+```
+
+| Field | Description | Fallback |
+|------|------|------|
+| `[search].url` / `.key` | Default Base URL and key for both search tools | empty |
+| `[search.web].url` / `.key` | Content-search-specific, overrides the shared section | falls back to `[search]` |
+| `[search.image].url` / `.key` | Image-search-specific, overrides the shared section | falls back to `[search]` |
+
+**Endpoint resolution priority**: specific section (`[search.web]`/`[search.image]`) → shared section (`[search]`) → main session channel. A `url` from an independent config is treated as the user's exact intent — the tool only appends `/search` or `/search-image` without stripping `/v1`; only when falling back to the main session channel does it apply the old normalization (strip `/v1`, then append `/step_plan/v1/...`). When an independent config supplies `url` but no `key`, the `key` falls back to the main session channel's `api_key`.
+
+**api and plan channels**: StepFun's web content search works on both the standard API channel (`https://api.stepfun.com/v1/search`, pay-as-you-go) and the Step Plan channel (`https://api.stepfun.com/step_plan/v1/search`, consuming subscription Credit), with the same API key working on both; image search is only offered on the Step Plan channel (`.../step_plan/v1/search-image`). With a Step Plan subscription, prefer setting `[search].url` to the plan channel address across the board.
+
+Once `[search]` is configured, changes take effect immediately (`/reload` hot-reloads it), and search availability no longer depends on the main session's model channel.
+
 ## `[[hooks]]`: lifecycle hooks
 
 Run your shell commands at lifecycle event points, for observation or for blocking. Declared as a `[[hooks]]` array, with four fields per entry:

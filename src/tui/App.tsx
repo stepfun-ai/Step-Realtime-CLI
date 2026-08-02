@@ -1285,6 +1285,7 @@ export function App({
     if ('error' in result) return false;
     configRef.current = result.config;
     ctx.capabilities = resolveCapabilitiesOnReload(result.config, currentModelAliasRef.current);
+    ctx.searchConfig = result.config.search; // [search] 段热重载
     return true;
   }, [reloadConfig]);
 
@@ -2038,6 +2039,7 @@ export function App({
           // 但别名声明的能力是配置级——本轮才加上的能力（如 image_in）reload 后即时生效，
           // 且无论 provider 重建与否都要刷（capabilities 不在 providerSlice 内，unchanged 短路跳不过它）。
           ctx.capabilities = resolveCapabilitiesOnReload(next, currentModelAliasRef.current);
+          ctx.searchConfig = next.search; // [search] 段热重载
           // provider 重建决策（设计 3.3 四路）：别名仍在→按新 resolved 重建；别名被删/无法解析/重建失败→沿用旧 provider
           const plan = planProviderReload(prev, next, modelRef.current, currentModelAliasRef.current);
           let providerNote = '';
