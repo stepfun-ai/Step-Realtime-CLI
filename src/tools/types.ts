@@ -23,6 +23,11 @@ export interface ToolContext {
   apiKey?: string;
   /** StepFun API base_url（不带 /v1），供联网搜索拼接端点。 */
   baseUrl?: string;
+  /**
+   * 联网搜索独立配置（[search] 段，组合根注入）。web_search / web_image_search 按
+   * 「专用段 → 通用段 → 主会话 apiKey/baseUrl」的优先级解析 endpoint；缺失时仅走主会话渠道兜底。
+   */
+  searchConfig?: import('../config/config.js').SearchConfig;
   /** 当前 agent 深度：主 agent = 0（缺省视为 0），子 agent = 1。用于递归防护。 */
   depth?: number;
   /** 子 agent 运行器（由组合根注入）。缺失表示当前上下文不支持派生子 agent。 */
