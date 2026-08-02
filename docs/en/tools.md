@@ -245,6 +245,13 @@ The interpreter in effect also determines the syntax hints in the system prompt,
 
 Connects to StepFun's official web search endpoint (`POST <base>/step_plan/v1/search`), using the same API key as the model, over the Step Plan channel, which **consumes Step Plan Credit**.
 
+> **Channel dependency (important)**: search requests go to "the current session channel's `base_url` with the `/v1` suffix stripped, plus `/step_plan/v1/search`", authenticated with that channel's API key. Two consequences:
+>
+> - **The main session must be on a StepFun channel** (`api.stepfun.com` or your StepFun gateway) for search to work. If the main session switches to a non-StepFun channel (another vendor's model, a self-hosted gateway), the request hits that channel's address and fails with 404 or an auth error.
+> - **A sub-agent's search follows the main session's channel**, not the sub-agent's own `model` alias. When the main session is on StepFun, even a sub-agent bound to another channel's model via an alias still searches with the main session's StepFun key and works normally.
+>
+> In short: keep the main session's current channel on StepFun and web search works, independent of the model alias system.
+
 | Parameter | Type | Description |
 |------|------|------|
 | `query` | string, required | Search keywords |
@@ -255,7 +262,7 @@ Returns the index, title, URL, and snippet of each result (snippets truncated to
 
 If the results returned by the endpoint carry full page content, that content is written into the in-process cache for `web_fetch` to reuse, and `[Cached N URLs with full content for web_fetch]` is noted at the end of the result.
 
-HTTP errors are routed by status code, where **451 means a content moderation block** (the search terms or returned content did not pass review), unrelated to the key or your quota; 401/403 point at a key problem, and 429 points at rate limiting or Step Plan quota.
+HTTP errors are routed by status code, where **451 means a content moderation block** (the search terms or returned content did not pass review), unrelated to the key or your quota; 401/403 point at a key problem, 429 points at rate limiting or Step Plan quota; for 404 or connection failures, first check whether the current channel is a StepFun channel (see the channel dependency note above).
 
 ### `web_image_search`
 
