@@ -4,7 +4,13 @@
 
 ## 1. 安装
 
-需要 Node.js >= 22 和 pnpm。
+最快的方式（需要 Node.js >= 22）：
+
+```bash
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm
+```
+
+装的是预构建好的单文件，不在本机编译、不拉依赖。没有 Node 环境就从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases) 下对应平台的单文件可执行；要参与开发则克隆仓库自行构建：
 
 ```bash
 git clone https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -14,7 +20,7 @@ pnpm build
 pnpm link --global   # 之后可直接用 step 命令
 ```
 
-详细安装方式（含升级、卸载、常见问题）见[安装](./installation.md)。
+五种安装方式的取舍、升级、卸载、常见问题见[安装](./installation.md)。
 
 ## 2. 配置 API key
 

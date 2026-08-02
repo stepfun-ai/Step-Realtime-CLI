@@ -26,17 +26,17 @@ Step Code 是一个终端编码 agent CLI，核心是一个 agent 主循环：�
 
 ## 快速上手
 
-需要 Node.js >= 22 和 pnpm。
+需要 Node.js >= 22（用单文件可执行版则不需要 Node）。
 
 ```bash
-git clone https://github.com/li-xiu-qi/Step-Realtime-CLI.git
-cd Step-Realtime-CLI
-pnpm install && pnpm build && pnpm link --global
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm
 export STEP_CODE_API_KEY=<your-key>
 step
 ```
 
-更细的安装与配置见[快速开始](./docs/zh/quickstart.md)。
+装的是预构建好的单文件，不在本机编译、不拉依赖。不想装 Node 就从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases) 下对应平台的单文件可执行（Windows / macOS / Linux）；要改代码请走源码安装。
+
+更细的安装与配置见[快速开始](./docs/zh/quickstart.md)，五种安装方式的取舍见[安装](./docs/zh/installation.md)。
 
 如果你手上已经有别的 AI agent（Claude Code、Kimi 等），仓库里的 [`skills/step-code-install/`](./skills/step-code-install/SKILL.md) 是一份安装说明技能：clone 后让你的 agent 读它，它就知道怎么装、怎么配 key、装不上时怎么排查。
 
