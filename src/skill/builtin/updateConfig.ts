@@ -98,6 +98,17 @@ STEP_CODE_BASE_URL。
 | default_level | string | 无 | 默认档位名，必须命中 levels 内的档位，否则 loadConfig 报错 |
 | [thinking.levels] | table | 内置 low=1024 / medium=4096 / high=32000 | 档位名 → budget（每档 clamp ≥1024），整体覆盖内置表 |
 
+### [search] 联网搜索
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| url | string | 无 | 通用段：内容搜索与文搜图默认的 Base URL |
+| key | string | 无 | 通用段：默认搜索鉴权 key |
+| [search.web] | table | 无 | 内容搜索专用段（url / key），覆盖通用段 |
+| [search.image] | table | 无 | 文搜图专用段（url / key），覆盖通用段 |
+
+endpoint 解析优先级：[search.web]/[search.image] → [search] → 主会话渠道。未配置时回退主会话渠道 base_url + api_key（向后兼容）。
+
 ### [models.<别名>] 模型别名表（渠道与模型分离）
 
 | 键 | 类型 | 说明 |

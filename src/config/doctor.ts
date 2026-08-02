@@ -32,6 +32,7 @@ export const CONFIG_TOP_LEVEL_KEYS = [
   'compaction',
   'background',
   'thinking',
+  'search',
   'language',
   'permission_mode',
   'proxy',
