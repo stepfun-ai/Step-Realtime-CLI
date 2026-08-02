@@ -27,7 +27,7 @@ export interface SubagentProgress {
 
 /**
  * 行内统计段：`{toolCount} tools · {duration}[ · {tokens} tok]`。
- * tokens > 0 才显示 tok 段（条件显示，避免开头一片 0 tok）。
+ * tokens > 0 才显示 tok 段（避免开头一片 0 tok）。
  * nowMs 用于运行中条目时长现算；终态条目传定格值（endedAt）即可。
  * AgentGroup 行、冻结摘要、WorkflowPanel 成员行三处共用，防格式漂移。
  */

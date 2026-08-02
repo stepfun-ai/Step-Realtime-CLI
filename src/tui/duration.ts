@@ -14,7 +14,7 @@ export function formatDuration(ms: number): string {
 
 /**
  * 千进制紧凑计数（1000 进制：107k / 1.2M），StatusBar context 显示与子 agent
- * 卡片 tok 段共用——与状态栏同口径比与 1024 进制的习惯写法保持一致更重要。
+ * 卡片 tok 段共用——两处必须同口径，宁可与 1024 进制的习惯写法不同，也不能自相矛盾。
  */
 export function formatCount(n: number): string {
   if (n >= 1_000_000) return `${trimZero(n / 1_000_000)}M`;

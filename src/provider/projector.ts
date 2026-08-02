@@ -3,8 +3,8 @@ import type Anthropic from '@anthropic-ai/sdk';
 /**
  * 请求前统一整形（projection）：把内部消息序列修成任何 provider 都接受的最简形态。
  *
- * 设计来源：消息事件日志与后台通知设计 §5.3 / §7.5.2（参考主流实现
- * 修复清单）。输入输出都是 `Anthropic.MessageParam[]`——
+ * 设计来源：消息事件日志与后台通知设计 §5.3 / §7.5.2。
+ * 输入输出都是 `Anthropic.MessageParam[]`——
  * 本模块刻意不 import 消息存储层（src/agent/message.ts），宿主元数据（origin/id/ts）
  * 由调用方在进本层之前剥掉（现有 toWire 已承担此责），保持投影层与存储层解耦。
  *
