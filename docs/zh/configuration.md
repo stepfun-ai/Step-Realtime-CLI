@@ -304,6 +304,41 @@ high = 32000
 
 非布尔值写在 bool 字段上、非数字写在 `bash_task_timeout_s` 上时，该字段视为未配置、落默认值。
 
+### `[search]` 联网搜索
+
+联网搜索（`web_search` 内容搜索、`web_image_search` 文搜图）是阶跃平台专属能力，与主会话用哪家模型、哪个渠道在业务上无关。默认它复用主会话渠道的 `base_url` + `api_key`——主会话走阶跃渠道时开箱即用，但主会话切到非阶跃渠道（其他厂商模型、自建网关）时，搜索请求会打到错误地址而失败。
+
+`[search]` 段把搜索配置独立出来，三层结构：`[search]` 是通用兜底，`[search.web]` 覆盖内容搜索，`[search.image]` 覆盖文搜图。所有字段可选。
+
+```toml
+# 通用段：内容搜索与文搜图的默认 url/key
+[search]
+url = "https://api.stepfun.com/v1"
+key = "sk-xxxxxxxx"
+
+# 内容搜索专用段（覆盖通用段）
+[search.web]
+url = "https://api.stepfun.com/v1"
+key = "sk-xxxxxxxx"
+
+# 文搜图专用段（文搜图仅 Step Plan 通道提供，建议显式配置）
+[search.image]
+url = "https://api.stepfun.com/step_plan/v1"
+key = "sp-xxxxxxxx"
+```
+
+| 字段 | 说明 | 兜底 |
+|------|------|------|
+| `[search].url` / `.key` | 两个搜索工具默认的 Base URL 与 key | 空 |
+| `[search.web].url` / `.key` | 内容搜索专用，覆盖通用段 | 回退 `[search]` |
+| `[search.image].url` / `.key` | 文搜图专用，覆盖通用段 | 回退 `[search]` |
+
+**endpoint 解析优先级**：专用段（`[search.web]`/`[search.image]`）→ 通用段（`[search]`）→ 主会话渠道。独立配置的 `url` 视为精确意图，只在末尾拼 `/search` 或 `/search-image`，不做 `/v1` 裁剪；只有回退到主会话渠道时才沿用旧的归一化（去 `/v1` 后拼 `/step_plan/v1/...`）。独立配置只给 `url` 没给 `key` 时，`key` 回退主会话渠道的 `api_key`。
+
+**api 与 plan 两条通道**：阶跃的联网内容搜索同时支持标准 API 通道（`https://api.stepfun.com/v1/search`，按量付费）与 Step Plan 通道（`https://api.stepfun.com/step_plan/v1/search`，消耗订阅 Credit），同一 API key 两通道均可用；文搜图仅 Step Plan 通道提供（`.../step_plan/v1/search-image`）。有 Step Plan 订阅时建议 `[search].url` 统一配 plan 通道地址。
+
+配了 `[search]` 后改动即改即生效（`/reload` 热重载），主会话用什么模型渠道都不再影响搜索可用性。
+
 ## `[[hooks]]` 生命周期钩子
 
 在生命周期事件点执行你的 shell 命令，可观察、可阻断。用 `[[hooks]]` 数组声明，每条四字段：

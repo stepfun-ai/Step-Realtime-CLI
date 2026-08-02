@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { searchHttpError } from './searchError.js';
-import { resolveSearchBaseUrl } from './searchBase.js';
+import { resolveSearchToolEndpoint } from './searchBase.js';
 import { fail, ok, type ToolDef } from './types.js';
 
 const schema = z.object({
@@ -24,8 +24,9 @@ interface ImageSearchResponse {
 }
 
 /**
- * 文搜图工具，接阶跃星辰官方文搜图接口（POST <baseUrl>/step_plan/v1/search-image）。
- * 默认自带，用同一个 STEPFUN API key，走 Step Plan 通道。图片数据来自百度搜图。
+ * 文搜图工具，接阶跃星辰官方文搜图接口（仅 Step Plan 通道提供）。
+ * endpoint 按「[search.image] → [search] → 主会话渠道」解析；独立配置视为精确意图，
+ * 兜底沿用主会话渠道归一化后拼 step_plan 路径（兼容旧行为）。图片数据来自百度搜图。
  * 适合为文档 / 文章 / 演示稿检索配图素材。
  */
 export const imageSearchTool: ToolDef<z.infer<typeof schema>> = {
@@ -35,18 +36,23 @@ export const imageSearchTool: ToolDef<z.infer<typeof schema>> = {
   schema,
   access: () => ({ kind: 'none' }), // 纯网络调用，无本地副作用
   async execute(input, ctx) {
-    if (ctx.apiKey === undefined || ctx.apiKey === '') {
-      return fail('未配置 StepFun API key，无法搜索图片。');
+    const endpoint = resolveSearchToolEndpoint(
+      ctx.searchConfig,
+      'image',
+      { apiKey: ctx.apiKey, baseUrl: ctx.baseUrl },
+      '/search-image',
+    );
+    if (endpoint.key === undefined || endpoint.key === '') {
+      return fail('未配置 StepFun API key，无法搜索图片。可在 config.toml 的 [search] 段配置独立的搜索 url 与 key。');
     }
-    const base = resolveSearchBaseUrl(ctx.baseUrl);
-    const url = `${base}/step_plan/v1/search-image`;
+    const url = endpoint.url;
 
     let res: Response;
     try {
       res = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${ctx.apiKey}`,
+          Authorization: `Bearer ${endpoint.key}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ query: input.query, topk: input.topk ?? 5 }),
