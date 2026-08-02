@@ -13,9 +13,27 @@
 - **pnpm** (package management)
 - Windows users: the `bash` tool prefers Git Bash (installing [Git for Windows](https://git-scm.com/download/win) is recommended); when it is absent, it falls back to WSL, busybox-w32, and PowerShell in that order. If Git Bash is installed in a non-standard location, set the absolute path of `bash.exe` in the `STEP_SHELL_PATH` environment variable.
 
-## Installing from source (recommended)
+## Installing from GitHub Release (recommended)
 
-To install Step Code today, clone the `step-code-explore` branch and build from source. This is the current main installation path while the npm package registration is still pending.
+Each release ships two artifacts: a **SEA executable** (single file, no Node runtime required) and an **npm tarball** (`.tgz`, requires Node 22+). The SEA executable is the recommended format for most users.
+
+### SEA executable (recommended)
+
+Download the platform-specific `step-code-<version>-<platform>.exe` from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases), rename it to `step.exe`, and place it on your PATH.
+
+### npm tarball
+
+```bash
+# install directly from the tarball URL without npm registry
+npm install -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.0/step-code-0.1.0.tgz
+step --version
+```
+
+The tarball includes a pre-built `dist/`, so `npm install -g <url>` unpacks it and links `bin.step` without requiring a local build step.
+
+## Installing from source
+
+The `step-code-explore` branch is still iterating quickly, so releases may lag behind the latest code. Use the source path when you need the newest features:
 
 ```bash
 git clone -b step-code-explore https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -48,9 +66,13 @@ npm install -g step-code
 step --version
 ```
 
-> The npm package is not yet registered. Until it is, please use the source install above.
+> The npm package is not yet registered. Until it is, please use the GitHub Release or source install above.
 
 ## Upgrading
+
+### Release install
+
+Download the new version and overwrite. For SEA executables, replace the file in place. For npm tarball installs, rerunning the install command upgrades automatically.
 
 ### Source install
 
@@ -72,9 +94,15 @@ Once the package is published to npm:
 npm update -g step-code
 ```
 
-> The npm package is not yet registered. Until it is, use the source upgrade path above.
+> The npm package is not yet registered. Until it is, use the Release or source upgrade path above.
 
 ## Uninstalling
+
+### SEA / tarball install
+
+```bash
+npm uninstall -g step-code
+```
 
 ### Source install
 
@@ -91,7 +119,7 @@ Once the package is published to npm:
 npm uninstall -g step-code
 ```
 
-> The npm package is not yet registered. Until it is, use the source uninstall path above.
+> The npm package is not yet registered. Until it is, use the Release or source uninstall path above.
 
 Configuration, session records, and other data live in `~/.step-code/`, and the uninstall command does not touch them; delete that directory manually for a full cleanup.
 
@@ -102,3 +130,5 @@ Configuration, session records, and other data live in `~/.step-code/`, and the 
 **The `bash` tool reports "no usable shell interpreter" on Windows**: none of Git Bash, WSL, busybox, or PowerShell was detected. Installing [Git for Windows](https://git-scm.com/download/win) is the easiest fix; if it is already installed but in a non-standard location, set the absolute path of `bash.exe` in the `STEP_SHELL_PATH` environment variable.
 
 **The build reports type errors**: run `pnpm install` first to make sure dependencies are complete, then `pnpm build`; if it still fails, run `pnpm typecheck` to see the exact location.
+
+**SEA executable reports missing module**: make sure the `step-code.data` file next to the executable is present; the executable and its sidecar must live in the same directory.
