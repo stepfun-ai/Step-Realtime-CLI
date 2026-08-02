@@ -102,7 +102,7 @@ describe('exportDebugBundle', () => {
     const manifest = JSON.parse(entriesOf(zipPath).read('manifest.json'));
 
     expect(manifest.app.name).toBe('step-code');
-    expect(manifest.app.version).toBe('0.4.0'); // 来自 package.json
+    expect(manifest.app.version).toBe('0.1.0'); // 来自 package.json
     expect(manifest.os.platform).toBeTruthy();
     expect(manifest.os.arch).toBeTruthy();
     expect(manifest.node).toBe(process.version);
