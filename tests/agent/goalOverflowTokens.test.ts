@@ -64,7 +64,16 @@ describe('goal token 计量在 overflow 重试场景下不重复累计', () => {
         system: 'sys',
         ctx: { cwd: process.cwd(), goal },
         messages,
-        compaction: { maxContextSize: 1000, triggerRatio: 0.85, reservedTokens: 100 },
+        // 清空工具集：本用例 maxContextSize 是玩具值，而真实全量工具的 schema 有数千 token，
+        // 会被预检的框架开销一项压倒、抢在首回合前触发压缩，把这里预设的
+        // 「溢出 → 兜底压缩 → 重试」序列打乱。本用例验证的是 goal token 计量，故隔离该变量。
+        allowedTools: [],
+        // 窗口给 10000（触发线 8500）：重试回合的真实 usage 是 1800（1000+200+600），
+        // 必须让它落在触发线以下，否则 tool_use 分支会按真实基准判定该压缩、
+        // 多发一次摘要调用而打乱本用例预设的 4 次 stream。
+        // 不能沿用 1000——那个值下 1800 会过线；而 overflow 由 API 报错触发，与窗口值无关，
+        // 所以调大窗口不影响本用例要验证的「溢出 → 兜底压缩 → 重试」链路。
+        compaction: { maxContextSize: 10_000, triggerRatio: 0.85, reservedTokens: 100 },
       }),
     );
 

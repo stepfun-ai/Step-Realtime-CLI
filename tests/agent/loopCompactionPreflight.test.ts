@@ -211,3 +211,149 @@ describe('压缩饱和守卫', () => {
     expect(events.at(-1)!.type).toBe('turn_done');
   });
 });
+
+/**
+ * 回归测试：预检判据的口径。
+ *
+ * 检查点位置修好之后暴露的第二个缺口——喂给它的数字不准：
+ *   ① `lastUsage` 是 runAgent 的局部状态，每次提交都是一次新调用、从零开始，
+ *      于是首回合只能用纯字符估算。实测该口径只有真实占用的一半
+ *      （estimateTokens 185.8k vs 真实 380.9k），单回合的纯对话轮因此永远判不出该压缩。
+ *   ② 估算口径不含 system prompt 与 tools schema，而窗口上限装的是三样。
+ *   ③ maybeCompact 内部在 micro 之后又用同一个低估口径重判是否需要 full，
+ *      把「其实仍超线」判成「已经够了」，调用方传入的准确基准被这一步抹掉。
+ *
+ * 下面每个用例都用「传/不传」对照，把单一变量的效果隔离出来。
+ */
+describe('预检判据的口径', () => {
+  /** 阈值放宽到 2000（触发线 1700），使 bigHistory 的纯估算不足以触发，好观察基准来源的影响。 */
+  const WIDE = { maxContextSize: 2000, triggerRatio: 0.85, reservedTokens: 10 };
+
+  it('传 initialUsage：首回合即用真实基准判断，估算偏低也会压缩', async () => {
+    const { provider, streamParams } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock('摘要')] }, // 预检触发的摘要调用
+      { textChunks: ['答复'], finalContent: [textBlock('答复')] },
+    ]);
+    const messages = bigHistory();
+    // 前置条件：纯估算远低于触发线，所以「压了」只可能是因为用了传入的真实基准
+    expect(estimateTokens(messages)).toBeLessThan(1700);
+
+    await collect(
+      runAgent({
+        ...baseOpts(provider, messages),
+        allowedTools: [], // 排除 tools schema 的影响，只观察 initialUsage 这一个变量
+        compaction: WIDE,
+        compactionModel: 'summary-model',
+        initialUsage: { total: 1800, measuredLength: messages.length }, // 真实占用已过线
+      }),
+    );
+
+    expect(streamParams()[0]!['model']).toBe('summary-model');
+    expect(messages.some((m) => m.origin.kind === 'compaction_summary')).toBe(true);
+  });
+
+  it('对照：同样的历史不传 initialUsage 就不压缩（修复前的行为）', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      { textChunks: ['答复'], finalContent: [textBlock('答复')] },
+    ]);
+    const messages = bigHistory();
+
+    await collect(
+      runAgent({
+        ...baseOpts(provider, messages),
+        allowedTools: [],
+        compaction: WIDE,
+        compactionModel: 'summary-model',
+      }),
+    );
+
+    // 只有主会话一次请求，没有摘要调用
+    expect(streamCalls()).toBe(1);
+    expect(messages.some((m) => m.origin.kind === 'compaction_summary')).toBe(false);
+  });
+
+  it('无真实基准时补上框架开销：tools schema 计入后越过阈值', async () => {
+    // 触发线 7650；bigHistory 估算约几百，单靠它不过线，加上全量 tools schema 才过线
+    const { provider, streamParams } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock('摘要')] },
+      { textChunks: ['答复'], finalContent: [textBlock('答复')] },
+    ]);
+    const messages = bigHistory();
+
+    await collect(
+      runAgent({
+        ...baseOpts(provider, messages),
+        // 不传 allowedTools = 全量工具，其 schema 是框架开销的主要来源
+        compaction: { maxContextSize: 9000, triggerRatio: 0.85, reservedTokens: 10 },
+        compactionModel: 'summary-model',
+      }),
+    );
+
+    expect(streamParams()[0]!['model']).toBe('summary-model');
+    expect(messages.some((m) => m.origin.kind === 'compaction_summary')).toBe(true);
+  });
+
+  it('对照：同阈值下把工具集清空就不过线（证明上一条是 tools schema 起的作用）', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      { textChunks: ['答复'], finalContent: [textBlock('答复')] },
+    ]);
+    const messages = bigHistory();
+
+    await collect(
+      runAgent({
+        ...baseOpts(provider, messages),
+        allowedTools: [],
+        compaction: { maxContextSize: 9000, triggerRatio: 0.85, reservedTokens: 10 },
+        compactionModel: 'summary-model',
+      }),
+    );
+
+    expect(streamCalls()).toBe(1);
+    expect(messages.some((m) => m.origin.kind === 'compaction_summary')).toBe(false);
+  });
+
+  it('有真实基准时不叠加框架开销：真实值本身已含 system 与 tools，再加即双算', async () => {
+    // 触发线 17000，真实基准 16000 未过线。若错误地把 7800+ 的框架开销加上去就会误压。
+    const { provider, streamCalls } = makeFakeProvider([
+      { textChunks: ['答复'], finalContent: [textBlock('答复')] },
+    ]);
+    const messages = bigHistory();
+
+    await collect(
+      runAgent({
+        ...baseOpts(provider, messages),
+        // 全量工具：框架开销可观，正是「不该被加上」的那部分
+        compaction: { maxContextSize: 20000, triggerRatio: 0.85, reservedTokens: 10 },
+        compactionModel: 'summary-model',
+        initialUsage: { total: 16000, measuredLength: messages.length },
+      }),
+    );
+
+    expect(streamCalls()).toBe(1);
+    expect(messages.some((m) => m.origin.kind === 'compaction_summary')).toBe(false);
+  });
+
+  it('micro 未清理任何内容时，full 的重判沿用真实基准而非低估的估算', async () => {
+    // 历史里没有可被 micro 清理的大 tool_result（clearedCount=0），
+    // 此时若拿 estimateTokens 重判就会判成「不用 full」——那正是被修掉的行为。
+    const { provider, streamParams } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock('摘要')] },
+      { textChunks: ['答复'], finalContent: [textBlock('答复')] },
+    ]);
+    const messages = bigHistory(); // 纯文本对话，无 tool_result
+
+    await collect(
+      runAgent({
+        ...baseOpts(provider, messages),
+        allowedTools: [],
+        compaction: WIDE,
+        compactionModel: 'summary-model',
+        initialUsage: { total: 1800, measuredLength: messages.length },
+      }),
+    );
+
+    // full 确实执行了（摘要调用发生 + 产出 compaction_summary）
+    expect(streamParams()[0]!['model']).toBe('summary-model');
+    expect(messages.some((m) => m.origin.kind === 'compaction_summary')).toBe(true);
+  });
+});
