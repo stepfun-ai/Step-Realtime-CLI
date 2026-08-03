@@ -95,6 +95,10 @@ function lastActivityMs(messages: StoredMessage[]): number | undefined {
  * 循环内压缩：超阈值时先 micro（清旧 tool_result 正文，廉价），仍超再 full（LLM 摘要）。
  * 就地改 messages。返回是否发生了实际压缩（用于是否发 notice）。
  * micro 带缓存冷 gate：缓存仍热时跳过 micro（不击穿热前缀），直接评估 full（重建同构前缀更安全）。
+ *
+ * signal 透传给 full 压缩的模型调用：full 要等一次完整摘要请求（长历史可达数十秒），
+ * 期间用户按 Esc 应当能放弃。中断时 fullCompact 原样返回历史，本函数据此不发 apply_compaction
+ * 事件、不落盘，会话停在压缩前状态。micro 是本地纯计算、瞬时完成，无需中断。
  */
 async function maybeCompact(
   provider: ChatProvider,
@@ -106,6 +110,7 @@ async function maybeCompact(
   userMessageBudget?: { maxTokens?: number; headTokens?: number },
   onWireEvent?: (event: WireEvent) => void,
   compactionProvider?: ChatProvider,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   if (!shouldCompact(usedTokens, thresholds)) return false;
   let acted = false;
@@ -129,6 +134,7 @@ async function maybeCompact(
       todos,
       compactionModel,
       userMessageBudget,
+      signal,
     );
     if (compacted !== messages) {
       replaceMessages(messages, compacted);
@@ -159,6 +165,25 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
   const maxIterations = opts.maxIterations ?? 500;
   const allowedSet = allowedTools === undefined ? undefined : new Set(allowedTools);
   let overflowRetries = 0;
+  /**
+   * 上一次真实 usage 的快照，供**发请求前**的压缩预检使用（见循环顶部的 preflight）。
+   *
+   * 为什么要记它：预检发生在 API 响应之前，本回合没有真实 usage 可用；而纯字符估算
+   * 不含 system prompt 与 tools schema，会系统性低估。折中口径与 TUI 状态栏一致——
+   * 「上一轮真实 usage（已覆盖到 measuredLength 条）+ 之后新增消息的估算」。
+   * 压缩就地改写 messages 后此快照失效，必须清空，否则 measuredLength 会指向
+   * 已不存在的下标、把整段历史当成「已测量」而漏算。
+   */
+  let lastUsage: { total: number; measuredLength: number } | undefined;
+  /**
+   * 压缩饱和标记：一次压缩做完后**仍然**超阈值，说明剩下的历史压不动了
+   * （保留窗口内的消息本身就超预算，或摘要请求反复失败）。
+   *
+   * 不设这个标记的后果是实测出来的：预检每回合都判一次，饱和状态下就变成每回合白烧
+   * 一次摘要请求——花钱、拖慢、且每次都压不下来。所以饱和后本 run 内不再自动压缩，
+   * 改为明确告知用户「压不下去了，请 /compact 或 /new」，把决定权交回去。
+   */
+  let compactionSaturated = false;
 
   for (let iter = 0; iter < maxIterations; iter++) {
     // step 边界注入：上一回合期间终态的后台任务通知在此 flush 进 messages，
@@ -178,6 +203,50 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         });
       }
     }
+    // 发请求前的压缩预检。**这是本轮补上的缺口**：原先压缩只挂在 `tool_use` 分支
+    // （即「回合结束、且模型确实调了工具」），于是三条常见路径完全绕过压缩——
+    // 纯对话轮（`end_turn`）、用户 Esc 中断（`aborted`，直接 return）、以及新一轮
+    // run 的第一个回合。长会话在这些路径下会带着已超限的上下文继续发请求，直到
+    // API 自己报 overflow 才被动补救；若模型实际窗口比配置的 maxContextSize 更宽，
+    // API 不报错，就会长期停在「显示超限、照常运行」的状态（实测现象）。
+    //
+    // 所以压缩检查不能只挂在某一种回合结局上：**每次发请求前都要判一次**，这是
+    // 唯一能覆盖全部路径的位置。
+    if (compaction !== undefined && !compactionSaturated) {
+      const preflightUsed =
+        lastUsage !== undefined
+          ? lastUsage.total + estimateTokens(messages.slice(lastUsage.measuredLength))
+          : estimateTokens(messages);
+      if (
+        await maybeCompact(
+          provider,
+          messages,
+          preflightUsed,
+          compaction,
+          opts.todos,
+          opts.compactionModel,
+          opts.userMessageBudget,
+          opts.onWireEvent,
+          opts.compactionProvider,
+          signal,
+        )
+      ) {
+        lastUsage = undefined; // 历史已就地重写，旧快照的 measuredLength 不再对应任何下标
+        yield { type: 'notice', message: t('loop.autoCompacted') };
+        // 与循环内压缩同一口径：立刻用字符估算刷新状态栏，不等下一次真实 usage
+        yield { type: 'usage', totalTokens: estimateTokens(messages), measuredLength: messages.length };
+        // 确实压过了，但仍超阈值 → 剩下的历史压不动，置饱和，本 run 内不再自动压缩。
+        // 用字符估算而非 preflightUsed——后者是压缩前的口径，压缩后已失效。
+        //
+        // 只在「压过了仍超限」时置位。压不动（maybeCompact 返回 false，例如历史还太短、
+        // 保留窗口外没内容可摘要）**不算饱和**：历史继续增长后往往就能压了，此时置位会
+        // 让本 run 后续再也不压缩。这个区别是实测踩出来的。
+        if (shouldCompact(estimateTokens(messages), compaction)) {
+          compactionSaturated = true;
+          yield { type: 'notice', message: t('loop.overflow.noCompact') };
+        }
+      }
+    }
     // 每回合重新组装 tools：tool_search 等动态注册的工具（DYNAMIC_TOOLS）在下一回合
     // 就要带完整 schema 进请求，不能在循环外取一次快照复用
     const tools = toAnthropicTools(allowedTools);
@@ -189,6 +258,12 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
       step = await turn.next();
     }
     const outcome = step.value;
+    // 真实 usage 快照：供下一回合的发请求前预检使用。measuredLength 取 lenBefore
+    // （= 发请求那一刻的历史长度），与 tool_use 分支既有算法口径一致：
+    // 真实 usage 覆盖到 lenBefore，其后的新增消息用字符估算叠加。
+    if (outcome.usage !== undefined) {
+      lastUsage = { total: usageTotalTokens(outcome.usage), measuredLength: lenBefore };
+    }
     // goal token 计量：每回合拿到真实 usage 即按计费口径累计（仅 active 累计，见 GoalMode.addTokens）
     if (outcome.usage !== undefined) ctx.goal?.addTokens(outcome.usage);
 
@@ -239,10 +314,23 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
           opts.todos,
           opts.compactionModel,
           { maxTokens: userMaxTokens },
+          signal,
         );
         if (compacted !== messages) {
           replaceMessages(messages, compacted);
           acted = true;
+        }
+        // 中断优先于一切压缩结果判定：保命压缩期间按 Esc 时，无论 micro 是否清理出收益、
+        // 也无论 full 是否压成，都按中断如实收尾。
+        //
+        // 位置很关键，两种错法都踩过：
+        //   放在 `!acted` 分支内 → micro 恰好有收益时（acted=true）绕过检查，走「已压缩、
+        //     重试」路径，用户先看到压缩提示，要等下一回合 runTurn 进门才返回 aborted。
+        //   放在 `!acted` 分支后 → 压不出空间且已中断时误报「无可压缩内容」错误，
+        //     把中断说成失败。
+        if (signal?.aborted === true) {
+          yield { type: 'aborted' };
+          return;
         }
         if (!acted) {
           yield {
@@ -253,7 +341,18 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         }
         // 溢出保命压缩同样落 apply_compaction 事件（与循环内压缩同一事实源口径）
         opts.onWireEvent?.({ type: 'context.apply_compaction', ts: new Date().toISOString(), messages: [...messages] });
+        lastUsage = undefined; // 历史已重写，快照失效（否则下一轮预检会漏算）
+        // 保命压缩已是最激进的一档（keepRecent 与用户原话预算都按 ratio 收紧过）。它做完仍
+        // 超阈值，说明真的压不动了——此时置饱和，避免 `iter--` 重试后回到循环顶部又立刻压
+        // 一次（保命压缩这条路径原本绕过了饱和守卫，会连发两次摘要请求）。
+        if (shouldCompact(estimateTokens(messages), compaction)) {
+          compactionSaturated = true;
+        }
         yield { type: 'notice', message: t('loop.overflow.retried') };
+        // 状态栏刷新：本分支此前**漏了**这一条，导致保命压缩后占用数字仍停在压缩前的
+        // 旧值，用户看到「提示压缩了、数字没动」，进而怀疑压缩没生效。循环内压缩分支
+        // 早已这么做并写了注释说明理由，两条压缩路径的显示口径必须一致。
+        yield { type: 'usage', totalTokens: estimateTokens(messages), measuredLength: messages.length };
         iter--; // 抵消本轮自增，重试当前回合
         continue;
       }
@@ -309,22 +408,11 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
             billedDelta: billedTokens(outcome.usage),
           };
         }
-        // 循环内压缩：用真实 usage（+ 本回合新增消息的尾部估算）判断，超阈值先 micro 再 full
-        if (compaction !== undefined) {
-          const used =
-            outcome.usage !== undefined
-              ? usageTotalTokens(outcome.usage) + estimateTokens(messages.slice(lenBefore))
-              : estimateTokens(messages);
-          if (await maybeCompact(provider, messages, used, compaction, opts.todos, opts.compactionModel, opts.userMessageBudget, opts.onWireEvent, opts.compactionProvider)) {
-            yield { type: 'notice', message: t('loop.autoCompacted') };
-            // 压缩后上下文占用已回落，但下一条真实 usage 要等下一回合 API 响应才到，
-            // 期间状态栏会一直停在压缩前的旧值（实测：用户以为压缩没生效）。
-            // 摘要调用的 usage 不代表会话口径，用字符估算让状态栏立刻反映压缩效果。
-            // measuredLength=压缩后全长：该估算已覆盖当前全部消息，游标设为全长，显示层尾部为空、不再叠加。
-            yield { type: 'usage', totalTokens: estimateTokens(messages), measuredLength: messages.length };
-          }
-        }
-        continue; // 有工具结果回灌，进入下一回合
+        // 这里**不再**做压缩：本回合结束等价于下一回合开始，而循环顶部的预检就在那个
+        // 位置、用同一口径（`lastUsage.total + 尾部估算`，lastUsage 正是用本回合的
+        // usage 与 lenBefore 记的）判一次。两处都留会让同一位置被评估两遍，超阈值时
+        // 连发两次摘要请求——多花一次 LLM 调用，且第二次几乎必然无收益。
+        continue; // 有工具结果回灌，进入下一回合（预检在那里生效）
       }
     }
   }
