@@ -214,7 +214,8 @@ const zh = {
   // --- App 会话与图片提示 ---
   'app.resumed': '已恢复会话 {id}{nameSuffix}（{turns} 轮 · {count} 条消息）。',
   'app.resume.nameSuffix': '「{name}」',
-  'exit.resumeHint': '恢复本会话：{command}',
+  // 命令独占一行：终端里三击可整行选中，复制时不会带上前缀文字
+  'exit.resumeHint': '恢复本会话：\n{command}',
   'app.replay.folded': '（更早的 {folded} 轮历史已折叠，共 {total} 轮）',
   'app.image.reading': '正在读取剪贴板图片…',
   'app.image.none': '剪贴板里没有图片（或当前平台/终端不支持）。',
@@ -728,7 +729,7 @@ const en: Record<keyof typeof zh, string> = {
 
   'app.resumed': 'Resumed session {id}{nameSuffix} ({turns} turns · {count} messages).',
   'app.resume.nameSuffix': ' "{name}"',
-  'exit.resumeHint': 'To resume this session: {command}',
+  'exit.resumeHint': 'To resume this session:\n{command}',
   'app.replay.folded': '({folded} earlier turns folded, {total} turns total)',
   'app.image.reading': 'Reading clipboard image…',
   'app.image.none': 'No image in clipboard (or unsupported on this platform/terminal).',
