@@ -50,12 +50,29 @@ export function prepareCommand(
   return { command, cwd };
 }
 
-/** 截断超长输出（保留头部，与原 spawnSync 路径一致）。 */
-function truncateOutput(out: string): string {
+/**
+ * 截断超长输出（保留头部，与原 spawnSync 路径一致）。
+ *
+ * `droppedBytes` 是**收集阶段**就被丢弃的量（输出超过 MAX_COLLECT 后不再累积）。
+ * 它必须单独报告：`out.length` 只是「收集到的长度」，一旦触顶就不再增长，
+ * 于是「共 N 字符」会把 50MB 的输出说成 10MB，让调用方以为只丢了一点点。
+ * 收集阶段丢掉的内容无法事后找回，所以提示里要给出重定向到文件的替代路径。
+ */
+function truncateOutput(out: string, droppedBytes = 0): string {
+  const notes: string[] = [];
+  let body = out;
   if (out.length > MAX_OUTPUT) {
-    return `${out.slice(0, MAX_OUTPUT)}\n\n[输出已截断，共 ${out.length} 字符]`;
+    body = out.slice(0, MAX_OUTPUT);
+    notes.push(`输出已截断，共 ${out.length} 字符`);
   }
-  return out;
+  if (droppedBytes > 0) {
+    notes.push(
+      `另有约 ${Math.round(droppedBytes / 1024)} KB 输出因超过 ${MAX_COLLECT / (1024 * 1024)}MB 收集上限被丢弃，` +
+        `不可恢复——需要完整输出请把命令的 stdout 重定向到文件，再用 read_file 分页读`,
+    );
+  }
+  if (notes.length === 0) return out;
+  return `${body}\n\n[${notes.join('；')}]`;
 }
 
 /**
@@ -87,8 +104,14 @@ function runForeground(
 
     let out = '';
     let settled = false;
+    /**
+     * 收集触顶后被丢弃的字节数。不记录的话，触顶后所有后续输出会**无声消失**，
+     * 而 `out.length` 停在上限值，让「共 N 字符」这个数字变成低报。
+     */
+    let droppedBytes = 0;
     const append = (chunk: Buffer): void => {
       if (out.length < MAX_COLLECT) out += chunk.toString('utf8');
+      else droppedBytes += chunk.length;
     };
     proc.stdout?.on('data', append);
     proc.stderr?.on('data', append);
@@ -141,7 +164,7 @@ function runForeground(
         finish(fail('用户中断，命令已终止。'));
         return;
       }
-      const text = truncateOutput(out);
+      const text = truncateOutput(out, droppedBytes);
       const exitCode = code ?? 0;
       if (exitCode !== 0) {
         finish(fail(`${text}\n\n[退出码：${exitCode}]`));
@@ -159,7 +182,7 @@ function runForeground(
       const id = taskId;
       void background.waitForegroundRelease(id).then((reason) => {
         if (settled || reason === 'terminal') return;
-        const partial = out === '' ? '（暂无输出）' : truncateOutput(out);
+        const partial = out === '' ? '（暂无输出）' : truncateOutput(out, droppedBytes);
         const lead =
           reason === 'detached'
             ? `命令已转为后台任务 ${id} 继续运行，不再阻塞当前回合。`
