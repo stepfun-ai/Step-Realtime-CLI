@@ -63,6 +63,45 @@ export type WireEvent =
       messageId?: string;
     }
   | {
+      /**
+       * 一次真实 API 往返的 token 明细。**每轮一条**，是「上下文占用」类问题唯一的事后审计凭据。
+       *
+       * 为什么必须落盘：会话快照只存消息内容，不存 usage。因此事后无法复原任何时刻的真实
+       * input/cache_read/output——2026-08-02 那次「状态栏 479.4k 超上限两成」的排查正是卡在这里，
+       * 只能拿压缩后的快照去解释压缩前的占用，得出「差 48 倍」的伪结论（实为复算对象错配）。
+       * 一行 JSON 的代价换「需要复现」变成「可事后审计」。
+       *
+       * 同时记两套口径，缺一不可：
+       * - `totalTokens`：服务端 usage 四项相加（状态栏显示值的事实源）
+       * - `estimatedTokens` + `measuredLength`：同时刻按字符估算的值与消息条数，
+       *   两者比值即估算偏差率——预检用的是估算，偏差率决定预检是否可信。
+       */
+      type: 'model.usage';
+      ts: string;
+      /** 本轮实际请求的模型（可能被 /model 或子 agent 覆盖，与顶层配置不同）。 */
+      model?: string;
+      /** 服务端 usage 四项相加（口径见 usageTotalTokens）。 */
+      totalTokens: number;
+      /** 计费口径增量（input − cache_read + output，见 billedTokens）。 */
+      billedTokens: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheCreationTokens?: number;
+      /**
+       * 同时刻按字符估算的**历史**占用（仅 messages，不含框架开销）。
+       * 与 `totalTokens` 直接比是不可比的——真实值含 system + tools。
+       * 可比口径是 `estimatedTokens + frameworkTokens`，两者比值才是估算偏差率。
+       */
+      estimatedTokens: number;
+      /** 框架固定开销估算（system prompt 含 AGENTS.md 与 skill 清单，加 tools schema）。 */
+      frameworkTokens: number;
+      /** 发请求那一刻的历史消息条数。 */
+      measuredLength: number;
+      /** 本轮停止原因，用于把异常轮（max_tokens / error）与正常轮分开统计。 */
+      stopReason: string;
+    }
+  | {
       /** 权限模式切换。 */
       type: 'permission.set_mode';
       ts: string;
