@@ -1319,3 +1319,89 @@ describe('子 agent 结果结构化回灌', () => {
     expect(r.content).not.toContain('resume=');
   });
 });
+
+describe('终态事件的完整性与幂等（对照 Claude Agent SDK 0.2.101 缺陷）', () => {
+  /**
+   * 回归依据：Claude Agent SDK 0.2.101 修过同类缺陷——后台任务被杀时 CLI 只发
+   * task_updated{status:killed} 而不发 task_notification，只监听后者的消费方永久 hang。
+   * 我们的 runner 曾同构：catch 分支只 persist + throw 不发 end，start 已发出但终态永不到达
+   * （TUI 条目卡在运行中、stream-json 外部程序等不到收尾）。
+   */
+  it('异常冒泡出 runner 时仍发出 end 终态（不让消费方永久等待）', async () => {
+    const events: SubagentProgressEvent[] = [];
+    const { provider } = makeFakeProvider([{ textChunks: [], finalContent: [textBlock(LONG)] }]);
+    const store = makeSubagentStore();
+    // attachments 在 start 之后被 runAgent 使用，用它模拟运行中途基础设施抛错：
+    // 异常会冒出 runner（不像 persist 内部有静默 catch）。
+    Object.defineProperty(store, 'attachments', {
+      get() {
+        throw new Error('infra down');
+      },
+    });
+    const run = createSubagentRunner(deps(provider, (_id, e) => events.push(e), { subagentStore: store }));
+    await expect(run({ subagentType: 'general', prompt: '干活', depth: 0 })).rejects.toThrow('infra down');
+    const ends = events.filter((e) => e.kind === 'end');
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({ kind: 'end', isError: true });
+    // 异常路径也带统计与说明，外部消费方不必读快照就知道发生了什么
+    expect(ends[0]).toHaveProperty('summary');
+    expect(ends[0]).toHaveProperty('toolUses');
+    expect(ends[0]).toHaveProperty('durationMs');
+  });
+
+  it('正常成功路径 end 恰好一次，带 summary 与统计', async () => {
+    const events: SubagentProgressEvent[] = [];
+    const { provider } = makeFakeProvider([{ textChunks: [], finalContent: [textBlock(LONG)] }]);
+    const run = createSubagentRunner(deps(provider, (_id, e) => events.push(e)));
+    const r = await run({ subagentType: 'general', prompt: '干活', depth: 0 });
+    expect(r.isError).toBe(false);
+    const ends = events.filter((e) => e.kind === 'end');
+    expect(ends).toHaveLength(1);
+    // summary 与 runner 返回值同一份文本；sessionId 供消费方取回完整产出
+    expect(ends[0]).toMatchObject({
+      kind: 'end',
+      isError: false,
+      summary: r.summary,
+      toolUses: 0,
+      sessionId: r.sessionId,
+    });
+    expect(typeof (ends[0] as { durationMs?: number }).durationMs).toBe('number');
+  });
+
+  it('provider 持续失败的错误返回路径：end 恰好一次且标记错误', async () => {
+    const events: SubagentProgressEvent[] = [];
+    const { provider } = makeFakeProvider(Array.from({ length: 10 }, () => ({ throw: new Error('boom') })));
+    const run = createSubagentRunner(deps(provider, (_id, e) => events.push(e)));
+    const r = await run({ subagentType: 'general', prompt: '会失败的任务', depth: 0 });
+    expect(r.isError).toBe(true);
+    const ends = events.filter((e) => e.kind === 'end');
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({ kind: 'end', isError: true, summary: r.summary });
+  });
+
+  it('每个子 agent 生命周期都以 start 开、以 end 收（多路径统一）', async () => {
+    const check = async (behaviors: Parameters<typeof makeFakeProvider>[0]): Promise<void> => {
+      const events: SubagentProgressEvent[] = [];
+      const { provider } = makeFakeProvider(behaviors);
+      const run = createSubagentRunner(deps(provider, (_id, e) => events.push(e)));
+      await run({ subagentType: 'general', prompt: 'x', depth: 0 }).catch(() => undefined);
+      const kinds = events.map((e) => e.kind);
+      expect(kinds[0]).toBe('start');
+      expect(kinds[kinds.length - 1]).toBe('end');
+    };
+    await check([{ textChunks: [], finalContent: [textBlock(LONG)] }]);
+    await check(Array.from({ length: 10 }, () => ({ throw: new Error('boom') })));
+  });
+
+  it('工具调用被计数（toolUses 反映真实调用次数）', async () => {
+    const events: SubagentProgressEvent[] = [];
+    const { provider } = makeFakeProvider([
+      { textChunks: [], finalContent: [toolUseBlock('c1', 'nonexistent_tool', {})] },
+      { textChunks: [], finalContent: [textBlock(LONG)] },
+    ]);
+    const run = createSubagentRunner(deps(provider, (_id, e) => events.push(e)));
+    await run({ subagentType: 'general', prompt: '干活', depth: 0 });
+    const end = events.find((e) => e.kind === 'end') as { toolUses?: number };
+    expect(end.toolUses).toBe(1);
+  });
+});
