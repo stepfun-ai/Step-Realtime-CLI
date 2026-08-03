@@ -9,31 +9,82 @@
 
 ## Requirements
 
-- **Node.js >= 22** (the `glob` tool uses `node:fs.globSync`, an API available from Node 22 onward)
-- **pnpm** (package management)
-- Windows users: the `bash` tool prefers Git Bash (installing [Git for Windows](https://git-scm.com/download/win) is recommended); when it is absent, it falls back to WSL, busybox-w32, and PowerShell in that order. If Git Bash is installed in a non-standard location, set the absolute path of `bash.exe` in the `STEP_SHELL_PATH` environment variable.
+- **Node.js >= 22** (the `glob` tool uses `node:fs.globSync`, an API available from Node 22 onward). Not needed if you use the standalone executable.
+- **pnpm**: only required when installing from source or contributing to development. Not needed for npm installs of prebuilt artifacts.
+- Windows users: the `bash` tool prefers Git Bash (installing [Git for Windows](https://git-scm.com/download/win) is recommended); when it is absent, it falls back to WSL, busybox-w32, and PowerShell in that order. If Git Bash is installed in a non-standard location, set the `STEP_SHELL_PATH` environment variable to the absolute path of `bash.exe`.
 
-## Installing from GitHub Release (recommended)
+## Choose an installation method
 
-Each release ships two artifacts: a **SEA executable** (single file, no Node runtime required) and an **npm tarball** (`.tgz`, requires Node 22+). The SEA executable is the recommended format for most users.
+All artifacts are hosted on GitHub; they do not go through the npm public registry.
 
-### SEA executable (recommended)
+| Method | Prerequisites | What you get | Best for |
+|--------|--------------|--------------|----------|
+| [Standalone executable](#standalone-executable-no-node-required) | None | A single executable file with a bundled Node runtime | No Node installed; download and run immediately |
+| [npm install prebuilt branch](#npm-install-prebuilt-branch-fastest) | Node 22+ | A packaged single file + `step` command managed by npm | Have Node; want a one-command install |
+| [npm install source branch](#npm-install-source-branch-follow-main) | Node 22+ | `dist/` compiled on your machine | Follow latest mainline; accept local compilation |
+| [Release tarball](#release-tarball) | Node 22+ | Same as prebuilt branch, but pinned to a specific version | Need a fixed version; reproducible installs |
+| [Install from source](#install-from-source) | Node 22+ and pnpm | Full development environment + symlinked `step` | Contributing; modifying code |
 
-Download the platform-specific `step-code-<version>-<platform>.exe` from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases), rename it to `step.exe`, and place it on your PATH.
+## Standalone executable (no Node required)
 
-### npm tarball
+Download the platform-specific artifact from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases):
+
+| Platform | Artifact name |
+|----------|--------------|
+| Windows x64 | `step-code-win32-x64.exe` |
+| macOS Apple Silicon | `step-code-darwin-arm64` |
+| Linux x64 | `step-code-linux-x64` |
+
+Each tag's three-platform artifacts are built automatically by CI and come with a same-name `.sha256` checksum file. After downloading, rename it to `step` (or `step.exe` on Windows) and place it on your PATH.
 
 ```bash
-# install directly from the tarball URL without npm registry
-npm install -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.0/step-code-0.1.0.tgz
+# macOS / Linux: make executable
+chmod +x step
+
+# macOS: browser-downloaded files carry a quarantine attribute; strip it before first run
+xattr -d com.apple.quarantine step 2>/dev/null || true
+```
+
+> An empty Releases page means no release tag has been created yet; use one of the branch-based install methods below.
+
+## npm install prebuilt branch (fastest)
+
+`dist-npm` is a prebuilt branch refreshed by CI at release time. It contains only the packaged single file and a minimal `package.json` (no `scripts`, no dependencies), so npm only unpacks and links the command. **It does not compile on your machine, nor does it fetch any dependencies.**
+
+```bash
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm
 step --version
 ```
 
-The tarball includes a pre-built `dist/`, so `npm install -g <url>` unpacks it and links `bin.step` without requiring a local build step.
+Measured on 2026-08-02 with Windows + npm and a local git source: about 12 seconds, installing 1 package.
 
-## Installing from source
+## npm install source branch (follow main)
 
-The `step-code-explore` branch is still iterating quickly, so releases may lag behind the latest code. Use the source path when you need the newest features:
+Install directly from the development branch to get the latest code at the moment:
+
+```bash
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore
+step --version
+```
+
+npm clones the repo, installs build dependencies, and then compiles `dist/` on your machine via the `prepare` hook. The trade-off is speed, and build dependencies remain in the global install directory. Measured on 2026-08-02 with Windows + npm and a local git source: about 1 minute, installing 285 packages.
+
+This path resolves dependencies via npm's own logic, not the repository's pnpm lockfile, so dependency drift can cause build failures. If that happens, fall back to the prebuilt branch above, or install from source as described below.
+
+## Release tarball
+
+When you need to pin a specific version, install the tarball for that tag directly:
+
+```bash
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.0/step-code-0.1.0.tgz
+step --version
+```
+
+The tarball includes a pre-built `dist/`. `npm i -g <url>` unpacks it and links `bin.step` without triggering a local build.
+
+## Install from source
+
+The current `step-code-explore` branch is iterating quickly, and releases may not catch up to the latest code. To get the newest features, build from source:
 
 ```bash
 git clone -b step-code-explore https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -43,62 +94,62 @@ pnpm build        # tsc compiles to dist/
 pnpm test         # vitest unit tests (optional, verifies the environment works)
 ```
 
-After building, run it with `node dist/main.js`. To register `step` as a global command:
+After building, run with `node dist/main.js`. To register `step` as a global command:
 
 ```bash
 pnpm link --global
 step
 ```
 
-To use the stable branch instead, check out `main` before building:
+To use a stable branch, switch manually:
 
 ```bash
 git checkout main
 pnpm install && pnpm build
 ```
 
-## Installing with npm (planned for v0.1.0)
+## npm public registry (not currently provided)
 
-Once `step-code` is published to the npm public registry, a global npm install will be the fastest way:
+`step-code` is not published to the npm public registry, so `npm install -g step-code` is unavailable, and `npm update -g step-code` does not work.
 
-```bash
-npm install -g step-code
-step --version
-```
-
-> The npm package is not yet registered. Until it is, please use the GitHub Release or source install above.
+This is a deliberate choice for the current stage, not an omission: the methods above already cover every combination of "Node required or not" and "follow a version or follow mainline", while publishing to a registry introduces long-term commitments such as accounts, publish permissions, and non-retractable versions. We will reevaluate registry publishing once the distribution model stabilizes.
 
 ## Upgrading
 
-### Release install
+### Standalone executable
 
-Download the new version and overwrite. For SEA executables, replace the file in place. For npm tarball installs, rerunning the install command upgrades automatically.
+Download the new version and overwrite the file in place.
 
-### Source install
+### npm-installed variants (3 methods)
 
-Installing from source is a symlink installation, so pull the latest code and rebuild; there is no need to link again. Make sure you are on the branch you want (recommended: `step-code-explore`):
+Re-run the original install command; npm re-resolves the git reference or URL and overwrites the existing installation:
 
 ```bash
-cd Step-Realtime-CLI
-git checkout step-code-explore
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm          # prebuilt branch
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore # source branch
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.2.0/step-code-0.2.0.tgz  # use the new tag's tarball
+```
+
+`npm update -g step-code` does not work for these variants—it targets registry packages, while the sources here are git references or URLs.
+
+### Source install upgrade
+
+Source installs are symlink installs. Pull the latest code and rebuild; there is no need to link again. Make sure you are on the recommended branch:
+
+```bash
+git checkout step-code-explore    # confirm you are on the recommended branch
 git pull
 pnpm install    # when dependencies have changed
 pnpm build
 ```
 
-### npm install (planned for v0.1.0)
-
-Once the package is published to npm:
-
-```bash
-npm update -g step-code
-```
-
-> The npm package is not yet registered. Until it is, use the Release or source upgrade path above.
-
 ## Uninstalling
 
-### SEA / tarball install
+### Standalone executable
+
+Delete the executable file and remove it from PATH.
+
+### npm-installed variants
 
 ```bash
 npm uninstall -g step-code
@@ -111,24 +162,25 @@ cd Step-Realtime-CLI
 pnpm unlink --global   # removes the global step command
 ```
 
-### npm install (planned for v0.1.0)
+Configuration, session records, and other data live in `~/.step-code/`. The uninstall command does not touch them; delete that directory manually for a full cleanup.
 
-Once the package is published to npm:
+## FAQ
+
+**`step` command not found**: for npm global installs, check whether the `npm bin -g` directory is on PATH; for source installs, check `pnpm bin --global`. Add the corresponding directory to PATH and restart the terminal.
+
+**Not sure which version is running**: `step --version` outputs something like `0.1.0 (a1b2c3d 2026-08-03T02:46Z)`, where the parenthesized part is the commit and build timestamp at build time. The version number changes once per release cycle, while the build identifier changes on every build—only by combining both can you uniquely identify a specific artifact. A `+dirty` suffix after the commit means the artifact was built from a workspace with uncommitted changes and does not correspond to any commit. If only the version number is present with no parenthesized part, it means git information was unavailable at build time (e.g. built from a tarball).
+
+**`bash` tool reports "no usable shell interpreter" on Windows**: none of Git Bash, WSL, busybox, or PowerShell was detected. Installing [Git for Windows](https://git-scm.com/download/win) is the easiest fix; if it is already installed but in a non-standard location, set the `STEP_SHELL_PATH` environment variable to the absolute path of `bash.exe`.
+
+**Build reports type errors**: run `pnpm install` first to ensure dependencies are complete, then `pnpm build`; if it still fails, run `pnpm typecheck` to see the exact location.
+
+**SEA executable reports missing module**: the artifact is a single-file form with runtime and code bundled together; it does not depend on any sibling files. This error means the file was truncated during download or renaming. Re-download and verify with the accompanying `.sha256` checksum.
+
+**Windows download blocked by SmartScreen**: the artifact is not code-signed, so SmartScreen warns about executables with low download counts. Verify file integrity with `.sha256` first, then choose "Run anyway" in the prompt.
+
+**macOS says "unverified developer" or refuses to run outright**: the artifact carries only an ad-hoc signature and is not notarized. Strip the quarantine attribute and it will run:
 
 ```bash
-npm uninstall -g step-code
+xattr -d com.apple.quarantine step
+chmod +x step
 ```
-
-> The npm package is not yet registered. Until it is, use the Release or source uninstall path above.
-
-Configuration, session records, and other data live in `~/.step-code/`, and the uninstall command does not touch them; delete that directory manually for a full cleanup.
-
-## Troubleshooting
-
-**The `step` command is not found**: the target directory of `pnpm link --global` is not on PATH. Run `pnpm bin --global` to see the directory and add it to PATH.
-
-**The `bash` tool reports "no usable shell interpreter" on Windows**: none of Git Bash, WSL, busybox, or PowerShell was detected. Installing [Git for Windows](https://git-scm.com/download/win) is the easiest fix; if it is already installed but in a non-standard location, set the absolute path of `bash.exe` in the `STEP_SHELL_PATH` environment variable.
-
-**The build reports type errors**: run `pnpm install` first to make sure dependencies are complete, then `pnpm build`; if it still fails, run `pnpm typecheck` to see the exact location.
-
-**SEA executable reports missing module**: make sure the `step-code.data` file next to the executable is present; the executable and its sidecar must live in the same directory.

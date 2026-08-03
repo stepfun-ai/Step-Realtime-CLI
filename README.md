@@ -26,17 +26,17 @@ Key capabilities:
 
 ## Quick start
 
-Requires Node.js >= 22 and pnpm.
+Requires Node.js >= 22 (not needed if you use the standalone executable).
 
 ```bash
-git clone https://github.com/li-xiu-qi/Step-Realtime-CLI.git
-cd Step-Realtime-CLI
-pnpm install && pnpm build && pnpm link --global
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm
 export STEP_CODE_API_KEY=<your-key>
 step
 ```
 
-See [Quick start](./docs/en/quickstart.md) for installation and configuration details.
+That installs a prebuilt single file: nothing is compiled locally and no dependencies are fetched. Without Node, grab the standalone executable for your platform (Windows / macOS / Linux) from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases); to modify the code, install from source instead.
+
+See [Quick start](./docs/en/quickstart.md) for installation and configuration details, and [Installation](./docs/en/installation.md) for the trade-offs between the five installation methods.
 
 If you already have another AI agent at hand (Claude Code, Kimi, and so on), [`skills/step-code-install/`](./skills/step-code-install/SKILL.md) is an install-instructions skill: clone the repo, point your agent at it, and it will know how to build, where to put the API key, and what to check when the build fails.
 

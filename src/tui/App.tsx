@@ -99,7 +99,7 @@ import type { SessionData, SessionMeta, SessionStore } from '../session/store.js
 import { exportDebugBundle } from '../session/debugBundle.js';
 import { InputHistoryStore } from '../session/inputHistory.js';
 import type { DisplayItem } from './types.js';
-import { VERSION } from '../version.js';
+import { versionLine } from '../buildInfo.js';
 
 /** 待确认的计划（exit_plan_mode 提交）。 */
 interface PendingPlan {
@@ -2853,7 +2853,7 @@ export function App({
       <Static key={sessionEpoch} items={staticEntries}>
         {(entry, i) =>
           entry.kind === 'welcome' ? (
-            <WelcomeBox key="welcome" cwd={ctx.cwd} sessionId={sessionRef.current.id} model={model} version={VERSION} />
+            <WelcomeBox key="welcome" cwd={ctx.cwd} sessionId={sessionRef.current.id} model={model} version={versionLine()} />
           ) : (
             // Static 恒折叠渲染：ink <Static> append-only，条目进 scrollback 时渲染结果即冻结，
             // 历史恒紧凑。完整工具输出不再走全局展开态，由 Ctrl+O 全屏查看器（ExpandViewer）

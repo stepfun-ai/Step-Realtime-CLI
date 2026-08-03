@@ -7,8 +7,13 @@
 import { build } from 'esbuild';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectBuildInfo } from './gen-build-info.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// 单文件产物读不到 dist/build-info.json（SEA 更是没有外部文件），构建标识只能在这里固化进代码
+const buildInfo = collectBuildInfo();
+console.log(`build-info 注入: ${buildInfo.commit}${buildInfo.dirty ? '+dirty' : ''} ${buildInfo.time}`);
 
 await build({
   entryPoints: [join(root, 'dist/main.js')],
@@ -17,6 +22,9 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node20',
+  define: {
+    __STEP_BUILD_INFO__: JSON.stringify(JSON.stringify(buildInfo)),
+  },
   // dist/main.js 首行 shebang 会被 esbuild 原样保留（置于 banner 之前），banner 不重复加。
   // CJS 依赖（如 signal-exit）里的 require() 在 ESM 产物中会命中 esbuild 的 __require 兜底而抛
   // "Dynamic require is not supported"；用 banner 注入 createRequire 后 __require 走真实 CJS 解析。
