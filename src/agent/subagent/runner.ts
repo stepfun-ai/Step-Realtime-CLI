@@ -216,6 +216,24 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         // 磁盘不可写等场景：静默降级为纯内存运行
       }
     };
+    const sid = req.id ?? (resumeId !== undefined ? `re-${resumeId.slice(0, 8)}` : String(deps.sessionCounter.spawned));
+    // 终态幂等：`end` 至多发一次。catch 分支要兜底补发（保证消费方一定收到终态），
+    // 但正常 return 路径已发过 end 后若落盘等环节再抛，会走到同一个补发点——
+    // 这里做去重，让「所有路径至少一次」不退化成「某些路径两次」。
+    // 定义在 try 外：catch 分支需要它补发终态。
+    let endSent = false;
+    const progress = (ev: SubagentProgressEvent): void => {
+      if (ev.kind === 'end') {
+        if (endSent) return;
+        endSent = true;
+      }
+      deps.onEvent?.(sid, ev);
+    };
+    // 工具调用次数与墙钟耗时。
+    // 只报 token 无法区分「卡在慢工具」与「烧在长上下文」，这两个维度补上这个盲区。
+    // 定义在 try 外：catch 分支补发终态时也要带上这两个统计。
+    let toolUses = 0;
+    const startedAt = Date.now();
     try {
       // 角色的模型绑定：命中别名则连 provider 一起换（跨渠道），未命中退回父 provider
       const binding = resolveBinding(agentDef.model);
@@ -254,8 +272,6 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         capabilities: binding.capabilities,
       };
 
-      const sid = req.id ?? (resumeId !== undefined ? `re-${resumeId.slice(0, 8)}` : String(deps.sessionCounter.spawned));
-      const progress = (ev: SubagentProgressEvent): void => deps.onEvent?.(sid, ev);
       // 显示描述优先用模型写的短标签（短 description 防多行/长 prompt 溢出 TUI 行宽、
       // 挤掉行尾统计段）；缺省退回 prompt 截断——先压平换行，避免多行文本污染单行布局。
       const displayDesc =
@@ -295,7 +311,10 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
           compactionProvider: deps.compactionProvider,
           userMessageBudget: deps.userMessageBudget,
         })) {
-          if (ev.type === 'tool_start') progress({ kind: 'tool', name: ev.name });
+          if (ev.type === 'tool_start') {
+            toolUses += 1;
+            progress({ kind: 'tool', name: ev.name });
+          }
           else if (ev.type === 'tool_end') persist(); // 每个工具回合结束落一次盘：崩溃时盘上保留到最近回合
           else if (ev.type === 'error') progress({ kind: 'error', message: ev.message });
           else if (ev.type === 'usage' && ev.billedDelta !== undefined) {
@@ -329,27 +348,48 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         summary = lastAssistantText(messages);
       }
 
-      // 所有 return 点先写终态 status 并落盘，再由 finally 释放活跃锁
+      // 所有 return 点先写终态 status 并落盘，再由 finally 释放活跃锁。
+      // 终态事件统一带 summary / toolUses / durationMs / sessionId：外部消费方靠它判断
+      // 「干了什么、花了多少」，不必再去读子会话快照。summary 与 return 值保持同一份文本。
+      const endStats = (): { toolUses: number; durationMs: number; sessionId: string } => ({
+        toolUses,
+        durationMs: Date.now() - startedAt,
+        sessionId,
+      });
       if (aborted) {
         subSession.status = 'aborted';
         persist();
-        progress({ kind: 'end', isError: true });
-        return { summary: '子 agent 已被中断。', isError: true, sessionId };
+        const abortedText = '子 agent 已被中断。';
+        progress({ kind: 'end', isError: true, summary: abortedText, ...endStats() });
+        return { summary: abortedText, isError: true, sessionId };
       }
       if (summary === '') {
         subSession.status = 'error';
         persist();
-        progress({ kind: 'end', isError: true });
-        return { summary: hadError ? '子 agent 执行出错，未产出结果。' : '子 agent 未产出可用结果。', isError: true, cause: lastCause, sessionId };
+        const failed = hadError ? '子 agent 执行出错，未产出结果。' : '子 agent 未产出可用结果。';
+        progress({ kind: 'end', isError: true, summary: failed, ...endStats() });
+        return { summary: failed, isError: true, cause: lastCause, sessionId };
       }
       subSession.status = hadError ? 'error' : 'done';
       persist();
-      progress({ kind: 'end', isError: hadError });
+      progress({ kind: 'end', isError: hadError, summary, ...endStats() });
       return { summary, isError: hadError, cause: hadError ? lastCause : undefined, sessionId };
     } catch (e) {
       // 未捕获异常（如 provider 层抛出）：同样写终态落盘，保住已有历史
       subSession.status = 'error';
       persist();
+      // 终态事件必须在所有退出路径发出：`start` 已发过，若这里只 throw 不发 `end`，
+      // 消费方（TUI 条目、stream-json 外部程序）会永久等不到终态。
+      // 对照 Claude Agent SDK 0.2.101 的同类缺陷：后台任务被杀只发 task_updated 不发
+      // task_notification，只监听后者的消费方直接 hang。幂等由 endSent 保证。
+      progress({
+        kind: 'end',
+        isError: true,
+        summary: e instanceof Error ? `子 agent 异常中止：${e.message}` : '子 agent 异常中止。',
+        toolUses,
+        durationMs: Date.now() - startedAt,
+        sessionId,
+      });
       throw e;
     } finally {
       deps.subagentStore.releaseLock(deps.cwd, sessionId);
