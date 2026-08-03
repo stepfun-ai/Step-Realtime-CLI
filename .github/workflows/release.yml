@@ -14,8 +14,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 忘了 bump 版本号就打 tag 是个真实会犯的错：产物与分发分支都会带旧版本号，用户装完
+  # `step --version` 与 Release 名对不上。这一步让它直接发不出去，不靠人工核对清单。
+  guard:
+    name: Tag matches package version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag against package.json
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "tag=${GITHUB_REF_NAME} (去 v 前缀: ${TAG})  package.json=${PKG}"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} 与 package.json 的 version ${PKG} 不一致，先 bump 版本号再打 tag"
+            exit 1
+          fi
+
   sea:
     name: SEA (${{ matrix.target }})
+    needs: guard
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +85,7 @@ jobs:
 
   tarball:
     name: npm tarball
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,6 +127,7 @@ jobs:
 
   dist-branch:
     name: Refresh dist-npm branch
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
