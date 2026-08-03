@@ -62,11 +62,14 @@ describe('createProvider', () => {
     expect(internals.thinking).toEqual({ budgetTokens: 4096 });
   });
 
-  it('stepfun + [thinking] enabled=true 未配 budget → thinking 参数存在但无 budgetTokens', () => {
+  it('stepfun + [thinking] enabled=true 未配 budget → 只开 sendThinking，不构造空 thinking 对象', () => {
     const p = createProvider(baseConfig({ thinking: { enabled: true, levels: { low: 1024 } } }));
     const internals = p as unknown as { sendThinking: boolean; thinking?: { budgetTokens?: number } };
     expect(internals.sendThinking).toBe(true);
-    expect(internals.thinking).toEqual({ budgetTokens: undefined });
+    // 旧行为构造 { budgetTokens: undefined }：一个「存在但内部为空」的对象，语义上表达
+    // 「用户指定了预算」，实际没有。三通道的 effort 下发都以 thinking !== undefined 为门槛，
+    // 空对象会让它们进入下发分支再靠内层 undefined 兜回来，多一层无谓状态。
+    expect(internals.thinking).toBeUndefined();
   });
 
   it('[thinking] default_level 命中档位 → 该档 budget 作为构造默认（优先于 budget_tokens）', () => {

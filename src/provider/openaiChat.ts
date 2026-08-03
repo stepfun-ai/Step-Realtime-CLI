@@ -8,6 +8,7 @@ import {
   parseSseStream,
   toolsToOpenAi,
 } from './openaiCommon.js';
+import { budgetToEffort, stepEffortParam } from './step/stepCommon.js';
 import type { ChatProvider } from './types.js';
 
 /** {@link OpenAiChatProvider} 构造参数。 */
@@ -19,6 +20,13 @@ export interface OpenAiChatProviderOptions {
   maxTokens: number;
   /** 注入的 fetch 实现（测试用 mock）；缺省用全局 fetch。 */
   fetchImpl?: typeof fetch;
+  /**
+   * 是否允许下发思考控制字段（`reasoning_effort`）。默认 false。
+   * 为 true 时也仅是开关打开：实际发不发还看 thinking 是否给出具体预算。
+   */
+  sendThinking?: boolean;
+  /** 思考预算（token 数），由工厂从 [thinking] 配置注入；内部折算成 Step 档位。 */
+  thinking?: { budgetTokens?: number };
 }
 
 /**
@@ -39,6 +47,8 @@ export class OpenAiChatProvider implements ChatProvider {
   private readonly model: string;
   readonly maxTokens: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly sendThinking: boolean;
+  private readonly thinking?: { budgetTokens?: number };
 
   constructor(options: OpenAiChatProviderOptions) {
     this.apiKey = options.apiKey;
@@ -46,6 +56,8 @@ export class OpenAiChatProvider implements ChatProvider {
     this.model = options.model;
     this.maxTokens = options.maxTokens;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.sendThinking = options.sendThinking ?? false;
+    this.thinking = options.thinking;
   }
 
   stream(params: {
@@ -54,7 +66,14 @@ export class OpenAiChatProvider implements ChatProvider {
     messages: Anthropic.MessageParam[];
     signal?: AbortSignal;
     model?: string;
-    /** thinking 覆盖：openai 协议无 thinking 请求字段，忽略此参数（仅为对齐 ChatProvider 签名）。 */
+    /**
+     * thinking 覆盖（三态）：undefined 用构造默认；对象本次覆盖；null 本次强制不发。
+     *
+     * Step 的 Chat Completions **有**思考控制字段：顶层 `reasoning_effort`。
+     * 此前这里的注释写着「openai 协议无 thinking 请求字段，忽略此参数」并真的忽略了。
+     * 2026-08-02 实测（step-3.7-flash，重任务）：不发 effort 时思考 15975 字符，
+     * low 档 3248 字符——不下发等于放任思考跑到服务端默认深度。
+     */
     thinking?: { budgetTokens?: number } | null;
   }): ReturnType<Anthropic['messages']['stream']> {
     const model = params.model ?? this.model;
@@ -67,6 +86,12 @@ export class OpenAiChatProvider implements ChatProvider {
     };
     const tools = toolsToOpenAi(params.tools);
     if (tools.length > 0) body.tools = tools;
+
+    // reasoning_effort：预算未指定时不发字段，走服务端默认（不替用户猜档位）。
+    const thinking = params.thinking === undefined ? this.thinking : params.thinking;
+    if (this.sendThinking && thinking !== null && thinking !== undefined) {
+      Object.assign(body, stepEffortParam('chat', budgetToEffort(thinking.budgetTokens)));
+    }
 
     const accumulator = new OpenAiChatAccumulator();
     const fetchImpl = this.fetchImpl;
@@ -93,8 +118,22 @@ export class OpenAiChatProvider implements ChatProvider {
       if (res.body === null) {
         throw httpErrorToApiError(502, 'empty response body', res.headers);
       }
-      for await (const raw of parseSseStream(res.body)) {
-        const chunk = raw as OpenAiStreamChunk;
+
+      // 多 completion 分段（部分上游模型的行为）：一条流里可能出现多个 chunk.id，
+      // 且互为前缀关系 `inner === outer + "." + <后缀>`。外层段装的是模型内部工作痕迹
+      // （评审对话等），内层段才是真正的回答。判据是纯结构的，不依赖内容措辞。
+      //
+      // 实测形态（8/8 样本）：外层恒为流的第 1 帧且只有 1 帧，finish_reason=null，
+      // 内容为纯文本、不含 tool_calls。因此无需缓冲整条流：只把第一帧暂存，
+      // 等下一个不同 id 到来时判定前缀关系，即可决定第一帧的归属。这样流式输出不受影响。
+      //
+      // 若上游未来出现「外层多帧」或「外层带 tool_calls」的形态，需重新评估本策略。
+      let pendingFirst: OpenAiStreamChunk | undefined;
+      let outerId: string | undefined;
+      let decided = false;
+
+      /** 把一个 chunk 计入正文并产出流式事件（主 completion 路径）。 */
+      function* emitAsMain(chunk: OpenAiStreamChunk): Generator<Anthropic.MessageStreamEvent> {
         const choice = chunk.choices?.[0];
         if (choice?.delta !== undefined) {
           const delta = choice.delta;
@@ -121,6 +160,54 @@ export class OpenAiChatProvider implements ChatProvider {
         if (chunk.usage !== undefined && chunk.usage !== null) {
           accumulator.setUsage(chunk.usage);
         }
+      }
+
+      /** 把一个 chunk 的内容归入 thinking（外层段路径）：不进正文、不产出 text_delta。 */
+      function absorbAsOuter(chunk: OpenAiStreamChunk): void {
+        const delta = chunk.choices?.[0]?.delta;
+        if (delta === undefined) return;
+        if (typeof delta.content === 'string') accumulator.addThinking(delta.content);
+        const reasoning = delta.reasoning_content ?? delta.reasoning;
+        if (typeof reasoning === 'string') accumulator.addThinking(reasoning);
+        // 外层段的 finish_reason 刻意不采信：实测恒为 null，采信会覆盖主段的真实结束标志。
+        if (chunk.usage !== undefined && chunk.usage !== null) accumulator.setUsage(chunk.usage);
+      }
+
+      for await (const raw of parseSseStream(res.body)) {
+        const chunk = raw as OpenAiStreamChunk;
+
+        if (!decided) {
+          const id = chunk.id;
+          if (pendingFirst === undefined) {
+            // 第一帧：暂不处理，等下一帧的 id 才能判断它是外层还是主段。
+            pendingFirst = chunk;
+            outerId = id;
+            continue;
+          }
+          // 第二帧：判定前缀关系。
+          decided = true;
+          const isOuter =
+            typeof id === 'string' &&
+            typeof outerId === 'string' &&
+            id.length > outerId.length &&
+            id.startsWith(`${outerId}.`);
+          if (isOuter) {
+            absorbAsOuter(pendingFirst);
+          } else {
+            // 单 completion 流（绝大多数情况）：第一帧照常进正文，行为与分段前完全一致。
+            yield* emitAsMain(pendingFirst);
+          }
+          pendingFirst = undefined;
+          yield* emitAsMain(chunk);
+          continue;
+        }
+
+        yield* emitAsMain(chunk);
+      }
+
+      // 只有一帧的流：没有第二帧可比对，按主段处理（不可能是外层——外层必有内层跟随）。
+      if (pendingFirst !== undefined) {
+        yield* emitAsMain(pendingFirst);
       }
     }
 

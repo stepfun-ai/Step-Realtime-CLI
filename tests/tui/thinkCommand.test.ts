@@ -81,9 +81,17 @@ describe('thinkingAvailable 门控', () => {
     expect(thinkingAvailable('stepfun', undefined)).toBe(false);
   });
 
-  it('openai 系协议：即使 [thinking] enabled 也不可用（协议无 thinking 字段）', () => {
-    expect(thinkingAvailable('openai', enabled)).toBe(false);
-    expect(thinkingAvailable('openai_responses', enabled)).toBe(false);
+  it('openai 系协议：[thinking] enabled 时同样可用（三接口都有思考强度参数）', () => {
+    // 旧断言是 false，理由写着「协议无 thinking 字段」——该前提被官方文档推翻：
+    // Chat Completions 用 reasoning_effort，Responses 用 reasoning.effort，
+    // Messages 用 output_config.effort。三条路径 provider 工厂都在下发，UI 不该拦。
+    expect(thinkingAvailable('openai', enabled)).toBe(true);
+    expect(thinkingAvailable('openai_responses', enabled)).toBe(true);
+  });
+
+  it('openai 系协议：未启用 [thinking] 时仍不可用（预设 sendThinking=false）', () => {
+    expect(thinkingAvailable('openai', disabled)).toBe(false);
+    expect(thinkingAvailable('openai_responses', undefined)).toBe(false);
   });
 
   it('未知渠道 → 不可用', () => {

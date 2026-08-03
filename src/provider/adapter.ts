@@ -1,5 +1,4 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { AnthropicMessagesProvider } from './anthropicMessages.js';
 import { resolveCapability, type CapabilityOverride } from './capability-registry.js';
 import {
   applyReprojectionLevel,
@@ -8,6 +7,7 @@ import {
   type ReprojectionLevel,
 } from './degrader.js';
 import { projectMessages } from './projector.js';
+import { StepMessagesProvider } from './step/stepMessages.js';
 import type { ChatProvider } from './types.js';
 
 /**
@@ -106,15 +106,18 @@ export class StepfunAdapter implements StepProvider {
     this.overrides = options.capabilityOverrides;
     this.sendThinking = options.sendThinking ?? false;
     this.thinking = options.thinking;
+    // 内部协议 provider 用 StepMessagesProvider（不是 AnthropicMessagesProvider）：
+    // Step 的 /v1/messages 只认顶层 effort，官方的 thinking.budget_tokens 会被接受但
+    // 静默无效（实测见 step/stepCommon.ts 头注释）。用官方类等于思考深度完全不受控。
     this.inner =
       options.inner ??
-      new AnthropicMessagesProvider({
+      new StepMessagesProvider({
         apiKey: options.apiKey,
         baseUrl: options.baseUrl,
         model: options.model,
         maxTokens: options.maxTokens,
         sendThinking: this.sendThinking,
-        thinking: this.thinking,
+        ...(this.thinking !== undefined ? { thinking: this.thinking } : {}),
         sendCacheControl: false,
       });
   }
