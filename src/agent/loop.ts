@@ -158,8 +158,23 @@ function lastActivityMs(messages: StoredMessage[]): number | undefined {
 }
 
 /**
+ * 循环内压缩的结果三态。
+ *
+ * 布尔返回不够用：`false` 混了两种完全不同的情况——「没超阈值、无需动手」与
+ * 「超了阈值、动过手但压不出结果」。后者此前是**静默**的：fullCompact 失败会原样
+ * 返回历史，调用点看到 false 便既不提示也不置饱和，于是每一轮都再烧一次摘要请求，
+ * 用户全程看不到任何信号，直到最终 overflow 报错。三态把这两种分开。
+ */
+interface CompactOutcome {
+  /** 历史确实被改写了（micro 清理或 full 摘要成功）。 */
+  acted: boolean;
+  /** 超了阈值、真的尝试过 full 摘要，但没能产出可用结果（失败或质量闸门未过）。 */
+  attemptedButFailed: boolean;
+}
+
+/**
  * 循环内压缩：超阈值时先 micro（清旧 tool_result 正文，廉价），仍超再 full（LLM 摘要）。
- * 就地改 messages。返回是否发生了实际压缩（用于是否发 notice）。
+ * 就地改 messages。返回三态结果（见 {@link CompactOutcome}）。
  * micro 带缓存冷 gate：缓存仍热时跳过 micro（不击穿热前缀），直接评估 full（重建同构前缀更安全）。
  *
  * signal 透传给 full 压缩的模型调用：full 要等一次完整摘要请求（长历史可达数十秒），
@@ -177,9 +192,10 @@ async function maybeCompact(
   onWireEvent?: (event: WireEvent) => void,
   compactionProvider?: ChatProvider,
   signal?: AbortSignal,
-): Promise<boolean> {
-  if (!shouldCompact(usedTokens, thresholds)) return false;
+): Promise<CompactOutcome> {
+  if (!shouldCompact(usedTokens, thresholds)) return { acted: false, attemptedButFailed: false };
   let acted = false;
+  let attemptedButFailed = false;
   // micro 之前的估算基线，供下面按比例折算 usedTokens 用
   const estBefore = estimateTokens(messages);
   // 预防性压缩：micro 会原地改写历史击穿缓存，故仅在缓存已冷时做；热缓存交给 full 重建前缀
@@ -220,13 +236,17 @@ async function maybeCompact(
     if (compacted !== messages) {
       replaceMessages(messages, compacted);
       acted = true;
+    } else if (signal?.aborted !== true) {
+      // full 动过手却原样返回：摘要请求失败、或质量闸门连续未过。
+      // 中断除外——那是用户主动放弃，不是失败。
+      attemptedButFailed = true;
     }
   }
   // 压缩应用事件落盘：重放到此事件时内存历史整体替换为压缩后的存活序列
   if (acted) {
     onWireEvent?.({ type: 'context.apply_compaction', ts: new Date().toISOString(), messages: [...messages] });
   }
-  return acted;
+  return { acted, attemptedButFailed };
 }
 
 /**
@@ -329,20 +349,19 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         lastUsage !== undefined
           ? lastUsage.total + estimateTokens(messages.slice(lastUsage.measuredLength))
           : estimatedUsedWithFramework();
-      if (
-        await maybeCompact(
-          provider,
-          messages,
-          preflightUsed,
-          compaction,
-          opts.todos,
-          opts.compactionModel,
-          opts.userMessageBudget,
-          opts.onWireEvent,
-          opts.compactionProvider,
-          signal,
-        )
-      ) {
+      const outcome = await maybeCompact(
+        provider,
+        messages,
+        preflightUsed,
+        compaction,
+        opts.todos,
+        opts.compactionModel,
+        opts.userMessageBudget,
+        opts.onWireEvent,
+        opts.compactionProvider,
+        signal,
+      );
+      if (outcome.acted) {
         lastUsage = undefined; // 历史已就地重写，旧快照的 measuredLength 不再对应任何下标
         yield { type: 'notice', message: t('loop.autoCompacted') };
         // 与循环内压缩同一口径：立刻用字符估算刷新状态栏，不等下一次真实 usage
@@ -350,13 +369,20 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         // 确实压过了，但仍超阈值 → 剩下的历史压不动，置饱和，本 run 内不再自动压缩。
         // 用字符估算而非 preflightUsed——后者是压缩前的口径，压缩后已失效。
         //
-        // 只在「压过了仍超限」时置位。压不动（maybeCompact 返回 false，例如历史还太短、
-        // 保留窗口外没内容可摘要）**不算饱和**：历史继续增长后往往就能压了，此时置位会
-        // 让本 run 后续再也不压缩。这个区别是实测踩出来的。
+        // 只在「压过了仍超限」时置位。压不动（历史还太短、保留窗口外没内容可摘要）
+        // **不算饱和**：历史继续增长后往往就能压了，此时置位会让本 run 后续再也不压缩。
+        // 这个区别是实测踩出来的。
         if (shouldCompact(estimatedUsedWithFramework(), compaction)) {
           compactionSaturated = true;
           yield { type: 'notice', message: t('loop.overflow.noCompact') };
         }
+      } else if (outcome.attemptedButFailed) {
+        // 超了阈值、full 摘要动过手但没产出可用结果（请求失败或质量闸门连续未过）。
+        // 这条路径此前完全静默：不提示、不置饱和，于是每一轮都再烧一次摘要请求，
+        // 用户直到最终 overflow 报错才知道压缩一直在失败。
+        // 现在明确告知并置饱和——同一个 run 内它几乎必然继续失败，重试只是重复花钱。
+        compactionSaturated = true;
+        yield { type: 'notice', message: t('loop.compactFailed') };
       }
     }
     // 每回合重新组装 tools：tool_search 等动态注册的工具（DYNAMIC_TOOLS）在下一回合
