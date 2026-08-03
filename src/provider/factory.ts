@@ -1,4 +1,9 @@
-import { PROVIDER_PRESETS, type StepCodeConfig } from '../config/config.js';
+import {
+  DEFAULT_THINKING_LEVEL,
+  DEFAULT_THINKING_LEVELS,
+  PROVIDER_PRESETS,
+  type StepCodeConfig,
+} from '../config/config.js';
 import { t } from '../i18n.js';
 import { StepfunAdapter } from './adapter.js';
 import { capabilitiesToOverride } from './capability-registry.js';
@@ -31,24 +36,30 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
   const apiKey = config.apiKey;
 
   // thinking 解析必须在所有协议分支之前：Step 的三个接口都有思考控制字段
-  // （messages→effort、chat→reasoning_effort、responses→reasoning.effort），
+  // （messages→output_config.effort、chat→reasoning_effort、responses→reasoning.effort），
   // 此前这段解析放在 openai 分支之后，那两条路径根本拿不到值，注释还写着
   // 「openai 协议下忽略」——实测证明它们都支持且单调生效，忽略等于放任服务端默认深度。
   //
   // sendThinking：stepfun 预设为 false（历史实测部分模型 400），用户显式配置
   // [thinking] enabled=true 时覆盖为 true；anthropic 预设虽为 true，未配 [thinking]
   // 时 thinking 参数为空，照样不发。
-  // default_level 命中档位表时其 budget 作为构造默认（会话级 /think 覆盖之外的基线）；
-  // 未配 default_level 时回落 budget_tokens。
+  //
+  // ## 为什么下发的对象同时带 level 和 budgetTokens
+  //
+  // 两类协议要的东西不同，且不可互相推导：
+  // - 阶跃三接口只收档位字符串（low|medium|high），必须原样拿到 level；
+  // - 原生 Anthropic 只收数字 thinking.budget_tokens，必须拿到 budgetTokens。
+  //
+  // 曾经只下发 budgetTokens，由 provider 用 budgetToEffort() 反推档位。那个反推
+  // 阈值是硬编码的，用户改 [thinking.levels] 的数字就会错档（配 medium=20000
+  // 反推出 high），且属于「先把档位编码成数字、再猜回档位」的无谓损耗。
+  // 现在档位名直达，数字只喂给真正需要它的那一条路径。
   const thinkingEnabled = config.thinking?.enabled === true;
-  const defaultLevelBudget =
-    config.thinking?.defaultLevel !== undefined
-      ? config.thinking.levels[config.thinking.defaultLevel]
-      : undefined;
   const sendThinking = preset.sendThinking || thinkingEnabled;
-  const budgetTokens = defaultLevelBudget ?? config.thinking?.budgetTokens;
-  const thinking =
-    thinkingEnabled && budgetTokens !== undefined ? { budgetTokens } : undefined;
+  const level = config.thinking?.defaultLevel ?? DEFAULT_THINKING_LEVEL;
+  const thinking = thinkingEnabled
+    ? { level, budgetTokens: (config.thinking?.levels ?? DEFAULT_THINKING_LEVELS)[level] }
+    : undefined;
 
   if (preset.protocol === 'openai') {
     return new OpenAiChatProvider({

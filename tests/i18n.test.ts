@@ -69,6 +69,66 @@ describe('两表 key 一致性', () => {
   });
 });
 
+describe('文案不得复活已被实测推翻的结论', () => {
+  /**
+   * 这组断言防的是一类反复发生的问题：某个结论被实测推翻、代码也改了，
+   * 但当初照着旧结论写的用户文案漏改，于是界面继续传播错误信息。
+   *
+   * 已发生两次：
+   * 1. 「空响应通常是网关瞬时故障，请重新发送」——归因无依据，实际最常见成因是
+   *    思考吃满输出预算，重发必然复现。这句话让排查方向偏了整整一个阶段。
+   * 2. 「降低思考档位无效，各档思考量相近」——该结论测于一个 bug 之上（档位参数
+   *    发错字段位置、服务端静默忽略，所以各档当然一样）。参数修正后降档是首选手段，
+   *    实测可压掉约 85% 思考量。但这条错误说法在 4 条 i18n 文案里存活到了 2026-08-03，
+   *    期间会主动劝用户放弃唯一有效的手段。
+   *
+   * 新增此类护栏的判断标准：某个说法被实测推翻，且它出现在**面向用户的文案**里。
+   * 只在代码注释里讲历史不算（注释就该记录被推翻的过程）。
+   */
+  const FORBIDDEN: Array<{ pattern: RegExp; why: string }> = [
+    {
+      pattern: /降低思考档位无效|降档无效|各档.{0,6}思考.{0,6}(相近|没有差别|无差别)/,
+      why: '「降档无效」测于档位参数发错位置的 bug 之上，已被推翻；降档现在是首选手段（压掉约 85% 思考量）',
+    },
+    {
+      pattern: /lowering the thinking level does not help|nearly identical across levels/i,
+      why: 'same as above: the "lowering the level does not help" claim was measured on top of a bug',
+    },
+    {
+      pattern: /通常是网关或服务端的瞬时故障/,
+      why: '空响应归因无证据支撑，实测最常见成因是思考吃满输出预算，重发必然复现',
+    },
+    {
+      pattern: /usually a transient (gateway|server)/i,
+      why: 'same as above: the transient-failure attribution for empty responses is unsupported',
+    },
+  ];
+
+  for (const locale of ['zh', 'en'] as const) {
+    it(`${locale} 表不含已推翻的结论`, () => {
+      for (const [key, text] of Object.entries(I18N_TABLES[locale])) {
+        for (const { pattern, why } of FORBIDDEN) {
+          expect(pattern.test(text!), `${locale}.${key} 复活了已推翻的结论：${why}\n  文案：${text}`).toBe(
+            false,
+          );
+        }
+      }
+    });
+  }
+
+  it('思考耗尽预算的提示必须给出降档这个手段', () => {
+    // 正面断言：不只是「别说错的」，还要「必须说对的」。
+    // 这条提示是用户遇到空响应时唯一的行动指引，漏掉降档等于只给了一半的解法。
+    for (const key of ['loop.maxTokens.thinkingExhausted', 'loop.maxTokens.thinkingExhaustedWithLimit']) {
+      expect(I18N_TABLES.zh[key], `zh.${key} 应提到 /think 降档`).toMatch(/\/think/);
+      expect(I18N_TABLES.en[key], `en.${key} 应提到 /think 降档`).toMatch(/\/think/);
+      // 同时保留调大 max_tokens 这条（两个手段都有效，不该只给一个）
+      expect(I18N_TABLES.zh[key], `zh.${key} 应提到 max_tokens`).toMatch(/max_tokens/);
+      expect(I18N_TABLES.en[key], `en.${key} 应提到 max_tokens`).toMatch(/max_tokens/);
+    }
+  });
+});
+
 describe('/lang 命令元信息', () => {
   it('SLASH_COMMANDS 已注册 lang', () => {
     const cmd = SLASH_COMMANDS.find((c) => c.name === 'lang');

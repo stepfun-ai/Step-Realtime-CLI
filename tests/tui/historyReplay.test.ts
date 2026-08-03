@@ -114,6 +114,66 @@ describe('historyToDisplayItems', () => {
     expect(items).toEqual([{ kind: 'user', text: '真实输入' }]);
   });
 
+  // 系统自撰的 user 角色消息（协议要求挂在 user 下，但不是真人输入）不得渲染成用户气泡：
+  // 否则 resume 后用户会看到自己「说」过中断提示、后台任务 XML 信封、压缩摘要——那些话从没打过。
+  describe('系统自撰的 user 消息不冒充用户输入', () => {
+    it('中断提示（injection）不进历史区', () => {
+      const messages: StoredMessage[] = [
+        m({ role: 'user', content: '查一下 X' }, 'user', 'u1'),
+        m({ role: 'user', content: '用户中断了模型的本次输出。这不是系统错误，请等待用户的下一步指示。' }, 'injection', 'inj1'),
+      ];
+      const { items } = historyToDisplayItems(messages);
+      expect(items.filter((i) => i.kind === 'user')).toHaveLength(1);
+      expect(items.some((i) => (i.text ?? '').includes('这不是系统错误'))).toBe(false);
+    });
+
+    it('压缩摘要不渲染成用户气泡', () => {
+      const messages: StoredMessage[] = [
+        m({ role: 'user', content: '之前聊到的内容摘要……' }, 'compaction_summary', 'cs1'),
+        m({ role: 'user', content: '继续' }, 'user', 'u1'),
+      ];
+      const { items } = historyToDisplayItems(messages);
+      expect(items).toEqual([{ kind: 'user', text: '继续' }]);
+    });
+
+    it('后台任务通知降级为 note，XML 信封正文不外泄', () => {
+      const envelope = '<notification id="task:bg1:done" category="task">\n后台任务完成\n</notification>';
+      const messages: StoredMessage[] = [
+        {
+          message: { role: 'user', content: envelope },
+          origin: { kind: 'background_task', taskId: 'bg1', notificationId: 'task:bg1:done' },
+          id: 'bg1',
+          ts: new Date().toISOString(),
+        },
+      ];
+      const { items } = historyToDisplayItems(messages);
+      expect(items).toHaveLength(1);
+      expect(items[0]?.kind).toBe('note'); // 不是 user
+      expect(items[0]?.text).toContain('bg1');
+      expect(items[0]?.text).not.toContain('<notification'); // 给模型看的信封不摆给用户
+    });
+
+    it('user_verbatim（压缩保真的真人原话）仍作为用户输入保留', () => {
+      const messages: StoredMessage[] = [
+        m({ role: 'user', content: '这是我当初说的话' }, 'user_verbatim', 'uv1'),
+      ];
+      const { items } = historyToDisplayItems(messages);
+      expect(items).toEqual([{ kind: 'user', text: '这是我当初说的话' }]);
+    });
+
+    it('工具结果回灌（tool origin）不渲染成用户气泡', () => {
+      const messages: StoredMessage[] = [
+        m(
+          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: '结果' }] },
+          'tool',
+          't1',
+        ),
+      ];
+      const { items } = historyToDisplayItems(messages);
+      expect(items.some((i) => i.kind === 'user')).toBe(false);
+    });
+  });
+
   it('图片块转成 [图片] 占位', () => {
     const messages: StoredMessage[] = [
       m(

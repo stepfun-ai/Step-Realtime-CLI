@@ -23,19 +23,27 @@ import { renderSkillActivation, skillListing, type SkillRegistry, type SkillRegi
 import type { AgentDefinition } from '../agent/subagent/types.js';
 import type { StepCodeConfig } from '../config/config.js';
 import { subagentListing } from '../agent/systemPrompt.js';
-import { PROVIDER_PRESETS, resolveModelEntry, saveDefaultModel, saveLanguage } from '../config/config.js';
+import {
+  DEFAULT_THINKING_LEVEL,
+  PROVIDER_PRESETS,
+  resolveModelEntry,
+  saveDefaultModel,
+  saveLanguage,
+} from '../config/config.js';
 import { getLocale, setLocale, t, type Locale } from '../i18n.js';
 import { createProvider } from '../provider/factory.js';
 import { resolveCompactionBinding } from '../provider/compaction.js';
+import { isAbortError } from '../provider/retry.js';
 import type { ChatProvider } from '../provider/types.js';
 import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload } from './reload.js';
 import type { ToolContext } from '../tools/types.js';
 import type { TodoItem } from '../tools/types.js';
 import { clearDynamicTools } from '../tools/index.js';
-import { AgentGroup, formatAgentGroupSummary } from './AgentGroup.js';
+import { AgentGroup, agentGroupRows, formatAgentGroupSummary, formatDetachedHandoff } from './AgentGroup.js';
 import { ExpandViewer, collectExpandable } from './ExpandViewer.js';
 import { TasksViewer } from './TasksViewer.js';
 import { ApprovalPrompt, denyReason, estimateChromeRows as estimateApprovalRows, type ApprovalRequest } from './ApprovalPrompt.js';
+import { PlanBox, planBoxRows, type PlanResolve } from './PlanBox.js';
 import { QuestionPrompt, estimateChromeRows as estimateQuestionRows } from './QuestionPrompt.js';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { readClipboardImage, clipboardToolHint } from './clipboardImage.js';
@@ -71,6 +79,7 @@ import {
 } from './undo.js';
 import {
   parseThinkArgs,
+  THINK_CHOICES,
   thinkBudgetSafety,
   thinkLevelsOf,
   thinkStatusLabel,
@@ -326,7 +335,8 @@ export function App({
   // 输入框里当前有效图片占位符数（从 input 派生，占位符增删自动跟随）。必须在 imageStore 定义之后声明。
   const imageCount = useMemo(() => imageStore.current.activeIds(input).length, [input]);
   const pendingPlanRef = useRef<PendingPlan | null>(null);
-  const planResolver = useRef<((approved: boolean) => void) | null>(null);
+  // 计划审批结果：approved + 拒绝时的修订意见（feedback 经 deny reason 回给模型）
+  const planResolver = useRef<((r: { approved: boolean; feedback?: string }) => void) | null>(null);
   // 询问用户：双 ref 模式（沿用审批/计划）。发起时存 resolve + setPending 触发渲染，答完/取消 resolve 恢复 generator。
   const pendingQuestionRef = useRef<AskUserRequest | null>(null);
   const questionResolver = useRef<((answers: QuestionAnswers) => void) | null>(null);
@@ -350,6 +360,9 @@ export function App({
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 并行/批量子 agent 的进度（spawn_agent 调用时建条目，tool_end 标完成，onEvent 更新活动）。
   const [subagents, setSubagents] = useState<import('./AgentGroup.js').SubagentProgress[]>([]);
+  // 同值镜像：回合收尾回调（settle）里的闭包可能捕获旧 state，交接记录必须读当前值。
+  const subagentsRef = useRef<import('./AgentGroup.js').SubagentProgress[]>([]);
+  subagentsRef.current = subagents;
   // 运行中的 workflow 工具调用 id 栈：onWorkflowStep 与 wf- 前缀子 agent 事件据此定位步骤面板。
   const activeWorkflowRef = useRef<string[]>([]);
   // 上下文占用 token（状态栏 context 进度条）：平时由 provider 真实 usage 事件驱动，
@@ -394,6 +407,19 @@ export function App({
   // 发送缓冲队列中的后台通知文本 → 预装配消息本体（多条各自独立入队）：
   // shift 发出时取回本体注入 history（带 background_task origin），并带 recordHistory:false。
   const notifyMsgRef = useRef<Map<string, StoredMessage>>(new Map());
+  // busy 时入队的系统合成注入（cron prompt / skill 正文 / goal 续跑文本）的文本登记：
+  // queue 是 string[] 存不下标记，drain 时据此还原 silent，避免系统正文被当真人输入渲染成气泡。
+  // 后台通知不靠它——通知有 notifyMsgRef 的预装配本体，drain 时按 prepared 判定。
+  const silentQueuedRef = useRef<Set<string>>(new Set());
+  /**
+   * 队列里的某条文本是否为系统合成注入（后台通知信封 / cron prompt / skill 正文 / goal 续跑文本）。
+   * 三处共用：队列预览的占位渲染、Esc 恢复草稿的过滤、↑ 取回的拦截。
+   * 判据是两张登记表——通知看预装配本体（notifyMsgRef），其余 silent 注入看文本登记（silentQueuedRef）。
+   */
+  const isSystemInjectedText = useCallback(
+    (s: string): boolean => notifyMsgRef.current.has(s) || silentQueuedRef.current.has(s),
+    [],
+  );
 
   /**
    * 把终态/对账补投通知装配入发送队列：XML 信封消息本体登记（shift 时带 origin 注入 history）、
@@ -522,10 +548,18 @@ export function App({
   const recallQueued = useCallback((): string | undefined => {
     const recalled = queue.current.pop();
     if (recalled === undefined) return undefined;
+    // 系统合成注入（后台通知信封 / cron prompt / skill 正文）不给取回编辑：正文是给模型看的，
+    // 弹进输入框只是一段 XML，用户改完提交还会以真人身份进历史。原位放回并放弃本次取回——
+    // 不跨过它往前翻，队列的 FIFO 投递顺序不能因为一次取回被打乱。
+    if (isSystemInjectedText(recalled)) {
+      queue.current.push(recalled);
+      setQueueLen(queue.current.length);
+      return undefined;
+    }
     notifyMsgRef.current.delete(recalled);
     setQueueLen(queue.current.length);
     return recalled;
-  }, []);
+  }, [isSystemInjectedText]);
 
   // 同名 skill 冲突提示文本：哪个来源被采用、覆盖了谁（无冲突返回 null）
   const skillConflictNote = useCallback((): string | null => {
@@ -655,10 +689,22 @@ export function App({
     startupReconciledRef.current = true;
     const redeliver = background.current.reconcile(resumeDelivered ?? new Set()).redeliver;
     if (redeliver.length === 0) return;
-    for (const task of redeliver) queueNotification(task);
+    // 补投通知本体走 silent 注入（正文是给模型看的 XML 信封），用户侧可见性由这条 note 承担。
+    // 实时终态走 settleHandler 已 push 过 note，此处是上次会话遗留、settleHandler 未曾触发的那批。
+    for (const task of redeliver) {
+      pushItem({
+        kind: 'note',
+        text: t('background.redelivered', {
+          id: task.id,
+          status: t(`background.status.${task.status}`),
+          command: task.command,
+        }),
+      });
+      queueNotification(task);
+    }
     setQueueLen(queue.current.length);
     turnEndRef.current();
-  }, [queueNotification, resumeDelivered]);
+  }, [pushItem, queueNotification, resumeDelivered]);
   useEffect(() => {
     if (goalView === null || goalView.status !== 'active') return;
     const timer = setInterval(() => setGoalNow(Date.now()), 15_000);
@@ -685,16 +731,16 @@ export function App({
     });
   }, []);
 
-  const askPlanApproval = useCallback((plan: string): Promise<boolean> => {
-    return new Promise<boolean>((resolve) => {
+  const askPlanApproval = useCallback((plan: string): Promise<{ approved: boolean; feedback?: string }> => {
+    return new Promise<{ approved: boolean; feedback?: string }>((resolve) => {
       planResolver.current = resolve;
       pendingPlanRef.current = { plan };
       setPendingPlan({ plan });
     });
   }, []);
 
-  const resolvePlan = useCallback(
-    (approved: boolean) => {
+  const resolvePlan = useCallback<PlanResolve>(
+    (approved, feedback) => {
       const pp = pendingPlanRef.current;
       pendingPlanRef.current = null;
       setPendingPlan(null);
@@ -703,7 +749,7 @@ export function App({
       if (approved && pp !== null) {
         pushItem({ kind: 'assistant', text: t('app.plan.approved', { plan: pp.plan }) });
       }
-      resolve?.(approved);
+      resolve?.({ approved, feedback });
     },
     [pushItem],
   );
@@ -919,10 +965,9 @@ export function App({
     if (sessionPickerOpen) {
       return;
     }
-    // 计划确认框优先（Ready to code?）
+    // 计划确认框打开时：全部按键交给 PlanBox 自身的 useInput 处理（↑↓/数字/y/n/f/Enter/Esc），App 不插手
+    // （与 ApprovalPrompt / QuestionPrompt 同一模式）
     if (pendingPlanRef.current !== null) {
-      if (key === 'y') resolvePlan(true);
-      else if (key === 'n' || meta.escape) resolvePlan(false);
       return;
     }
     // 审批态：全部按键交给 ApprovalPrompt 自身的 useInput 处理（↑↓/数字/y/a/n/Enter/Esc），App 不插手
@@ -987,12 +1032,21 @@ export function App({
     if (meta.escape && !busyRef.current) {
       // 3-1. 队列非空：合并回输入框草稿（restore composer），给用户编辑权
       if (queue.current.length > 0) {
-        const restored = queue.current.join('\n');
+        // 系统合成注入（后台通知信封 / cron prompt / skill 正文）不进输入框草稿：正文是给模型
+        // 看的，用户既不该编辑也读不懂，灌进去只会得到一段 XML。这些条目随队列一起丢弃（与本
+        // 分支原有的清空语义一致，不额外保留，否则 Esc 永远进不到下面的回退分支），但单独报数：
+        // 被丢弃的通知不会再补投，delivered 事件在 queueNotification 入队时已落盘，对账认定已送达。
+        const dropped = queue.current.filter(isSystemInjectedText).length;
+        const drafts = queue.current.filter((s) => !isSystemInjectedText(s));
         queue.current = [];
         notifyMsgRef.current.clear();
+        silentQueuedRef.current.clear();
         setQueueLen(0);
-        setInput(restored);
-        pushItem({ kind: 'note', text: t('app.queue.restored') });
+        setInput(drafts.join('\n'));
+        pushItem({
+          kind: 'note',
+          text: dropped > 0 ? t('app.queue.restoredDropped', { count: dropped }) : t('app.queue.restored'),
+        });
         return;
       }
       // 3-2. 队列空 + 输入框空 + 有可回退 user 消息：双击 Esc 回退编辑
@@ -1146,7 +1200,7 @@ export function App({
             typeof (req.input as { plan?: unknown })?.plan === 'string'
               ? ((req.input as { plan: string }).plan)
               : '';
-          const approved = await askPlanApproval(plan);
+          const { approved, feedback } = await askPlanApproval(plan);
           if (approved) {
             const restore = prePlanModeRef.current ?? modeRef.current;
             prePlanModeRef.current = null;
@@ -1154,9 +1208,14 @@ export function App({
             changeMode(restore);
             return { decision: 'allow' };
           }
+          // 带上用户写的修订意见（此前只回一句固定话术，提示文案却写着「反馈给模型修订」，
+          // 承诺了一个不存在的通道）。无反馈时退回原来的通用话术。
           return {
             decision: 'deny',
-            reason: '用户拒绝了该计划。请根据反馈修订计划后再次用 exit_plan_mode 提交，或向用户询问如何调整。',
+            reason:
+              feedback !== undefined
+                ? `用户拒绝了该计划，修订意见：${feedback}\n请据此修订后再次用 exit_plan_mode 提交。`
+                : '用户拒绝了该计划。请根据反馈修订计划后再次用 exit_plan_mode 提交，或向用户询问如何调整。',
           };
         }
         const d = decide(req.name, modeRef.current, sessionApprovals.current);
@@ -1389,7 +1448,18 @@ export function App({
         onSettle: (task) => settleHandlerRef.current?.(task),
       });
       const redeliver = background.current.reconcile(delivered).redeliver;
-      for (const task of redeliver) queueNotification(task);
+      // 同启动对账：补投本体 silent 注入，可见性靠 note（这批任务的 settleHandler 属于上个会话，本会话未触发）
+      for (const task of redeliver) {
+        pushItem({
+          kind: 'note',
+          text: t('background.redelivered', {
+            id: task.id,
+            status: t(`background.status.${task.status}`),
+            command: task.command,
+          }),
+        });
+        queueNotification(task);
+      }
       if (redeliver.length > 0) setQueueLen(queue.current.length);
       // 恢复该会话的 goal 快照（active 降级 paused，防 resume 后自动续跑）
       goal.current.restore(data.goal);
@@ -1502,7 +1572,7 @@ export function App({
         kind: 'note',
         text: t('app.think.switched', {
           level: name,
-          detail: name === 'off' ? t('thinkPicker.offDetail') : t('thinkPicker.budget', { budget: levels[name] ?? 0 }),
+          detail: name === 'off' ? t('thinkPicker.offDetail') : t(`thinkPicker.detail.${name}`),
         }),
       });
       // 余量防线：切到的档位在当前 max_tokens 下正文余量不足时给 warning（不硬拦，尊重用户）。
@@ -1552,17 +1622,16 @@ export function App({
           break;
         }
         case 'think': {
-          const levels = thinkLevelsOf(configRef.current.thinking);
           // 门控：非 anthropic 协议或未允许发送 thinking 字段时不可用（只提示，不切换）
           if (!thinkingAvailable(providerNameRef.current, configRef.current.thinking)) {
             pushItem({ kind: 'note', text: t('app.think.unavailable') });
             break;
           }
-          const result = parseThinkArgs(args, levels);
+          const result = parseThinkArgs(args);
           if (result.kind === 'invalid') {
             pushItem({
               kind: 'note',
-              text: t('app.think.invalid', { name: result.name, list: [...Object.keys(levels), 'off'].join(' / ') }),
+              text: t('app.think.invalid', { name: result.name, list: [...THINK_CHOICES, 'off'].join(' / ') }),
             });
             break;
           }
@@ -1576,16 +1645,16 @@ export function App({
               thinkOverride === 'off'
                 ? 'off'
                 : thinkOverride !== undefined
-                  ? `${thinkOverride} (${t('thinkPicker.budget', { budget: levels[thinkOverride] ?? 0 })})`
+                  ? `${thinkOverride} (${t(`thinkPicker.detail.${thinkOverride}`)})`
                   : t('app.think.followDefault');
-            const lines = Object.entries(levels)
-              .map(([n, b]) => t('app.think.levelLine', { name: n, budget: b }))
-              .join('\n');
+            const lines = THINK_CHOICES.map((n) =>
+              t('app.think.levelLine', { name: n, detail: t(`thinkPicker.detail.${n}`) }),
+            ).join('\n');
             pushItem({
               kind: 'note',
               text: t('app.think.status', {
                 current,
-                defaultLevel: configRef.current.thinking?.defaultLevel ?? t('app.think.noDefault'),
+                defaultLevel: configRef.current.thinking?.defaultLevel ?? DEFAULT_THINKING_LEVEL,
                 lines,
               }),
             });
@@ -1852,6 +1921,11 @@ export function App({
           const before = estimateTokens(history.current);
           busyRef.current = true;
           setBusy(true);
+          // 压缩要等一次完整摘要请求（长历史可达数十秒）。挂上 abortRef 让 Esc 能中断——
+          // 复用回合中断的同一通道，因此 Esc 的三态优先级（弹层 > 中断 > 空闲）自动适用，
+          // 输入框里有斜杠命令时 Esc 仍归 PromptInput 关菜单，不会误中断压缩。
+          const controller = new AbortController();
+          abortRef.current = controller;
           pushItem({ kind: 'note', text: t('app.compact.running') });
           void (async () => {
             try {
@@ -1865,7 +1939,14 @@ export function App({
                   maxTokens: configRef.current.compaction.userMessageMaxTokens,
                   headTokens: configRef.current.compaction.userMessageHeadTokens,
                 },
+                controller.signal,
               );
+              // 中断时 fullCompact 原样返回历史（同引用），下面的 !== 判定天然不成立：
+              // 不替换历史、不落事件、不清 undo 栈，会话完整停在压缩前状态。
+              if (controller.signal.aborted) {
+                pushItem({ kind: 'note', text: t('app.compact.aborted') });
+                return;
+              }
               if (compacted !== history.current) {
                 history.current = compacted;
                 // 压缩应用事件落盘：重放到此事件时内存历史整体替换为压缩后的存活序列（与循环内压缩同一口径）
@@ -1883,10 +1964,17 @@ export function App({
               pushItem({ kind: 'note', text: t('app.compact.done', { before, after }) });
               persist();
             } catch (e) {
-              pushItem({ kind: 'error', text: t('app.compact.failed', { message: (e as Error).message }) });
+              // 中断走 note 而非 error：用户主动取消不是故障，红色报错会造成「压缩坏了」的错觉
+              if (controller.signal.aborted || isAbortError(e)) {
+                pushItem({ kind: 'note', text: t('app.compact.aborted') });
+              } else {
+                pushItem({ kind: 'error', text: t('app.compact.failed', { message: (e as Error).message }) });
+              }
             } finally {
               setBusy(false);
               busyRef.current = false;
+              // 只清自己挂的那个：期间若已被别的流程改写（理论上 busy 互斥不会发生），不误清他人的
+              if (abortRef.current === controller) abortRef.current = null;
               // /compact 可能由队列 shift 出来执行：收尾复用统一入口排空剩余队列（修复压缩后队列滞留）
               turnEndRef.current();
             }
@@ -2138,6 +2226,20 @@ export function App({
       // 发送缓冲队列：busy 时入队（FIFO），回合结束自动逐条发送
       if (busyRef.current) {
         if (text === '') return; // 图片输入 busy 时暂不入队（简化）
+        // 系统合成注入（后台通知信封 / cron prompt / skill 正文 / goal 续跑文本）先分流，
+        // 下面四条真人输入的处理对它一条都不适用：
+        // 1. 不解析斜杠——正文以 `/` 开头会被误判成命令即时执行；
+        // 2. 不走 goal steer——那是真人留言通道，灌进系统正文会污染下一轮自主注入；
+        // 3. 不清输入框——用户可能正在打字，注入是后台行为，不该动他的草稿；
+        // 4. note 不回显正文——正文是给模型看的，技能正文/XML 信封可能上万字。
+        // 入队时登记 silent 标记，drain 时据此还原 silent（queue 是 string[]，标记只能旁路存）。
+        if (opts?.silent === true) {
+          queue.current.push(text);
+          silentQueuedRef.current.add(text);
+          setQueueLen(queue.current.length);
+          pushItem({ kind: 'note', text: t('app.queue.addedSilent', { index: queue.current.length }) });
+          return;
+        }
         // busy 时斜杠命令先解析分流：只读/纯 UI 命令（/help /goal /loop /resume /lang 及无参查询）即时执行，
         // 改动 turn 前提的命令（/model /compact /new 等）与普通消息一样入队
         let isSlash = false;
@@ -2351,6 +2453,7 @@ export function App({
             maxTokens: configRef.current.compaction.userMessageMaxTokens,
             headTokens: configRef.current.compaction.userMessageHeadTokens,
           },
+          maxAutoContinues: configRef.current.continuation?.maxAutoContinues,
           todos: todos.current,
           // 后台任务终态通知：busy 中在 runAgent 每个回合边界 flush 进 messages（不等循环结束）
           injectBackgroundNotifications: true,
@@ -2402,7 +2505,19 @@ export function App({
       // 通知条目不记输入历史（notifyMsgRef 取出预装配本体，发出即摘除）
       const prepared = notifyMsgRef.current.get(plan.text);
       if (prepared !== undefined) notifyMsgRef.current.delete(plan.text);
-      void submit(plan.text, prepared !== undefined ? { recordHistory: false, prepared } : undefined);
+      // 入队时登记过的系统合成注入：同样摘除并还原 silent
+      const wasSilent = silentQueuedRef.current.delete(plan.text);
+      // silent 必须随 prepared 一起给：正文是给模型看的 XML 信封，漏掉 silent 会被当普通用户输入
+      // 渲染成 `› <notification …>` 黄色气泡（系统冒充用户打字）。可见性由 settleHandler /
+      // 补投处的 note 条目承担，与 historyReplay 的 background_task 降级渲染保持一致。
+      void submit(
+        plan.text,
+        prepared !== undefined
+          ? { recordHistory: false, silent: true, prepared }
+          : wasSilent
+            ? { recordHistory: false, silent: true }
+            : undefined,
+      );
       return;
     }
     if (plan.action === 'submit-continuation' && cont !== null) {
@@ -2421,7 +2536,14 @@ export function App({
     // idle：pending 弹层期间队列与续接都留待下一收尾点；彻底无事可做时清中断残留面板
     setQueueLen(queue.current.length);
     if (queue.current.length === 0 && cont === null) {
-      // 兜底：全终态的面板已由上方 effect 冻结摘要后撤下；这里清的是中断等非常规收尾的残留
+      // 兜底：全终态的面板已由上方 effect 冻结摘要后撤下；这里清的是中断等非常规收尾的残留。
+      // 面板只承载「前台在跑、用户正在等」的子 agent；已 detach 转后台的由 bg:N 徽章、
+      // 终态通知条目与 /tasks 浏览器接管（activeBackgroundCount 计入 detached 任务），
+      // 故此处清空是正确的——但清空前必须为仍在运行的条目留一条可回看的交接记录，
+      // 否则表现为「回答一结束，进度和 token 就凭空消失」。
+      // 读取用 ref 而非 state：本函数是回合收尾回调，闭包里的 state 可能是旧值。
+      const detaching = subagentsRef.current.filter((a) => a.status === 'running' || a.status === 'queued');
+      if (detaching.length > 0) pushItem({ kind: 'note', text: formatDetachedHandoff(detaching) });
       setSubagents([]);
     }
   };
@@ -2471,7 +2593,9 @@ export function App({
           notificationId: notificationIdFor(task),
         });
         const text = typeof msg.message.content === 'string' ? msg.message.content : '';
-        void submit(text, { recordHistory: false, prepared: msg });
+        // silent：通知正文是给模型看的 XML 信封，不能作为用户气泡显示——那等于系统冒充用户
+        // 打了一段话进输入区。用户侧的可见性由上方 pushItem 的 note 条目承担（人读格式）。
+        void submit(text, { recordHistory: false, silent: true, prepared: msg });
       }
     }
     // busy：什么都不做——通知已在管理器待投递队列，等 runAgent 回合边界 flush
@@ -2516,13 +2640,16 @@ export function App({
     }
     return rows;
   })();
-  // 思考深度选择器候选清单：档位表各档（右列 budget）+ 尾部 off 项；
+  // 思考深度选择器候选清单：三个档位（右列为档位语义说明）+ 尾部 off 项；
   // 当前项按会话覆盖判定（无覆盖时命中 config 默认档位算当前）。
-  const thinkLevels = thinkLevelsOf(configRef.current.thinking);
+  //
+  // 右列曾经显示 [thinking.levels] 的 token 数，那是误导：阶跃三个接口都不收数字，
+  // 只收档位字符串，那个数字对阶跃渠道根本不会发出。显示一个不生效的数字，
+  // 会让用户以为自己在调节一个精确预算。改为显示档位的行为含义。
   const thinkPickerItems: ThinkPickerItem[] = [
-    ...Object.entries(thinkLevels).map(([name, budget]) => ({
+    ...THINK_CHOICES.map((name) => ({
       name,
-      detail: t('thinkPicker.budget', { budget }),
+      detail: t(`thinkPicker.detail.${name}`),
       current: thinkOverride === undefined ? name === configRef.current.thinking?.defaultLevel : name === thinkOverride,
     })),
     { name: 'off', detail: t('thinkPicker.offDetail'), current: thinkOverride === 'off' },
@@ -2548,14 +2675,9 @@ export function App({
   if (pendingQuestion !== null) {
     promptRows = estimateQuestionRows(pendingQuestion, stdout?.columns);
   } else if (pendingPlan !== null) {
-    // 计划确认框：margin 1 + 边框 2 + 标题（折行）+ 计划正文逐行折行 + 提示（折行）
-    const planHint = `y${t('app.plan.readyHintMiddle')}n${t('app.plan.readyHintEnd')}`;
-    promptRows =
-      1 +
-      2 +
-      wrappedRows(t('app.plan.readyTitle'), overlayInner) +
-      pendingPlan.plan.split('\n').reduce((n, line) => n + wrappedRows(line, overlayInner), 0) +
-      wrappedRows(planHint, overlayInner);
+    // 计划确认框：行数公式与 PlanBox 的 JSX 同文件维护（见 planBoxRows），
+    // 正文按 markdown 实际渲染行数测量——用源行数会在表格场景系统性低估而触线清屏
+    promptRows = planBoxRows(pendingPlan.plan, stdout?.columns);
   } else if (pending !== null) {
     promptRows = estimateApprovalRows(pending, stdout?.columns);
   } else if (providerWizard.open) {
@@ -2700,15 +2822,9 @@ export function App({
     // TodoPanel：margin 1 + 边框 2 + 标题 1 + 最多 5 条 + 「+N more」1（条目已 wrap=truncate 单行）
     todoRows:
       todos.current.length > 0 ? 5 + Math.min(todos.current.length, 5) + (todos.current.length > 5 ? 1 : 0) : 0,
-    // AgentGroup：margin 1 + 边框 2 + 头部 1 + 每个子 agent 1 行（running 带活动描述再 +1）
-    agentRows:
-      subagents.length > 0
-        ? 4 +
-          subagents.reduce(
-            (n, a) => n + 1 + (a.status === 'running' && a.activity !== undefined && a.activity !== '' ? 1 : 0),
-            0,
-          )
-        : 0,
+    // AgentGroup 行数由组件自身导出（渲染结构与行数公式同文件维护，防漂移）。
+    // 漏算会让帧高越过 rows−1 红线 → Ink 全量清屏（\x1b[3J）清掉 scrollback → 向上滚动被拽回顶部。
+    agentRows: agentGroupRows(subagents),
     // QueuePreview：标题 1 + 前 3 条每条 ≤ 2 行 + 「还有 N 条」1 + ↑ 取回提示 1
     queueRows:
       queueLen > 0
@@ -2774,7 +2890,9 @@ export function App({
       {!overlayOpen && budget.thinkingRows > 0 ? <ThinkingPreview text={thinkingPreview} maxLines={budget.thinkingRows - 1} /> : null}
       {!overlayOpen ? <AgentGroup agents={subagents} /> : null}
       {!overlayOpen && budget.showTodos ? <TodoPanel todos={todos.current} /> : null}
-      {!overlayOpen && budget.showQueue ? <QueuePreview queue={queue.current} /> : null}
+      {!overlayOpen && budget.showQueue ? (
+        <QueuePreview queue={queue.current} isSystemInjected={isSystemInjectedText} />
+      ) : null}
       {/* 忙碌态状态行：spinner + 状态词 + elapsed + 本轮 output token，独占块放输入框正上方（下含 tip）。
           弹层（提问/审批/选择器）态不显示——那些态本就不 busy。 */}
       {!overlayOpen && busy && turnStartAt > 0 ? (
@@ -2789,18 +2907,7 @@ export function App({
       {overlayOpen ? null : pendingQuestion !== null ? (
         <QuestionPrompt req={pendingQuestion} onSubmit={resolveQuestion} onCancel={() => resolveQuestion({})} />
       ) : pendingPlan !== null ? (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={1}>
-          <Text color="green" bold>
-            {t('app.plan.readyTitle')}
-          </Text>
-          <Text>{pendingPlan.plan}</Text>
-          <Text>
-            <Text color="green">y</Text>
-            {t('app.plan.readyHintMiddle')}
-            <Text color="red">n</Text>
-            {t('app.plan.readyHintEnd')}
-          </Text>
-        </Box>
+        <PlanBox plan={pendingPlan.plan} onResolve={resolvePlan} termWidth={termWidth} />
       ) : pending !== null ? (
         <ApprovalPrompt req={pending} onResolve={resolveApproval} />
       ) : providerWizard.open ? (

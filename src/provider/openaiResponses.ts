@@ -6,8 +6,8 @@ import {
   parseSseStream,
   parseToolArguments,
 } from './openaiCommon.js';
-import { budgetToEffort, mapStepResponsesStatus, stepEffortParam } from './step/stepCommon.js';
-import type { ChatProvider } from './types.js';
+import { mapStepResponsesStatus, stepEffortParam } from './step/stepCommon.js';
+import type { ChatProvider, ThinkingParam } from './types.js';
 
 /** {@link OpenAiResponsesProvider} 构造参数。 */
 export interface OpenAiResponsesProviderOptions {
@@ -23,8 +23,8 @@ export interface OpenAiResponsesProviderOptions {
    * 为 true 时也仅是开关打开：实际发不发还看 thinking 是否给出具体预算。
    */
   sendThinking?: boolean;
-  /** 思考预算（token 数），由工厂从 [thinking] 配置注入；内部折算成 Step 档位。 */
-  thinking?: { budgetTokens?: number };
+  /** 思考强度，由工厂从 [thinking] 配置注入；本类只用其中的 level（作 reasoning.effort 值）。 */
+  thinking?: ThinkingParam;
 }
 
 /** Responses API 的一条对话 input 项（role + 纯文本内容）。 */
@@ -172,7 +172,7 @@ export class OpenAiResponsesProvider implements ChatProvider {
   readonly maxTokens: number;
   private readonly fetchImpl: typeof fetch;
   private readonly sendThinking: boolean;
-  private readonly thinking?: { budgetTokens?: number };
+  private readonly thinking?: ThinkingParam;
 
   constructor(options: OpenAiResponsesProviderOptions) {
     this.apiKey = options.apiKey;
@@ -198,7 +198,7 @@ export class OpenAiResponsesProvider implements ChatProvider {
      * 完全不生效、思考深度只由服务端默认值决定。2026-08-02 实测 effort 单调生效
      * （low/medium/high 思考量递增），故改为按档位下发。
      */
-    thinking?: { budgetTokens?: number } | null;
+    thinking?: ThinkingParam | null;
   }): ReturnType<Anthropic['messages']['stream']> {
     const model = params.model ?? this.model;
     const body: Record<string, unknown> = {
@@ -210,10 +210,10 @@ export class OpenAiResponsesProvider implements ChatProvider {
     const tools = toolsToResponses(params.tools);
     if (tools.length > 0) body['tools'] = tools;
 
-    // reasoning.effort：预算未指定时不发字段，走服务端默认（不替用户猜档位）。
+    // reasoning.effort：档位名直接作值；level 缺失时不发字段（不替用户猜档位）。
     const thinking = params.thinking === undefined ? this.thinking : params.thinking;
     if (this.sendThinking && thinking !== null && thinking !== undefined) {
-      Object.assign(body, stepEffortParam('responses', budgetToEffort(thinking.budgetTokens)));
+      Object.assign(body, stepEffortParam('responses', thinking.level));
     }
 
     const fetchImpl = this.fetchImpl;

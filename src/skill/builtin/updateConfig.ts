@@ -47,6 +47,7 @@ const UPDATE_CONFIG_BODY = `# update-config：step-code 自身配置的查询与
 | agents_md_max_bytes | number | 32768 | AGENTS.md 总字节预算；0 或负数 = 禁用加载 |
 | extra_skill_dirs | string[] | 无 | 追加的 skill 扫描目录，同名 skill 追加目录胜出 |
 | disabled_skills | string[] | 无 | 按名排除的 skill 清单，任何来源的同名 skill 都不加载 |
+| continuation | table | 无 | 输出截断自动续写配置（[continuation] 段） |
 
 顶层没有 api_key 键。密钥只能配在 [providers.<id>] 渠道或 [models.<别名>] 上，或由环境变量提供
 （STEP_CODE_API_KEY，或按 provider 类型的惯例变量：stepfun→STEPFUN_API_KEY、anthropic→ANTHROPIC_API_KEY、
@@ -76,9 +77,17 @@ STEP_CODE_BASE_URL。
 |---|---|---|---|---|
 | trigger_ratio | number | 0.85 | [0.5, 0.99] | 占用达 max_context_size × 此值即触发压缩 |
 | reserved_tokens | number | 32000 | [0, 500000] | 剩余窗口不足此值即压缩（安全垫） |
-| model | string | 无（用主会话模型） | — | 压缩摘要专用模型 |
+| model | string | 无（用主会话模型） | — | 压缩摘要专用模型。模型 id 或 [models.<别名>] 的别名；写别名时摘要走该别名绑定的渠道，可与主会话不同渠道 |
 | user_message_max_tokens | number | 20000 | [0, 200000] | 用户原话保真预算；0 = 关闭保真块 |
 | user_message_head_tokens | number | 2000 | [0, user_message_max_tokens] | 保真预算中划给最早消息的份额 |
+
+### [continuation] 输出截断自动续写
+
+| 键 | 类型 | 默认值 | clamp | 说明 |
+|---|---|---|---|---|
+| max_auto_continues | number | 3 | [0, 100] | 单回合被 max_tokens 截断后自动续写的次数；0 = 关闭自动续写，回到手动「继续」 |
+
+自动续写只对「正文写到一半被截断」生效；思考吃满预算、正文零输出的情况不走续写（那是预算配置问题，续写改变不了预算）。每轮续写都经过循环守卫，会在零进展 / 完全重复 / 从头重写 / 周期性复读 / 龟速循环时停下。
 
 ### [background] 后台执行
 
@@ -93,10 +102,20 @@ STEP_CODE_BASE_URL。
 
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| enabled | boolean | false | 是否主动发送 thinking 请求字段 |
-| budget_tokens | number | 无 | 思考预算，clamp ≥1024；启用时须满足 max_tokens - budget ≥ 2048，否则 loadConfig 报错 |
-| default_level | string | 无 | 默认档位名，必须命中 levels 内的档位，否则 loadConfig 报错 |
-| [thinking.levels] | table | 内置 low=1024 / medium=4096 / high=32000 | 档位名 → budget（每档 clamp ≥1024），整体覆盖内置表 |
+| enabled | boolean | false | 是否主动发送思考控制字段 |
+| default_level | string | "medium" | 思考档位，只能是 low / medium / high；其他值 loadConfig 报错 |
+| [thinking.levels] | table | 内置 low=1024 / medium=4096 / high=32000 | **高级选项**，档位 → budget token 数；只接受这三个档位名，逐档合并进内置表。仅在原生 Anthropic 渠道（api.anthropic.com）生效，阶跃渠道只收档位字符串、不使用这些数字 |
+
+档位是唯一的用户接口。要点：
+
+- **不存在 budget_tokens 键**，配了会直接报错。阶跃三个接口都只收档位字符串
+  （output_config.effort / reasoning_effort / reasoning.effort），不收 token 数字。
+- **不配 default_level 时缺省是 medium，不是「不发档位」**。实测「不发档位」等于跑最高
+  思考强度，难任务上会把 max_tokens 占满导致正文零输出，所以缺省必须显式取中档。
+- [thinking.levels] 的数字**只在原生 Anthropic 渠道（api.anthropic.com）生效**，
+  在那条路径上作为 thinking.budget_tokens 发出。改这些数字对阶跃渠道零影响，
+  一般不需要动。
+- 档位名固定三个，不支持自定义名称（档位名要直接作为 effort 值发给服务端）。
 
 ### [search] 联网搜索
 
@@ -167,7 +186,7 @@ apiKey 回落链（渠道分支）：渠道 api_key → 渠道 api_key_env → �
 
     [thinking]
     enabled = true
-    budget_tokens = 4096
+    default_level = "medium"
 
     [providers.anthropic]
     type = "anthropic"

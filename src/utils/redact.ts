@@ -24,6 +24,15 @@ const TEXT_RULES: { re: RegExp; replace: string }[] = [
     re: /(\b(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|secret|password|passwd|authorization)\b\s*[:=]\s*)(["']?)([^\s"',}]+)(\2)/gi,
     replace: `$1$2${REDACTED}$2`,
   },
+  // 裸 key = value：字段名只叫 `key` 时（[search] 段就是这样），但**值必须像密钥**才擦。
+  // 收窄理由：本规则也作用于会话正文与日志，而编程对话里 `key = "name"`、`key: 'id'` 这类
+  // 普通代码极常见，无条件擦会大面积误伤，让调试包失去价值。要求值为长度 ≥ 24 的
+  // 无分隔连续串（真实密钥的形态；上面那条 sk- 规则漏掉的非 sk 前缀密钥由此兜住）。
+  // key 名后允许闭合引号，以覆盖 JSON 的 "key": "value" 形态。
+  {
+    re: /(\bkey\b["']?\s*[:=]\s*)(["']?)([A-Za-z0-9._-]{24,})(\2)/gi,
+    replace: `$1$2${REDACTED}$2`,
+  },
 ];
 
 /**
@@ -37,9 +46,17 @@ export function redactSecrets(text: string): string {
   return out;
 }
 
-/** 敏感字段名（大小写不敏感、全匹配）。命中即把该 key 的值整体换成 [REDACTED]。 */
+/**
+ * 敏感字段名（大小写不敏感、全匹配）。命中即把该 key 的值整体换成 [REDACTED]。
+ *
+ * 裸 `key` 必须在列表里：`[search] key` / `[search.web] key` / `[search.image] key` 三处
+ * 存的都是真实密钥，字段名恰好就叫 `key`。漏了它的后果实测过——一个不以 `sk-` 开头的
+ * 搜索密钥明文进了 debug-zip，而那个包的用途正是「发给我们排查」。
+ * 结构化数据（config.toml / mcp.json 解析后）里叫 `key` 的就是密钥，误伤面可忽略；
+ * 会话正文那条路径不用本列表，见 TEXT_RULES 里收窄后的裸 key 规则。
+ */
 const SENSITIVE_KEY =
-  /^(api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|secret|client[_-]?secret|password|passwd|authorization|auth)$/i;
+  /^(api[_-]?key|apikey|key|access[_-]?token|auth[_-]?token|token|secret|client[_-]?secret|password|passwd|authorization|auth)$/i;
 
 /**
  * 对解析后的结构化数据（对象/数组）按 key 名做确定性脱敏：命中敏感 key 名的值——无论

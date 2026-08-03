@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import type { StoredMessage } from '../agent/message.js';
+import { isSystemAuthoredUser, type MessageOrigin, type StoredMessage } from '../agent/message.js';
 import { sliceRecentTurns } from '../agent/turns.js';
+import { t } from '../i18n.js';
 import type { DisplayItem } from './types.js';
 
 /**
@@ -13,7 +14,7 @@ import type { DisplayItem } from './types.js';
  * 关键处理：
  * - assistant 的 text 块拼成一条 assistant，thinking 块落成 thinking，tool_use 落成 tool；
  * - tool_result 按 tool_use_id 配对回填到对应 tool 的 result/status（Map 配对）；
- * - origin.kind='injection' 跳过（内部注入的 system-reminder 不该显示给用户）；
+ * - 非真人输入的 user 角色消息不渲染成用户气泡（见 isSystemAuthoredUser）；
  * - 图片块转成 [图片] 占位（resume 时图片是 stepref 指针，历史区不实际渲染）；
  * - 按轮次截断（sliceRecentTurns），避免长会话一次性刷屏。
  */
@@ -35,6 +36,16 @@ function toolResultText(content: Anthropic.ToolResultBlockParam['content']): str
 }
 
 type ToolItem = Extract<DisplayItem, { kind: 'tool' }>;
+
+/**
+ * 后台任务通知在回放时的 note 文案。
+ * 原始消息正文是给模型看的 XML 信封（`<notification>…`），不适合直接摆给用户，
+ * 故按 origin 里的结构化字段重新组织成一行人读的提示。
+ */
+function replayBackgroundNote(origin: MessageOrigin): string {
+  const id = origin.taskId ?? '?';
+  return t('historyReplay.backgroundSettled', { id });
+}
 
 export interface ReplayResult {
   items: DisplayItem[];
@@ -58,14 +69,24 @@ export function historyToDisplayItems(
   for (const stored of sliced.messages) {
     const { message, origin } = stored;
 
-    // 内部注入的 system-reminder 不面向用户展示。
-    if (origin.kind === 'injection') continue;
+    // 系统自撰的 user 角色消息（中断提示、后台通知、压缩摘要等）不渲染成用户气泡——
+    // 那是系统冒充用户说话。但**不能在此整条 continue**：tool origin 的消息虽也属系统自撰，
+    // 其 tool_result 块要回填到对应 tool 条目（跳过会让工具结果全部丢失）。
+    // 故这里只处理「有独立展示形式」的类型，其余交由下方按块分派，在生成用户气泡处再行拦截。
+    const systemAuthored = message.role === 'user' && isSystemAuthoredUser(origin);
+    if (systemAuthored && origin.kind === 'background_task') {
+      // 后台任务终态对用户有意义，降级为 note 条目保留可见性（正文是给模型看的 XML 信封，不外泄）。
+      items.push({ kind: 'note', text: replayBackgroundNote(origin) });
+      continue;
+    }
 
     const { role, content } = message;
 
     // content 为纯字符串：user 直接成条，assistant 直接成条。
     if (typeof content === 'string') {
       if (content.trim() === '') continue;
+      // 系统自撰的纯文本（system-reminder、压缩摘要）无块结构可回填，整条略过。
+      if (systemAuthored) continue;
       items.push({ kind: role === 'user' ? 'user' : 'assistant', text: content });
       continue;
     }
@@ -121,11 +142,12 @@ export function historyToDisplayItems(
           tool.status = block.is_error === true ? 'error' : 'ok';
         }
       } else if (block.type === 'text') {
-        if (block.text.trim() !== '') {
+        // 系统自撰消息里夹带的文本块不成用户气泡（如 tool origin 消息里的补充说明）。
+        if (!systemAuthored && block.text.trim() !== '') {
           items.push({ kind: 'user', text: block.text });
         }
       } else if (block.type === 'image') {
-        items.push({ kind: 'user', text: '[图片]' });
+        if (!systemAuthored) items.push({ kind: 'user', text: '[图片]' });
       }
     }
   }

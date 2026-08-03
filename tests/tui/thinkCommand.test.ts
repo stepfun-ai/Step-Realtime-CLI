@@ -42,8 +42,10 @@ describe('thinkStreamParam', () => {
     expect(thinkStreamParam('off', LEVELS)).toBeNull();
   });
 
-  it('档位名 → 对应 budget 的对象覆盖', () => {
-    expect(thinkStreamParam('high', LEVELS)).toEqual({ budgetTokens: 32000 });
+  it('档位名 → 同时带 level 与 budget 的对象覆盖', () => {
+    // 必须带 level：阶跃三协议只认档位字符串。曾经只返回 budgetTokens，
+    // 让 provider 反推档位，反推阈值硬编码，改 levels 数字就会静默错档。
+    expect(thinkStreamParam('high', LEVELS)).toEqual({ level: 'high', budgetTokens: 32000 });
   });
 
   it('档位名不在表内 → undefined（防御，不发明知非法的覆盖）', () => {
@@ -102,7 +104,7 @@ describe('thinkingAvailable 门控', () => {
 describe('thinkLevelsOf', () => {
   it('config 缺省/缺 levels → 内置默认表；有 levels → 原样返回', () => {
     expect(thinkLevelsOf(undefined)).toEqual(DEFAULT_THINKING_LEVELS);
-    expect(thinkLevelsOf({ enabled: false, levels: { deep: 8192 } })).toEqual({ deep: 8192 });
+    expect(thinkLevelsOf({ enabled: false, levels: { low: 2048, medium: 4096, high: 8192 }, defaultLevel: 'medium' })).toEqual({ low: 2048, medium: 4096, high: 8192 });
   });
 });
 
@@ -124,7 +126,7 @@ describe('thinkBudgetSafety（运行时切档余量防线）', () => {
 
   it('边界：余量恰好等于最小余量 → safe', () => {
     // margin === THINKING_TEXT_MARGIN(2048) 时 safe（≥ 判定）
-    expect(thinkBudgetSafety('low', { low: 4096 }, 6144)).toEqual({ safe: true, deficit: 0, budget: 4096 });
+    expect(thinkBudgetSafety('low', { low: 4096, medium: 8192, high: 16384 }, 6144)).toEqual({ safe: true, deficit: 0, budget: 4096 });
   });
 
   it('档位名不在表内 → 回落无 budget、恒安全（与 thinkStreamParam 防御一致）', () => {

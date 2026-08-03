@@ -33,6 +33,11 @@ export type MessageOriginKind =
  * true = 这条消息唤醒一个新的 prompt 回合（消耗 prompt 槽位，如 idle 时后台通知直接开轮）；
  * false/缺省 = 在既有回合中途注入，不单独开轮。
  * 由通知生产点按 decideNotifyRoute 的分流结果填写（busy 中途注入=false，idle 直投=true）。
+ *
+ * **当前状态：只写不读。** 生产代码里所有引用都是写入点（notify.ts / loop.ts / App.tsx / cli.tsx），
+ * 没有任何消费方据此改变行为——轮次计数走 turns.ts 的 `kind === 'user'`，与本字段无关。
+ * 保留它是因为语义明确且已有测试锁定：将来若要让「唤醒型注入」参与轮次统计或 prompt 配额，
+ * 判据就在这里。新增消费方时请一并更新本段说明。
  */
 export interface MessageOrigin {
   kind: MessageOriginKind;
@@ -59,6 +64,23 @@ export function normalizeMessage(m: StoredMessage): StoredMessage {
   // 盘上旧数据 origin 是字符串，类型上不可达故需 as 展开
   const raw = m.origin as MessageOrigin | MessageOriginKind;
   return typeof raw === 'string' ? { ...m, origin: { kind: raw } } : m;
+}
+
+/**
+ * 该 storage 消息是否为「系统自撰的 user 角色消息」——即 wire 上是 user，但并非真人这一轮敲进来的输入。
+ *
+ * 协议约定要求这些内容必须挂在 user 角色下（工具结果回灌、system-reminder、压缩摘要都是如此），
+ * 但它们对**用户视角**不是输入：把它们渲染成用户气泡，等于系统冒充用户说话。典型症状是
+ * resume 后看到自己「说」过中断提示、后台任务 XML 信封、压缩摘要——那些话用户从没打过。
+ *
+ * 判定按白名单反向取：只有 `user`（真人本轮输入）与 `user_verbatim`（压缩保真下来的真人原话，
+ * 内容仍是用户当初说的）算真人可见输入，其余 user 角色一律为系统自撰。
+ * 新增 origin kind 时默认落进「系统自撰」侧，不会因为漏改而泄漏成用户气泡。
+ *
+ * UI 层要展示这些事件时，走各自的专用渲染（如后台任务用 note 条目提示），而不是伪装成用户输入。
+ */
+export function isSystemAuthoredUser(origin: MessageOrigin): boolean {
+  return origin.kind !== 'user' && origin.kind !== 'user_verbatim';
 }
 
 /**

@@ -8,8 +8,8 @@ import {
   parseSseStream,
   toolsToOpenAi,
 } from './openaiCommon.js';
-import { budgetToEffort, stepEffortParam } from './step/stepCommon.js';
-import type { ChatProvider } from './types.js';
+import { stepEffortParam } from './step/stepCommon.js';
+import type { ChatProvider, ThinkingParam } from './types.js';
 
 /** {@link OpenAiChatProvider} 构造参数。 */
 export interface OpenAiChatProviderOptions {
@@ -25,8 +25,8 @@ export interface OpenAiChatProviderOptions {
    * 为 true 时也仅是开关打开：实际发不发还看 thinking 是否给出具体预算。
    */
   sendThinking?: boolean;
-  /** 思考预算（token 数），由工厂从 [thinking] 配置注入；内部折算成 Step 档位。 */
-  thinking?: { budgetTokens?: number };
+  /** 思考强度，由工厂从 [thinking] 配置注入；本类只用其中的 level（作 reasoning_effort 值）。 */
+  thinking?: ThinkingParam;
 }
 
 /**
@@ -48,7 +48,7 @@ export class OpenAiChatProvider implements ChatProvider {
   readonly maxTokens: number;
   private readonly fetchImpl: typeof fetch;
   private readonly sendThinking: boolean;
-  private readonly thinking?: { budgetTokens?: number };
+  private readonly thinking?: ThinkingParam;
 
   constructor(options: OpenAiChatProviderOptions) {
     this.apiKey = options.apiKey;
@@ -74,7 +74,7 @@ export class OpenAiChatProvider implements ChatProvider {
      * 2026-08-02 实测（step-3.7-flash，重任务）：不发 effort 时思考 15975 字符，
      * low 档 3248 字符——不下发等于放任思考跑到服务端默认深度。
      */
-    thinking?: { budgetTokens?: number } | null;
+    thinking?: ThinkingParam | null;
   }): ReturnType<Anthropic['messages']['stream']> {
     const model = params.model ?? this.model;
     const body: Record<string, unknown> = {
@@ -87,10 +87,10 @@ export class OpenAiChatProvider implements ChatProvider {
     const tools = toolsToOpenAi(params.tools);
     if (tools.length > 0) body.tools = tools;
 
-    // reasoning_effort：预算未指定时不发字段，走服务端默认（不替用户猜档位）。
+    // reasoning_effort：档位名直接作值；level 缺失时不发字段（不替用户猜档位）。
     const thinking = params.thinking === undefined ? this.thinking : params.thinking;
     if (this.sendThinking && thinking !== null && thinking !== undefined) {
-      Object.assign(body, stepEffortParam('chat', budgetToEffort(thinking.budgetTokens)));
+      Object.assign(body, stepEffortParam('chat', thinking.level));
     }
 
     const accumulator = new OpenAiChatAccumulator();

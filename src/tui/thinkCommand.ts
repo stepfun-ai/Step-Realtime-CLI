@@ -1,13 +1,22 @@
-import { DEFAULT_THINKING_LEVELS, PROVIDER_PRESETS, THINKING_TEXT_MARGIN, type ThinkingConfig } from '../config/config.js';
+import {
+  DEFAULT_THINKING_LEVELS,
+  isThinkingLevelName,
+  PROVIDER_PRESETS,
+  THINKING_LEVEL_NAMES,
+  THINKING_TEXT_MARGIN,
+  type ThinkingConfig,
+  type ThinkingLevelName,
+} from '../config/config.js';
+import type { ThinkingParam } from '../provider/types.js';
 
 /**
  * /think 命令的纯函数层：参数解析、覆盖 → 请求参数投影、状态栏标签、门控判定。
  * 全部无副作用，便于单测；App 只负责把这些结果接到 state 与 pushItem 上。
  *
  * 会话级覆盖（ThinkOverride）三态：
- * - undefined：跟随 config 默认（default_level / budget_tokens / 仅 enabled）；
+ * - undefined：跟随 config 的 default_level（恒有值，缺省 medium）；
  * - 'off'：本会话不再发送 thinking 字段（请求级传 null 抑制）；
- * - 其余字符串：档位名，取 levels[档位] 作为 budget 覆盖。
+ * - 'low' | 'medium' | 'high'：档位名，直接作为服务端 effort 值。
  */
 export type ThinkOverride = string;
 
@@ -18,34 +27,41 @@ export type ThinkArgResult =
   | { kind: 'invalid'; name: string };
 
 /**
- * 解析 /think 参数：空参 → show；'off' → 会话级关闭；命中档位表 → 切换档位；
+ * 解析 /think 参数：空参 → show；'off' → 会话级关闭；命中三档之一 → 切换档位；
  * 其余 → invalid（调用方列出可用档位报错）。
+ *
+ * 不再需要传档位表：合法档位固定为 low|medium|high，不由配置决定。
  */
-export function parseThinkArgs(args: string, levels: Record<string, number>): ThinkArgResult {
+export function parseThinkArgs(args: string): ThinkArgResult {
   const arg = args.trim();
   if (arg === '') return { kind: 'show' };
   if (arg === 'off') return { kind: 'set', override: 'off' };
-  if (levels[arg] !== undefined) return { kind: 'set', override: arg };
+  if (isThinkingLevelName(arg)) return { kind: 'set', override: arg };
   return { kind: 'invalid', name: arg };
 }
 
 /**
  * 会话覆盖 → 传给 runAgent / provider.stream 的 thinking 参数（三态：
- * undefined 用构造默认 / 对象覆盖 / null 本次抑制）。档位名不在表内时回落 undefined（防御）。
+ * undefined 用构造默认 / 对象覆盖 / null 本次抑制）。
+ *
+ * 返回对象同时带 level 与 budgetTokens：阶跃三协议只认档位名，原生 Anthropic 只认数字。
+ * **必须带 level**——曾经这里只返回 budgetTokens，让 provider 反推档位；反推阈值硬编码，
+ * 用户改 levels 数字就会静默错档。而且 TS 结构类型不会报错，这类丢字段的问题
+ * 编译期抓不到，只能靠这里的契约把两份都填满。
  */
 export function thinkStreamParam(
   override: ThinkOverride | undefined,
-  levels: Record<string, number>,
-): { budgetTokens?: number } | null | undefined {
+  levels: Record<ThinkingLevelName, number>,
+): ThinkingParam | null | undefined {
   if (override === undefined) return undefined;
   if (override === 'off') return null;
-  const budget = levels[override];
-  return budget === undefined ? undefined : { budgetTokens: budget };
+  if (!isThinkingLevelName(override)) return undefined;
+  return { level: override, budgetTokens: levels[override] };
 }
 
 /**
  * 状态栏档位标签：off 覆盖 → 'off'；档位覆盖 → 档位名；
- * 无覆盖且 [thinking] 启用且配了 default_level → 档位名；否则 undefined（不显示）。
+ * 无覆盖且 [thinking] 启用 → config 的 default_level（恒有值）；未启用 → undefined（不显示）。
  * default_level 仅在 enabled 时展示：未启用时构造默认不带 thinking 参数，展示了是撒谎。
  */
 export function thinkStatusLabel(
@@ -87,19 +103,31 @@ export function thinkingAvailable(providerName: string, thinkingCfg?: ThinkingCo
 }
 
 /** 取当前生效的档位表（config 缺省时回落内置默认表，防御手工构造的配置对象）。 */
-export function thinkLevelsOf(thinkingCfg?: ThinkingConfig): Record<string, number> {
+export function thinkLevelsOf(thinkingCfg?: ThinkingConfig): Record<ThinkingLevelName, number> {
   return thinkingCfg?.levels ?? DEFAULT_THINKING_LEVELS;
 }
 
+/** 可选档位名列表（弹层与报错提示共用，避免各处硬编码三个字符串）。 */
+export const THINK_CHOICES: readonly ThinkingLevelName[] = THINKING_LEVEL_NAMES;
+
 /**
- * 思考预算安全判定：正文最小余量 maxTokens - budget ≥ THINKING_TEXT_MARGIN。
- * 与 config.ts 的解析期余量校验同口径（复用同一常量），但用于运行时 /think 切档——
- * 切档不走 config 解析，需在 UI 层单独把这道防线补上。
- * off/undefined（无 budget）恒安全。deficit 为正表示欠缺的余量（供提示展示）。
+ * 切档安全判定：档位对应的 budget 是否给正文留出 {@link THINKING_TEXT_MARGIN} 余量。
+ *
+ * ## 这个判定为什么还留着（理由已经和当初不同）
+ *
+ * 它原本的依据是「budget_tokens 会被发出，占掉 max_tokens」。对阶跃渠道这个依据是错的——
+ * 三个接口都不收数字，只收档位字符串，`[thinking.levels]` 的数字根本不出现在请求里。
+ *
+ * 但结论仍然成立，换了条依据：2026-08-03 实测，**high 档本身就会让思考吃满 max_tokens
+ * 导致正文零输出**（这正是「服务端返回了空响应」的根因之一）。所以「切到高档 + max_tokens
+ * 偏小」这个组合确实危险，警告该给。levels 表的数字在这里的角色从「即将发出的参数」
+ * 降级为「档位思考量的估算刻度」——不精确，但单调性对得上，用来排序风险够用。
+ *
+ * off/undefined（无档位）恒安全。deficit 为正表示欠缺的余量（供提示展示）。
  */
 export function thinkBudgetSafety(
   override: ThinkOverride | undefined,
-  levels: Record<string, number>,
+  levels: Record<ThinkingLevelName, number>,
   maxTokens: number,
 ): { safe: boolean; deficit: number; budget: number } {
   const param = thinkStreamParam(override, levels);

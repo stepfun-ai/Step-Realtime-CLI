@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  budgetToEffort,
   isStepEffort,
   mapStepChatFinishReason,
   mapStepResponsesStatus,
@@ -21,32 +20,6 @@ describe('STEP_EFFORTS / isStepEffort', () => {
     expect(isStepEffort('')).toBe(false);
     expect(isStepEffort(undefined)).toBe(false);
     expect(isStepEffort(4096)).toBe(false);
-  });
-});
-
-describe('budgetToEffort（token 数 → 语义档位）', () => {
-  it('未指定预算 → undefined（不发 effort，走服务端默认）', () => {
-    expect(budgetToEffort(undefined)).toBeUndefined();
-    expect(budgetToEffort(Number.NaN)).toBeUndefined();
-    expect(budgetToEffort(Number.POSITIVE_INFINITY)).toBeUndefined();
-  });
-
-  it('内置默认档位表的三个值映射回自己（1024/4096/32000）', () => {
-    expect(budgetToEffort(1024)).toBe('low');
-    expect(budgetToEffort(4096)).toBe('medium');
-    expect(budgetToEffort(32000)).toBe('high');
-  });
-
-  it('区间边界', () => {
-    expect(budgetToEffort(2559)).toBe('low');
-    expect(budgetToEffort(2560)).toBe('medium');
-    expect(budgetToEffort(18047)).toBe('medium');
-    expect(budgetToEffort(18048)).toBe('high');
-  });
-
-  it('极端值不越界', () => {
-    expect(budgetToEffort(0)).toBe('low');
-    expect(budgetToEffort(1_000_000)).toBe('high');
   });
 });
 

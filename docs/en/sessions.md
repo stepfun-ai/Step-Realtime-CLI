@@ -79,6 +79,9 @@ The complete raw history is unaffected by compaction: each session also keeps an
 
 In `-p` mode: assistant text goes to stdout, while tool calls and errors go to stderr, so it can be piped directly. Adding `--output-format stream-json` emits one JSON line per event for programmatic consumption (for example feeding it into your own script or CI).
 
+For the event envelope contract, the full list of event types, and versioning rules, see [stream-json event stream](./stream-json.md).
+
+
 ## Subagent sessions
 
 Every subagent run (spawned via `spawn_agent`) is persisted as its own session under the `subagents/` subdirectory of the session bucket: a `<id>.json` snapshot, a `<id>.full.jsonl` full log, and a runtime `<id>.lock` active lock. Subagent sessions stay out of the main session list and never pollute `/resume` or `--continue`.

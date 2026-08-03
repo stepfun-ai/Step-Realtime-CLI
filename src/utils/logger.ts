@@ -44,7 +44,7 @@ let buffer: string[] = [];
 let fileReady = false;
 
 /**
- * 配置 logger。通常在 main.tsx 区分 `-p` 一次性 vs 交互 TUI 的分叉点调用：
+ * 配置 logger。通常在 cli.tsx 区分 `-p` 一次性 vs 交互 TUI 的分叉点调用：
  * 交互 TUI 传 { mode: 'tui' }，headless 保持默认。dir 供测试重定向日志目录。
  */
 export function configureLogger(opts: { mode?: LogMode; dir?: string }): void {

@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { buildSystemBlocks, prepareMessages, withToolCacheControl } from '../prepare.js';
-import type { ChatProvider } from '../types.js';
-import { budgetToEffort, stepEffortParam } from './stepCommon.js';
+import type { ChatProvider, ThinkingParam } from '../types.js';
+import { stepEffortParam } from './stepCommon.js';
 
 /** {@link StepMessagesProvider} 构造参数。 */
 export interface StepMessagesProviderOptions {
@@ -14,8 +14,8 @@ export interface StepMessagesProviderOptions {
    * 为 true 时也仅是开关打开：实际发不发还看 thinking 参数是否给出（见 stream）。
    */
   sendThinking?: boolean;
-  /** 思考预算（token 数），由工厂从 [thinking] 配置注入；内部折算成 Step 档位。 */
-  thinking?: { budgetTokens?: number };
+  /** 思考强度，由工厂从 [thinking] 配置注入；本类只用其中的 level（档位名直接作 effort 值）。 */
+  thinking?: ThinkingParam;
   /**
    * 是否注入 cache_control。默认 false——Step 全通道实测不兼容该字段。
    * 与 AnthropicMessagesProvider 的默认值（true）相反，因为那个类要服务 Anthropic 官方。
@@ -67,7 +67,7 @@ export class StepMessagesProvider implements ChatProvider {
   private readonly model: string;
   readonly maxTokens: number;
   private readonly sendThinking: boolean;
-  private readonly thinking?: { budgetTokens?: number };
+  private readonly thinking?: ThinkingParam;
   private readonly sendCacheControl: boolean;
 
   constructor(options: StepMessagesProviderOptions) {
@@ -83,11 +83,12 @@ export class StepMessagesProvider implements ChatProvider {
    * 发起一次流式补全。
    *
    * thinking 参数沿用三态语义（与 ChatProvider 接口一致）：undefined 用构造默认、
-   * 对象本次覆盖、null 本次强制不发。最终值经 {@link budgetToEffort} 折算成 Step 档位，
-   * 再由 {@link stepEffortParam} 落成顶层 `effort` 字段。
+   * 对象本次覆盖、null 本次强制不发。档位名由 {@link stepEffortParam} 落成
+   * `output_config.effort` 字段。
    *
-   * 预算未指定（budgetTokens 为 undefined）时不发 effort，走服务端默认强度——
-   * 不猜一个档位替用户做决定。
+   * 档位缺失（level 为 undefined）时不发 effort。这条路径现在很难走到：配置层的
+   * default_level 恒有值（缺省 medium）。之所以保留，是因为「不发 effort」在语义上
+   * 不等于任何一档——实测它等于跑最高思考量，不能拿它当某一档的同义写法。
    */
   stream(params: {
     system: string;
@@ -95,7 +96,7 @@ export class StepMessagesProvider implements ChatProvider {
     messages: Anthropic.MessageParam[];
     signal?: AbortSignal;
     model?: string;
-    thinking?: { budgetTokens?: number } | null;
+    thinking?: ThinkingParam | null;
   }): ReturnType<Anthropic['messages']['stream']> {
     const body: Anthropic.MessageStreamParams = {
       model: params.model ?? this.model,
@@ -108,9 +109,8 @@ export class StepMessagesProvider implements ChatProvider {
 
     const thinking = params.thinking === undefined ? this.thinking : params.thinking;
     if (this.sendThinking && thinking !== null && thinking !== undefined) {
-      const effort = budgetToEffort(thinking.budgetTokens);
-      // effort 为 undefined（用户未给预算）时 stepEffortParam 返回空对象，不发字段。
-      Object.assign(body, stepEffortParam('messages', effort));
+      // 档位名直接作为 effort 值；level 为 undefined 时 stepEffortParam 返回空对象，不发字段。
+      Object.assign(body, stepEffortParam('messages', thinking.level));
     }
 
     return this.client.messages.stream(
