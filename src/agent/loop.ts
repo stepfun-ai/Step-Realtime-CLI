@@ -6,6 +6,7 @@ import type { ToolContext } from '../tools/types.js';
 import {
   billedTokens,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
+  estimateTextTokens,
   estimateTokens,
   fullCompact,
   microCompact,
@@ -103,6 +104,18 @@ export interface RunAgentOptions {
   thinking?: { budgetTokens?: number } | null;
   /** 压缩阈值。省略 = 不在循环内自动压缩（也不做溢出兜底压缩）。 */
   compaction?: CompactionThresholds;
+  /**
+   * 上一次真实 usage 的快照，用作首个回合压缩预检的基准。
+   *
+   * 为什么需要由调用方传入：`lastUsage` 是本函数的局部状态，每次 runAgent 调用都从零开始，
+   * 而用户每提交一条消息就是一次新调用。于是首回合只能退回纯字符估算——那个口径不含
+   * system prompt 与 tools schema，实测只有真实占用的一半（185.8k vs 380.9k）。
+   * 结果是单回合的纯对话轮永远按被低估一半的数字判断，长会话可以一路涨到接近满窗仍不压缩。
+   *
+   * 调用方（TUI / 无头入口）本就在维护同语义的显示口径，传进来即可让首回合也用真实基准。
+   * `measuredLength` = 该 total 覆盖到历史的哪个下标，其后的新增消息按估算叠加。
+   */
+  initialUsage?: { total: number; measuredLength: number };
   /** 压缩摘要专用模型覆盖（大小模型协同）。省略 = 用 provider 默认模型压缩。 */
   compactionModel?: string;
   /**
@@ -167,6 +180,8 @@ async function maybeCompact(
 ): Promise<boolean> {
   if (!shouldCompact(usedTokens, thresholds)) return false;
   let acted = false;
+  // micro 之前的估算基线，供下面按比例折算 usedTokens 用
+  const estBefore = estimateTokens(messages);
   // 预防性压缩：micro 会原地改写历史击穿缓存，故仅在缓存已冷时做；热缓存交给 full 重建前缀
   const activity = lastActivityMs(messages);
   const micro = microCompact(
@@ -178,8 +193,21 @@ async function maybeCompact(
     replaceMessages(messages, micro.messages);
     acted = true;
   }
-  // micro 后无新 usage，用字符估算重判是否仍需 full
-  if (shouldCompact(estimateTokens(messages), thresholds)) {
+  /**
+   * micro 之后是否仍需 full。
+   *
+   * 不能直接拿 `estimateTokens(messages)` 重判：那个口径只算 messages、不含 system prompt
+   * 与 tools schema，实测只有真实占用的一半。用它重判会把「其实仍然超线」判成「已经够了」，
+   * 于是 full 永不执行——调用方即便传入了准确的真实 usage 也被这一步抹掉。
+   *
+   * 改为保住 usedTokens 的量级：micro 没清理任何东西时历史未变，原值直接有效；
+   * 清理过则按估算的缩减比例折算，既反映 micro 的收益，又不丢失真实口径。
+   */
+  const afterMicro =
+    micro.clearedCount > 0 && estBefore > 0
+      ? Math.round(usedTokens * (estimateTokens(messages) / estBefore))
+      : usedTokens;
+  if (shouldCompact(afterMicro, thresholds)) {
     const compacted = await fullCompact(
       compactionProvider ?? provider,
       messages,
@@ -227,8 +255,24 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
    * 「上一轮真实 usage（已覆盖到 measuredLength 条）+ 之后新增消息的估算」。
    * 压缩就地改写 messages 后此快照失效，必须清空，否则 measuredLength 会指向
    * 已不存在的下标、把整段历史当成「已测量」而漏算。
+   *
+   * 初值取自 `opts.initialUsage`：本函数每次调用都重建局部状态，而用户每提交一条消息
+   * 就是一次新调用。不接住外部快照的话首回合必然退回估算，实测那个口径只有真实占用的
+   * 一半，于是单回合的纯对话轮永远按被低估的数字判断，长会话能一路涨到接近满窗仍不压缩。
    */
-  let lastUsage: { total: number; measuredLength: number } | undefined;
+  let lastUsage: { total: number; measuredLength: number } | undefined = opts.initialUsage;
+  /**
+   * 框架侧固定开销（system prompt + tools schema）的估算值。
+   *
+   * **只在没有真实 usage、必须靠字符估算判断时叠加。** `estimateTokens` 的入参只有 messages，
+   * 而窗口上限 `maxContextSize` 装的是 system + tools + messages 三样，两者口径不对等；
+   * 本项目这部分尤其重（指令文件全文、技能清单、数十个工具的完整 JSON Schema）。
+   * 有真实 usage 时绝不能加——真实值本身已含这两部分，再加即双算。
+   *
+   * 取一次不逐回合重算：动态注册的工具会让 tools 略有变化，量级远小于本项修正的偏差。
+   */
+  const frameworkTokens =
+    estimateTextTokens(system) + estimateTextTokens(JSON.stringify(toAnthropicTools(allowedTools)));
   /**
    * 压缩饱和标记：一次压缩做完后**仍然**超阈值，说明剩下的历史压不动了
    * （保留窗口内的消息本身就超预算，或摘要请求反复失败）。
@@ -271,7 +315,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
       const preflightUsed =
         lastUsage !== undefined
           ? lastUsage.total + estimateTokens(messages.slice(lastUsage.measuredLength))
-          : estimateTokens(messages);
+          : estimateTokens(messages) + frameworkTokens;
       if (
         await maybeCompact(
           provider,
