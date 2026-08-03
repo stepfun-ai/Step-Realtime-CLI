@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as undici from 'undici';
 import { webFetchTool } from '../../src/tools/webFetch.js';
+import { webResultCache } from '../../src/tools/webCache.js';
 import type { ToolContext } from '../../src/tools/types.js';
 
 vi.mock('undici', async () => {
@@ -95,5 +96,41 @@ describe('web_fetch 工具', () => {
     const r = await webFetchTool.execute({ url: 'https://example.com/missing' }, ctx);
     expect(r.isError).toBe(true);
     expect(r.content).toContain('404');
+  });
+
+  // --- 提取后正文的返回上限（OOM 修复：MAX_BYTES 只拦响应体，不拦提取后正文）---
+
+  it('正文超过 inline 上限时截断并附恢复提示，且不写入缓存', async () => {
+    webResultCache.clear();
+    const url = 'https://example.com/huge.txt';
+    const body = 'H'.repeat(250_000); // > MAX_INLINE_CHARS (200k)
+    mockedFetch.mockResolvedValueOnce(
+      makeResponse({
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+        body,
+      }) as unknown as Awaited<ReturnType<typeof undici.fetch>>,
+    );
+    const r = await webFetchTool.execute({ url }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.content).toContain('[content truncated: showing first 200000 of 250000 characters');
+    // 返回体不含全文（截断后长度远小于原文 + 提示）
+    expect(r.content.length).toBeLessThan(body.length);
+    // 关键：截断内容不入缓存——半截正文一旦命中会被当成完整结果
+    expect(webResultCache.get(url)).toBeUndefined();
+    expect(webResultCache.size).toBe(0);
+  });
+
+  it('正文未超上限时正常写入缓存', async () => {
+    webResultCache.clear();
+    const url = 'https://example.com/small.txt';
+    mockedFetch.mockResolvedValueOnce(
+      makeResponse({
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+        body: 'small body',
+      }) as unknown as Awaited<ReturnType<typeof undici.fetch>>,
+    );
+    await webFetchTool.execute({ url }, ctx);
+    expect(webResultCache.get(url)?.content).toBe('small body');
+    webResultCache.clear();
   });
 });
