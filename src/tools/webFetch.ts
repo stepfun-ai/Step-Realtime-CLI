@@ -12,9 +12,21 @@ const schema = z.object({
   url: z.string().url().describe('要抓取的网页 URL。'),
 });
 
-const MAX_BYTES = 10 * 1024 * 1024; // 10MB
+const MAX_BYTES = 10 * 1024 * 1024; // 10MB：响应体上限（不等于提取后正文上限，见 MAX_INLINE_CHARS）
 const MAX_REDIRECT_HOPS = 10;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * 提取后正文的返回上限（字符数）。
+ *
+ * MAX_BYTES 只拦响应体，提取出的正文此前原样返回且原样入缓存，两处都不设限——
+ * 这是长会话 OOM 的主要来源之一（详见 webCache.ts 顶部说明）。200k 字符 ≈ 400KB
+ * （UTF-16），比原先的 10MB 收紧 25 倍，同时能完整装下绝大多数技术文档页。
+ *
+ * 超限时截断并追加恢复提示，且**截断结果不写入缓存**：缓存里放半截正文，下次命中会
+ * 让调用方以为拿到了完整内容，比不缓存更糟。
+ */
+const MAX_INLINE_CHARS = 200_000;
 
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -288,15 +300,24 @@ export const webFetchTool: ToolDef<z.infer<typeof schema>> = {
           : 'The returned content is the main text extracted from the page.\n\n';
       const citeReminder = 'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).';
       const content = result.content;
-      // 成功抓取后写回缓存，供后续同 URL 复用
-      webResultCache.set({
-        url,
-        content,
-        title: undefined,
-        kind: 'fetch',
-        ttlMs: 30 * 60 * 1000,
-      });
-      return ok(`${note}${citeReminder}\n\n${content}`);
+      const truncated = content.length > MAX_INLINE_CHARS;
+      // 截断内容不入缓存：半截正文一旦命中会被当成完整结果，比重新抓取更有害
+      if (!truncated) {
+        webResultCache.set({
+          url,
+          content,
+          title: undefined,
+          kind: 'fetch',
+          ttlMs: 30 * 60 * 1000,
+        });
+      }
+      if (!truncated) return ok(`${note}${citeReminder}\n\n${content}`);
+      const shown = content.slice(0, MAX_INLINE_CHARS);
+      const footer =
+        `\n\n[content truncated: showing first ${String(MAX_INLINE_CHARS)} of ` +
+        `${String(content.length)} characters. Fetch a more specific URL, or use web_search ` +
+        `with narrower keywords, to get the part you need.]`;
+      return ok(`${note}${citeReminder}\n\n${shown}${footer}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return fail(`Failed to fetch URL: ${url}. ${msg}`);
