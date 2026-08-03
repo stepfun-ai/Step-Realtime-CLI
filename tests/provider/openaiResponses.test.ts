@@ -34,15 +34,26 @@ function makeProvider(response: Response, capture?: { body?: unknown; url?: stri
   });
 }
 
-/** 一个最小可用的 response.completed 事件。 */
+/**
+ * 一个最小可用的 response.completed 事件。
+ *
+ * 必须带 `status: 'completed'`：真实服务端的 response.completed 事件一定含该字段
+ * （官方文档 SSE 示例即为 `"status":"completed"`），而 stop_reason 现在由
+ * status + incomplete_details.reason 推导。省掉它会让假数据比真实响应「更贫」，
+ * 测出来的 stop_reason 也就不作数。
+ */
 function completedEvent(output: unknown[], usage?: unknown): unknown {
-  return { type: 'response.completed', response: { output, ...(usage !== undefined ? { usage } : {}) } };
+  return {
+    type: 'response.completed',
+    response: { status: 'completed', output, ...(usage !== undefined ? { usage } : {}) },
+  };
 }
 
 describe('buildResponsesMessage', () => {
   it('output 的 reasoning→thinking、message→text（thinking 在前）', () => {
     const msg = buildResponsesMessage(
       {
+        status: 'completed',
         output: [
           { type: 'reasoning', content: [{ type: 'reasoning_text', text: '思考中' }] },
           { type: 'message', content: [{ type: 'output_text', text: '最终答复' }] },
@@ -78,6 +89,7 @@ describe('buildResponsesMessage', () => {
   it('function_call → tool_use（id 取 call_id、arguments 解析成对象），stop_reason=tool_use', () => {
     const msg = buildResponsesMessage(
       {
+        status: 'completed',
         output: [
           { type: 'reasoning', content: [{ type: 'reasoning_text', text: '要查天气' }] },
           {
@@ -391,5 +403,56 @@ describe('OpenAiResponsesProvider', () => {
     const provider = makeProvider(jsonResponse({ error: { message: 'boom' } }, 500));
     const stream = provider.stream({ system: '', tools: [], messages: [{ role: 'user', content: 'hi' }] });
     await expect(stream.finalMessage()).rejects.toMatchObject({ status: 500 });
+  });
+});
+
+describe('stop_reason 由 status + incomplete_details 推导（空响应根因）', () => {
+  it('status=incomplete + reason=max_output_tokens → max_tokens（不再冒充 end_turn）', () => {
+    // 这是「服务端返回了空响应」的真实形状：思考吃满预算，output 里没有 message 项。
+    // 旧实现写死 end_turn，把预算耗尽伪装成正常收尾，上层无从分型。
+    const msg = buildResponsesMessage(
+      {
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output: [{ type: 'reasoning', content: [{ type: 'reasoning_text', text: '想了很久' }] }],
+      },
+      'm',
+      100,
+    );
+    expect(msg.stop_reason).toBe('max_tokens');
+  });
+
+  it('status=incomplete + reason=content_filter → refusal', () => {
+    const msg = buildResponsesMessage(
+      { status: 'incomplete', incomplete_details: { reason: 'content_filter' }, output: [] },
+      'm',
+      100,
+    );
+    expect(msg.stop_reason).toBe('refusal');
+  });
+
+  it('status=failed → null（非正常收尾，交上层分型）', () => {
+    const msg = buildResponsesMessage(
+      { status: 'failed', error: { message: 'boom' }, output: [] },
+      'm',
+      100,
+    );
+    expect(msg.stop_reason).toBeNull();
+  });
+
+  it('status 缺失 → null（无信号，不假装正常结束）', () => {
+    expect(buildResponsesMessage({ output: [] }, 'm', 100).stop_reason).toBeNull();
+  });
+
+  it('status=completed 且含 function_call → tool_use', () => {
+    const msg = buildResponsesMessage(
+      {
+        status: 'completed',
+        output: [{ type: 'function_call', call_id: 'c1', name: 'x', arguments: '{}' }],
+      },
+      'm',
+      100,
+    );
+    expect(msg.stop_reason).toBe('tool_use');
   });
 });

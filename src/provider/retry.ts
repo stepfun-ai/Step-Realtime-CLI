@@ -20,10 +20,37 @@ export function isEmptyStreamError(err: unknown): boolean {
  * 变体——思考不构成正文，可能是流中断或 reasoning 烧光了输出预算）。由 runTurn 拿到
  * finalMessage 后抛出，与 SDK 空流错误走同一条重试路径。
  */
+
+/**
+ * 空响应的诊断上下文。
+ *
+ * 空响应有多种成因，可重试性完全不同：服务端瞬时故障重发就好，思考吃满预算重发一万次
+ * 也一样。此前的文案写死「通常是网关或服务端的瞬时故障」——这个归因没有证据支撑，
+ * 且 2026-08-02 的排查证明它把方向带偏了整整一个阶段（真实成因是输出预算不足）。
+ *
+ * 因此这里改为**只报事实、不猜原因**，把判断依据交给用户：有没有产出思考、
+ * 结束原因是什么、烧了多少 token——这四项合起来足以让用户自己区分「没生成」与
+ * 「全烧在思考上」，而不必依赖我们猜一个可能错的成因。
+ */
+export interface EmptyResponseContext {
+  /** 是否产出过思考内容。为 true 时「模型什么都没做」不成立，更可能是预算问题。 */
+  hadReasoning?: boolean;
+  /** 服务端给出的结束原因（已归一到 Anthropic 词汇表）；null 表示服务端没给信号。 */
+  stopReason?: string | null;
+  /** 本次输出消耗的 token 数。与 hadReasoning 一起看即可区分「没生成」与「全烧在思考上」。 */
+  outputTokens?: number;
+  /** 模型名，多渠道场景下用于定位是哪个模型的行为。 */
+  model?: string;
+}
+
 export class EmptyResponseError extends Error {
-  constructor(message: string) {
+  /** 诊断上下文；缺省表示调用方没有提供（旧调用点仍可只传 message）。 */
+  readonly context?: EmptyResponseContext;
+
+  constructor(message: string, context?: EmptyResponseContext) {
     super(message);
     this.name = 'EmptyResponseError';
+    if (context !== undefined) this.context = context;
   }
 }
 
@@ -58,6 +85,23 @@ export function isRetryableError(err: unknown): boolean {
  */
 export function isRateLimitError(err: unknown): boolean {
   return err instanceof Anthropic.APIError && err.status === 429;
+}
+
+/**
+ * 判断错误是否为「用户中断」而非真实故障。
+ *
+ * 中断在链路上有多种形态：SDK 的 `APIUserAbortError`、DOM 风格的 `AbortError`
+ * （fetch 在 signal abort 时抛出）、以及本文件 abortableSleep / withRetry 抛的 `已取消`。
+ * 调用方据此把中断与故障区分开：故障可以重试或降级，中断必须立刻停手——
+ * 对中断做重试等于让用户按了取消还要再等几轮请求。
+ */
+export function isAbortError(err: unknown): boolean {
+  if (err instanceof Anthropic.APIUserAbortError) return true;
+  if (err instanceof Error) {
+    if (err.name === 'AbortError') return true;
+    if (err.message === '已取消') return true;
+  }
+  return false;
 }
 
 /**

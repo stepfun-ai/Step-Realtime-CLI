@@ -1,6 +1,7 @@
 import { PROVIDER_PRESETS, type StepCodeConfig } from '../config/config.js';
 import { t } from '../i18n.js';
 import { StepfunAdapter } from './adapter.js';
+import { capabilitiesToOverride } from './capability-registry.js';
 import { AnthropicMessagesProvider } from './anthropicMessages.js';
 import { OpenAiChatProvider } from './openaiChat.js';
 import { OpenAiResponsesProvider } from './openaiResponses.js';
@@ -29,12 +30,34 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
   }
   const apiKey = config.apiKey;
 
+  // thinking 解析必须在所有协议分支之前：Step 的三个接口都有思考控制字段
+  // （messages→effort、chat→reasoning_effort、responses→reasoning.effort），
+  // 此前这段解析放在 openai 分支之后，那两条路径根本拿不到值，注释还写着
+  // 「openai 协议下忽略」——实测证明它们都支持且单调生效，忽略等于放任服务端默认深度。
+  //
+  // sendThinking：stepfun 预设为 false（历史实测部分模型 400），用户显式配置
+  // [thinking] enabled=true 时覆盖为 true；anthropic 预设虽为 true，未配 [thinking]
+  // 时 thinking 参数为空，照样不发。
+  // default_level 命中档位表时其 budget 作为构造默认（会话级 /think 覆盖之外的基线）；
+  // 未配 default_level 时回落 budget_tokens。
+  const thinkingEnabled = config.thinking?.enabled === true;
+  const defaultLevelBudget =
+    config.thinking?.defaultLevel !== undefined
+      ? config.thinking.levels[config.thinking.defaultLevel]
+      : undefined;
+  const sendThinking = preset.sendThinking || thinkingEnabled;
+  const budgetTokens = defaultLevelBudget ?? config.thinking?.budgetTokens;
+  const thinking =
+    thinkingEnabled && budgetTokens !== undefined ? { budgetTokens } : undefined;
+
   if (preset.protocol === 'openai') {
     return new OpenAiChatProvider({
       apiKey,
       baseUrl: config.baseUrl,
       model: config.model,
       maxTokens: config.maxTokens,
+      sendThinking,
+      ...(thinking !== undefined ? { thinking } : {}),
     });
   }
   if (preset.protocol === 'openai_responses') {
@@ -43,26 +66,18 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
       baseUrl: config.baseUrl,
       model: config.model,
       maxTokens: config.maxTokens,
+      sendThinking,
+      ...(thinking !== undefined ? { thinking } : {}),
     });
   }
 
-  // anthropic 协议家族：thinking 请求字段仅当用户显式配置 [thinking] enabled=true 时发。
-  // stepfun 预设 sendThinking 为 false（历史实测部分模型 400），此处由用户配置覆盖为 true；
-  // anthropic 预设虽为 true，未配 [thinking] 时 thinking 参数为空，照样不发。
-  // [thinking] 的 budget 语义只对 anthropic 协议家族有效；openai 协议下上面已分发、不走到这里，故忽略。
-  // default_level 命中档位表时其 budget 作为构造默认（会话级 /think 覆盖之外的基线）；
-  // 未配 default_level 时回落 budget_tokens（旧行为）。
-  const thinkingEnabled = config.thinking?.enabled === true;
-  const defaultLevelBudget =
-    config.thinking?.defaultLevel !== undefined
-      ? config.thinking.levels[config.thinking.defaultLevel]
-      : undefined;
-  const sendThinking = preset.sendThinking || thinkingEnabled;
-  const thinking = thinkingEnabled ? { budgetTokens: defaultLevelBudget ?? config.thinking?.budgetTokens } : undefined;
-
   // stepfun 通道走 adapter：请求整形（projector）、主动降级（degrader）、能力表
   // （capability-registry）在边界层统一生效；sendCacheControl:false 由 adapter 内部处理。
+  // config.toml 的 [models.<别名>] capabilities 在此翻译成 CapabilityOverride 下发——
+  // 此前这一步缺失，导致声明只对工具门控生效、对请求整形无效（explore 配了 image_in
+  // 仍被 degrader 剥图）。
   if (config.provider === 'stepfun') {
+    const override = capabilitiesToOverride('stepfun', config.model, config.capabilities);
     return new StepfunAdapter({
       apiKey,
       baseUrl: config.baseUrl,
@@ -70,6 +85,7 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
       maxTokens: config.maxTokens,
       sendThinking,
       thinking,
+      ...(override !== undefined ? { capabilityOverrides: [override] } : {}),
     });
   }
 

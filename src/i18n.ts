@@ -4,7 +4,7 @@
  * 只覆盖给人看的 UI 文案（TUI 组件、App 提示、CLI 输出）；
  * 给模型看的文案（工具 describe、system prompt、deny reason、tool_result）恒中文，不进本表。
  *
- * 文案生产者一大半在 React 树外（commands.ts、workingTips.ts、agent/loop.ts、main.tsx），
+ * 文案生产者一大半在 React 树外（commands.ts、workingTips.ts、agent/loop.ts、cli.tsx），
  * React context 覆盖不到，故用模块级变量而非 context（ink 单进程单实例，无并发问题）。
  *
  * key 用点分命名（如 `approval.title`），插值用 `{name}` 占位。
@@ -124,6 +124,7 @@ const zh = {
   'agentGroup.status.running': '运行中',
   'agentGroup.status.queued': '排队中',
   'agentGroup.backgroundHint': '（Ctrl+B 转后台运行）',
+  'agentGroup.detachedHandoff': '⏻ {count} 个子 agent 转入后台继续运行（bg 徽章可见，/tasks 查看进度，完成后通知）',
 
   // --- workflow 步骤面板（WorkflowPanel / ToolCall）---
   'workflow.title': 'workflow「{name}」',
@@ -174,7 +175,7 @@ const zh = {
   'app.think.invalid': '未知思考深度档位：{name}（可用：{list}，或 off 关闭）',
   'app.think.switched': '思考深度已切换为：{level}（{detail}，下一轮请求生效）',
   'app.think.cacheWarning': '切换思考深度会使已有 prompt cache 失效，/new 开新会话可避免额外 token 消耗',
-  'app.think.budgetWarning': '⚠ 该档位思考预算 {budget} 与当前 max_tokens {maxTokens} 余量不足，正文可能被挤空导致空响应。建议在 config.toml 调大 max_tokens，或用 /think 降档。',
+  'app.think.budgetWarning': '⚠ 该档位思考预算 {budget} 逼近当前 max_tokens {maxTokens}，正文可能被挤空导致空响应。可切到更低档位，或在 config.toml 调大 max_tokens。',
   'app.think.status': '当前生效：{current} · 配置默认：{defaultLevel}\n可用档位：\n{lines}',
   'app.think.levelLine': '  {name} = {budget}',
   'app.think.followDefault': '跟随配置默认',
@@ -205,10 +206,16 @@ const zh = {
 
   // --- 后台任务终态提示（App 注入通知时给用户看的行；给模型看的通知正文恒中文不进表）---
   'background.settled': '⏱ 后台任务 {id} {status}：{command}',
+  // 回放：后台通知原文是给模型看的 XML 信封，历史区改用这行人读提示
+  'historyReplay.backgroundSettled': '⏱ 后台任务 {id} 已结束（通知已注入上下文）',
   'background.status.running': '运行中',
   'background.status.completed': '已完成',
   'background.status.failed': '失败',
   'background.status.killed': '已终止',
+  // reconcile 把「磁盘记 running 但进程已不在」的任务标成 lost，补投时需要这行
+  'background.status.lost': '已失联',
+  // 启动对账补投：上次会话结束前已终态但未送达的通知，本次启动补进上下文
+  'background.redelivered': '⏱ 补投上次会话未送达的后台任务通知 {id}（{status}）：{command}',
   'background.detached': '⏶ 已把 {count} 个前台任务转为后台（/tasks 查看，终态自动通知）。',
 
   // --- App 会话与图片提示 ---
@@ -228,8 +235,16 @@ const zh = {
 
   // --- App 发送队列与中断 ---
   'app.queue.added': '已加入发送队列（第 {index} 条）：{text}',
+  // 系统合成注入（后台通知 XML 信封 / cron prompt / skill 正文 / goal 续跑文本）入队：
+  // 只报条数不回显正文——正文是给模型看的，可能上万字，打进转录区既刷屏又像系统冒充用户说话
+  'app.queue.addedSilent': '已加入发送队列（第 {index} 条，系统注入）',
   'app.queue.restored': '已把发送队列的内容合并回输入框，可编辑后再发送。',
+  // Esc 清空队列时，队列里混有系统合成注入（后台通知信封 / cron prompt / skill 正文）：
+  // 它们不进输入框草稿（正文是给模型看的，灌进去只是一段 XML），随队列一起丢弃，单独报数
+  'app.queue.restoredDropped': '已把发送队列的真人输入合并回输入框；另丢弃 {count} 条系统注入（含后台任务通知，不会再补投）。',
   'app.queue.previewTitle': '📤 发送队列 {count} 条 · 回合结束后按序发送 · Esc 中断后立即发送',
+  // 队列预览里系统注入条目的占位：不展示 XML 信封/技能正文原文，只说明这是什么
+  'app.queue.previewSystemEntry': '（系统注入：后台通知 / 定时任务 / 技能正文，正文略）',
   'app.queue.previewMore': '  … 还有 {count} 条',
   'app.queue.recallHint': '  ↑ 取回末条编辑',
   'app.aborted.resumeQueue': '已中断（Esc）。继续发送队列中的 {count} 条消息。',
@@ -239,8 +254,10 @@ const zh = {
   // --- App 计划确认框与计划模式 ---
   'app.plan.approved': '📋 已批准的计划：\n\n{plan}',
   'app.plan.readyTitle': 'Ready to code? 计划如下：',
-  'app.plan.readyHintMiddle': ' 批准并执行 · ',
-  'app.plan.readyHintEnd': '/Esc 拒绝（反馈给模型修订）',
+  'plan.option.approve': '批准并执行',
+  'plan.option.rejectWithFeedback': '拒绝并说明如何修订',
+  'plan.option.reject': '拒绝',
+  'plan.hint': '↑↓ 选择 · Enter 确认 · 1-3 直选 · y 批准 / n 拒绝 / f 写修订意见 · Esc 拒绝',
   'app.plan.off': '计划模式已关闭，恢复执行。',
   'app.plan.on': '计划模式已开启：我只做只读调查并产出计划，调 exit_plan_mode 提交你确认，批准后才执行。再次输入 /plan 可提前关闭。',
 
@@ -392,8 +409,9 @@ const zh = {
   'app.fork.busy': '会话进行中，无法 fork。请等待当前回合结束后再试。',
   'app.fork.done': '已从会话 {from} fork 出新会话 {to}（保留 {messages} 条历史、{todos} 项任务）。原会话不受影响。',
   'app.new.started': '已开始新会话 {id}。',
-  'app.compact.running': '正在压缩上下文…',
+  'app.compact.running': '正在压缩上下文…（Esc 取消）',
   'app.compact.done': '上下文已压缩：约 {before} → {after} tokens（估算）。',
+  'app.compact.aborted': '已取消压缩，历史保持原样。',
   'app.compact.failed': '压缩失败：{message}',
   'app.reflect.running': '正在回顾完整对话历史、提炼可复用的方法论经验…',
   'app.reflect.done': '📝 对话经验沉淀（{count} 条历史）：\n\n{text}',
@@ -404,7 +422,7 @@ const zh = {
   'app.export.warning': '⚠️ 里面含会话正文与脱敏后的配置，正文脱敏为尽力而为、不保证完全。请勿公开分享，仅私下发给我们排查。',
   'app.export.failed': '导出调试包失败：{message}',
 
-  // --- App /sessions /resume（main.tsx sessions 子命令复用 app.sessions.none / app.sessions.untitled / app.resume.notFound）---
+  // --- App /sessions /resume（cli.tsx sessions 子命令复用 app.sessions.none / app.sessions.untitled / app.resume.notFound）---
   'app.sessions.none': '本工作目录暂无历史会话。',
   'app.sessions.untitled': '(无标题)',
   'app.resume.notFound': '未找到会话 {id}',
@@ -485,7 +503,7 @@ const zh = {
   'cmd.helpText.aliasSuffix': '（/{aliases}）',
   'cmd.helpText.line': '/{name}{alias} — {describe}',
 
-  // --- main.tsx CLI 输出（sessions 子命令 / mcp / 非交互 / reflect）---
+  // --- cli.tsx CLI 输出（sessions 子命令 / mcp / 非交互 / reflect）---
   'cli.sessions.line': '{id}  {title}  {updated}  {count} 条',
   'cli.sessions.showUsage': '用法：step sessions show <id>',
   'cli.sessions.label.title': '标题: ',
@@ -524,8 +542,8 @@ const zh = {
   'loop.overflow.retried': '上下文溢出，已压缩历史后重试本回合。',
   'loop.maxTokens.truncated': '模型输出达到 max_tokens 上限被截断，截断处的工具调用未执行。可回复「继续」让我接着输出，或在 config.toml 调高 max_tokens。',
   'loop.maxTokens.truncatedWithLimit': '模型输出达到 max_tokens 上限（{limit}）被截断，截断处的工具调用未执行。可回复「继续」让我接着输出，或在 config.toml 调高 max_tokens。',
-  'loop.maxTokens.thinkingExhausted': '思考消耗了全部输出预算，正文没有空间生成。请在 config.toml 调大 max_tokens，或用 /think 降低思考档位。',
-  'loop.maxTokens.thinkingExhaustedWithLimit': '思考消耗了全部输出预算（max_tokens={limit}），正文没有空间生成。请在 config.toml 调大 max_tokens，或用 /think 降低思考档位。',
+  'loop.maxTokens.thinkingExhausted': '思考消耗了全部输出预算，正文没有空间生成。请在 config.toml 调大 max_tokens——降低思考档位无效，实测各档在预算不足时思考量相近。',
+  'loop.maxTokens.thinkingExhaustedWithLimit': '思考消耗了全部输出预算（max_tokens={limit} 已全部用于思考），正文没有空间生成。请在 config.toml 调大 max_tokens——降低思考档位无效，实测各档在预算不足时思考量相近。',
   'loop.autoCompacted': '上下文接近上限，已自动压缩历史。',
   'loop.maxIterations': '已达最大往返轮数（{max}），中止本次交互。',
   'turn.retry': '请求失败，{delay}ms 后重试（第 {attempt}/{max} 次）',
@@ -541,9 +559,17 @@ const zh = {
   // --- 错误码 → 建议用户动作（附加在 error 事件文案后；最小目录，见 errorAdvice）---
   'error.advice.auth': '建议：API key 无效或权限不足，请检查 STEP_CODE_API_KEY 环境变量或 config.toml 中的 key 配置。',
   'error.advice.rateLimit': '建议：限流持续存在，请稍后重试，或检查账户配额。',
-  'error.emptyStream': '服务端返回了空响应：在产出任何内容前就结束了生成。通常是网关或服务端的瞬时故障，请重新发送；持续出现请检查服务商状态。',
+  'error.emptyStream': '服务端返回了空响应：本轮没有产出正文，也没有工具调用。',
+  'error.emptyStream.diagnostics': '  实测信息：{details}',
+  'error.emptyStream.model': '模型 {model}',
+  'error.emptyStream.hadReasoning': '已产出思考内容',
+  'error.emptyStream.noReasoning': '未产出思考内容',
+  'error.emptyStream.stopReason': '结束原因 {reason}',
+  'error.emptyStream.noSignal': '服务端未给出',
+  'error.emptyStream.outputTokens': '输出 {tokens} tokens',
+  'error.emptyStream.budgetHint': '  思考已消耗输出预算而正文为空。两个办法：用 /think low 降低思考档位（实测低档思考量可降约 85%），或在 config.toml 调大 max_tokens。重发无用——同样的档位与预算会再次耗尽。',
 
-  // --- provider 工厂（main.tsx 在 setLocale 之后调用，翻得到）---
+  // --- provider 工厂（cli.tsx 在 setLocale 之后调用，翻得到）---
   'factory.unknownProvider': "未知服务商 provider='{provider}'。当前支持：{list}。",
   'factory.missingApiKey':
     '缺少 API key（provider={provider}）。请设置环境变量 STEP_CODE_API_KEY、该服务商的惯例环境变量（stepfun→STEPFUN_API_KEY、anthropic→ANTHROPIC_API_KEY、openai→OPENAI_API_KEY），或在 ~/.step-code/config.toml 的 [providers] 渠道 / [models] 别名下写入 api_key（也可用 api_key_env 指定环境变量名）。',
@@ -647,6 +673,7 @@ const en: Record<keyof typeof zh, string> = {
   'agentGroup.status.running': 'running',
   'agentGroup.status.queued': 'queued',
   'agentGroup.backgroundHint': '(Ctrl+B to run in background)',
+  'agentGroup.detachedHandoff': '⏻ {count} subagent(s) moved to background (see bg badge, /tasks for progress, notified on completion)',
 
   'workflow.title': 'workflow "{name}"',
   'workflow.summary': 'workflow "{name}" · {steps} steps · {agents} subagents',
@@ -694,7 +721,7 @@ const en: Record<keyof typeof zh, string> = {
   'app.think.invalid': 'Unknown thinking level: {name} (available: {list}, or off to disable)',
   'app.think.switched': 'Thinking level switched to: {level} ({detail}, takes effect next turn)',
   'app.think.cacheWarning': 'Switching thinking level invalidates the existing prompt cache; start a new session with /new to avoid extra token cost',
-  'app.think.budgetWarning': '⚠ This level\'s thinking budget {budget} leaves too little room against the current max_tokens {maxTokens}; the response may be squeezed out, causing an empty reply. Raise max_tokens in config.toml, or lower the level with /think.',
+  "app.think.budgetWarning": "⚠ This level's thinking budget {budget} is close to the current max_tokens {maxTokens}; the response may be squeezed out, causing an empty reply. Switch to a lower level, or raise max_tokens in config.toml.",
   'app.think.status': 'Active: {current} · Config default: {defaultLevel}\nAvailable levels:\n{lines}',
   'app.think.levelLine': '  {name} = {budget}',
   'app.think.followDefault': 'follow config default',
@@ -721,10 +748,13 @@ const en: Record<keyof typeof zh, string> = {
   'status.planOn': ' (on)',
 
   'background.settled': '⏱ Background task {id} {status}: {command}',
+  'historyReplay.backgroundSettled': '⏱ Background task {id} finished (notification injected into context)',
   'background.status.running': 'running',
   'background.status.completed': 'completed',
   'background.status.failed': 'failed',
   'background.status.killed': 'killed',
+  'background.status.lost': 'lost',
+  'background.redelivered': '⏱ Redelivering undelivered notification for task {id} ({status}): {command}',
   'background.detached': '⏶ Moved {count} foreground task(s) to background (/tasks to view; notified on completion).',
 
   'app.resumed': 'Resumed session {id}{nameSuffix} ({turns} turns · {count} messages).',
@@ -741,8 +771,11 @@ const en: Record<keyof typeof zh, string> = {
   'app.user.withImages': ' (with {count} images)',
 
   'app.queue.added': 'Added to send queue (#{index}): {text}',
+  'app.queue.addedSilent': 'Added to send queue (#{index}, system injection)',
   'app.queue.restored': 'Queued messages merged back into the input box; edit before sending.',
+  'app.queue.restoredDropped': 'Merged queued human input back into the input box; dropped {count} system injection(s) (including background task notifications — they will not be redelivered).',
   'app.queue.previewTitle': '📤 Send queue {count} · sent in order at end of turn · Esc interrupts and sends now',
+  'app.queue.previewSystemEntry': '(system injection: background notification / cron / skill body — body omitted)',
   'app.queue.previewMore': '  … {count} more',
   'app.queue.recallHint': '  ↑ recall last entry for editing',
   'app.aborted.resumeQueue': 'Aborted (Esc). Continuing with {count} queued messages.',
@@ -751,8 +784,10 @@ const en: Record<keyof typeof zh, string> = {
 
   'app.plan.approved': '📋 Approved plan:\n\n{plan}',
   'app.plan.readyTitle': 'Ready to code? Plan as follows:',
-  'app.plan.readyHintMiddle': ' approve and execute · ',
-  'app.plan.readyHintEnd': '/Esc reject (feedback goes back to the model for revision)',
+  'plan.option.approve': 'Approve and execute',
+  'plan.option.rejectWithFeedback': 'Reject and describe what to revise',
+  'plan.option.reject': 'Reject',
+  'plan.hint': '↑↓ select · Enter confirm · 1-3 quick pick · y approve / n reject / f write feedback · Esc reject',
   'app.plan.off': 'Plan mode off; resuming execution.',
   'app.plan.on': 'Plan mode on: I will only investigate read-only and produce a plan, submit it via exit_plan_mode for your confirmation, and execute only after approval. Type /plan again to turn it off early.',
 
@@ -897,8 +932,9 @@ const en: Record<keyof typeof zh, string> = {
   'app.fork.busy': 'Session busy; cannot fork. Wait for the current turn to finish.',
   'app.fork.done': 'Forked session {from} into new session {to} (kept {messages} messages, {todos} tasks). The original session is untouched.',
   'app.new.started': 'Started new session {id}.',
-  'app.compact.running': 'Compacting context…',
+  'app.compact.running': 'Compacting context… (Esc to cancel)',
   'app.compact.done': 'Context compacted: ~{before} → {after} tokens (estimated).',
+  'app.compact.aborted': 'Compaction cancelled; history left unchanged.',
   'app.compact.failed': 'Compaction failed: {message}',
   'app.reflect.running': 'Reviewing full conversation history, distilling reusable methodology…',
   'app.reflect.done': '📝 Lessons from this conversation ({count} messages):\n\n{text}',
@@ -1025,8 +1061,8 @@ const en: Record<keyof typeof zh, string> = {
   'loop.overflow.retried': 'Context overflow; history compacted, retrying this turn.',
   'loop.maxTokens.truncated': 'Model output hit the max_tokens limit and was truncated; the truncated tool call was not executed. Reply "continue" to resume output, or raise max_tokens in config.toml.',
   'loop.maxTokens.truncatedWithLimit': 'Model output hit the max_tokens limit ({limit}) and was truncated; the truncated tool call was not executed. Reply "continue" to resume output, or raise max_tokens in config.toml.',
-  'loop.maxTokens.thinkingExhausted': 'Thinking consumed the entire output budget, leaving no room for the response. Raise max_tokens in config.toml, or lower the thinking level with /think.',
-  'loop.maxTokens.thinkingExhaustedWithLimit': 'Thinking consumed the entire output budget (max_tokens={limit}), leaving no room for the response. Raise max_tokens in config.toml, or lower the thinking level with /think.',
+  'loop.maxTokens.thinkingExhausted': 'Thinking consumed the entire output budget, leaving no room for the response. Raise max_tokens in config.toml — lowering the thinking level does not help, as measurements show thinking length is nearly identical across levels once the budget is short.',
+  'loop.maxTokens.thinkingExhaustedWithLimit': 'Thinking consumed the entire output budget (all {limit} tokens went to thinking), leaving no room for the response. Raise max_tokens in config.toml — lowering the thinking level does not help, as measurements show thinking length is nearly identical across levels once the budget is short.',
   'loop.autoCompacted': 'Context nearing the limit; history auto-compacted.',
   'loop.maxIterations': 'Reached the maximum number of turns ({max}); aborting this run.',
   'turn.retry': 'Request failed, retrying in {delay}ms (attempt {attempt}/{max})',
@@ -1040,7 +1076,15 @@ const en: Record<keyof typeof zh, string> = {
 
   'error.advice.auth': 'Hint: the API key is invalid or lacks permission. Check the STEP_CODE_API_KEY environment variable or the key in config.toml.',
   'error.advice.rateLimit': 'Hint: rate limiting persists. Retry later, or check your account quota.',
-  'error.emptyStream': 'The server returned an empty response: generation ended before any content was produced. Usually a transient gateway/server issue — please send again; if it persists, check the provider status.',
+  'error.emptyStream': 'The server returned an empty response: this turn produced no answer text and no tool calls.',
+  'error.emptyStream.diagnostics': '  Observed: {details}',
+  'error.emptyStream.model': 'model {model}',
+  'error.emptyStream.hadReasoning': 'reasoning was produced',
+  'error.emptyStream.noReasoning': 'no reasoning was produced',
+  'error.emptyStream.stopReason': 'stop reason {reason}',
+  'error.emptyStream.noSignal': 'not reported by the server',
+  'error.emptyStream.outputTokens': '{tokens} output tokens',
+  'error.emptyStream.budgetHint': '  Reasoning consumed the output budget and left no answer. Two options: lower the thinking level with /think low (measured ~85% less reasoning at the low level), or raise max_tokens in config.toml. Resending will not help — the same level and budget will run out again.',
 
   'factory.unknownProvider': "Unknown provider provider='{provider}'. Supported: {list}.",
   'factory.missingApiKey':

@@ -94,7 +94,7 @@ describe('StepfunAdapter.stream：投影 + 主动降级 + 透传', () => {
   it('config 覆盖 image_in=false：图片块被主动降级为占位文本', () => {
     const inner = new MockInner();
     const adapter = makeAdapter(inner, [
-      { channel: 'stepfun', modelPrefix: 'step-3', capability: { image_in: false } },
+      { channel: 'stepfun', model: 'step-3.7-flash', capability: { image_in: false } },
     ]);
     adapter.stream({ system: 's', tools: [], messages: [{ role: 'user', content: [imageBlock] }] });
     const sent = JSON.stringify(inner.calls[0]!.messages);

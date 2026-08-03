@@ -58,17 +58,32 @@ export function thinkStatusLabel(
 }
 
 /**
- * /think 门控：当前渠道是 anthropic 协议且允许发送 thinking 字段时才可用
- * （与 provider 工厂同一口径：preset.sendThinking || [thinking] enabled）。
- * providerName 为当前生效渠道（预设名或自定义渠道的 type，均为 PROVIDER_PRESETS 的 key）。
+ * /think 门控：当前渠道允许下发思考控制字段时才可用。
+ *
+ * ## 曾经的错误：只放行 anthropic 协议
+ *
+ * 旧实现要求 `preset.protocol === 'anthropic'`，依据是「thinking 请求字段只有
+ * Anthropic Messages 才有」。这个前提是错的——阶跃三个接口都有思考强度参数，
+ * 只是名字和层级不同（见 provider/step/stepCommon.ts 的 stepEffortParam）：
+ *
+ * | 协议 | 参数 |
+ * |---|---|
+ * | anthropic（Messages） | `output_config.effort` |
+ * | openai（Chat Completions） | `reasoning_effort` |
+ * | openai_responses（Responses） | `reasoning.effort` |
+ *
+ * 依据：[官方 step-3.7-flash 文档](https://platform.stepfun.com/docs/zh/guides/models/step-3.7-flash)
+ * 「Chat Completions API 使用 reasoning_effort 控制推理强度；Messages API 使用 output_config.effort」。
+ *
+ * 后果：用 openai / openai_responses 渠道时 /think 被拒、状态栏不显示档位，
+ * 而 provider 工厂其实已经在给这两条路径下发 effort——UI 说「不支持」，底层却在发，自相矛盾。
+ *
+ * 现在的口径与 provider 工厂完全一致：`preset.sendThinking || [thinking] enabled`，
+ * 不再看协议。providerName 为当前生效渠道（预设名或自定义渠道的 type）。
  */
 export function thinkingAvailable(providerName: string, thinkingCfg?: ThinkingConfig): boolean {
   const preset = PROVIDER_PRESETS[providerName];
-  return (
-    preset !== undefined &&
-    preset.protocol === 'anthropic' &&
-    (preset.sendThinking || thinkingCfg?.enabled === true)
-  );
+  return preset !== undefined && (preset.sendThinking || thinkingCfg?.enabled === true);
 }
 
 /** 取当前生效的档位表（config 缺省时回落内置默认表，防御手工构造的配置对象）。 */
