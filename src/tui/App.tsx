@@ -2345,6 +2345,15 @@ export function App({
             triggerRatio: configRef.current.compaction.triggerRatio,
             reservedTokens: configRef.current.compaction.reservedTokens,
           },
+          // 把状态栏的真实 usage 基准交给压缩预检：runAgent 的 lastUsage 是它的局部状态，
+          // 每次提交都是一次新调用、从零开始，不传的话首回合只能用字符估算（不含 system
+          // 与 tools，实测低估一半），单回合的纯对话轮于是永远判不出该压缩。
+          // 基准为 0（全新会话尚无任何真实 usage）时不传：让 runAgent 走估算路径，
+          // 那条路径会补上框架侧开销；传 0 反而会被当成「已测量」而丢掉这项补偿。
+          initialUsage:
+            baseTokensRef.current > 0
+              ? { total: baseTokensRef.current, measuredLength: measuredLenRef.current }
+              : undefined,
           compactionModel: compactionBindingRef.current.model,
           compactionProvider: compactionBindingRef.current.provider,
           userMessageBudget: {
