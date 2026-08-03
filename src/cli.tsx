@@ -1,4 +1,24 @@
 #!/usr/bin/env node
+// TUI / headless 的真实入口。**本文件不得设置 `NODE_ENV`，也不得 import 任何设置它的模块。**
+//
+// 这条禁令的方向是反直觉的（曾经这里有一行 `import './env.js'` 当兜底，实测证明它净有害）：
+// tsc 的 JSX transform 会在编译产物顶部注入 `import 'react/jsx-runtime'`，排在本文件所有
+// 源码 import 之前，而它内部的 `require('react')` 会让 **react 主包**在那一刻就按当时的
+// `NODE_ENV` 完成 development / production 分流。之后才轮到源码 import 里的 ink 拉起
+// react-reconciler 分流。于是在本文件里设 `NODE_ENV` 只够得到 reconciler、够不到 react，
+// 恰好制造出 **react(development) + reconciler(production)** 的错配——而错配的后果是
+// reconciler 调度静默失效：`render()` 正常返回、根组件一次都没被调用、stdout 零字节、
+// 不抛任何异常，表现为「启动即卡死在空白屏」。
+//
+// 2026-08-03 实测，唯一变量是本文件是否设置 NODE_ENV（外部一律 `env -u NODE_ENV`）：
+//   本文件有 `import './env.js'`  → react=dev / reconciler=prod → stdout **0 字节**（空白屏）
+//   改为 NODE_ENV=development     → react=dev / reconciler=dev  → stdout 2000+ 字节（正常）
+// 也就是说那道「兜底」唯一真正生效的场合，就是把一个能正常工作的 dev 环境变成静默卡死；
+// 在 bin 与 bundle 两条路径上它都只是 no-op（那两条各有自己的机制，见下）。
+//
+// 正确的落点是 bin 引导文件 `./main.ts`：不含 JSX、无任何静态 import，先设 `NODE_ENV`
+// 再 `await import` 本模块，保证 react 与 reconciler 都在赋值之后才求值。bundle 形态另有
+// esbuild `define` 把 `process.env.NODE_ENV` 静态折叠为 production。回归护栏见 tests/env.test.ts。
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -33,6 +53,12 @@ import { resolveCompactionBinding } from './provider/compaction.js';
 import type { ChatProvider } from './provider/types.js';
 import { SessionStore, deriveTitle, type ResumeResult, type SessionData } from './session/store.js';
 import { resumeHintMeta, resumeHintText } from './session/resumeHint.js';
+import {
+  subagentTextLine,
+  toSubagentStreamEvent,
+  errorEventFromThrown,
+  agentEventLine,
+} from './session/streamJson.js';
 import { runExportDebugZip } from './session/debugCli.js';
 import { App } from './tui/App.js';
 import { SessionPicker, relativeTime } from './tui/SessionPicker.js';
@@ -326,7 +352,7 @@ const reloadSkills = (force = false): SkillRegistryDiff | null => {
 const agentsMdBudget = config.agentsMdMaxBytes ?? DEFAULT_AGENTS_MD_BUDGET_BYTES;
 const agentsMdResult = loadAgentsMd(cwd, undefined, config.agentsPaths, agentsMdBudget);
 const agentsMd = agentsMdResult.text;
-// 子 agent 注册表按 cwd 构建一次（main.tsx 非交互分支），用于注入运行时可见的自定义角色
+// 子 agent 注册表按 cwd 构建一次（cli.tsx 非交互分支），用于注入运行时可见的自定义角色
 const subagentRegistry = buildAgentRegistry(cwd);
 const systemPrefix = buildSystemPrompt(cwd);
 /** 组合当前 system prompt：静态前缀 + 当前 skill 清单（随 reload 更新）+ 降权声明 + AGENTS.md。 */
@@ -599,7 +625,7 @@ async function runPrint(prompt: string): Promise<void> {
   }
   const emit = (ev: AgentEvent): void => {
     if (streamJson) {
-      process.stdout.write(`${JSON.stringify(ev)}\n`);
+      process.stdout.write(`${agentEventLine(ev)}\n`);
       if (ev.type === 'error') process.exitCode = 1;
       return;
     }
@@ -709,9 +735,14 @@ async function runPrint(prompt: string): Promise<void> {
       subagentStore,
       parentSessionId: session.id,
       skills: ctx.skills, // 子 agent 共享 skill
-      onEvent: (_id, ev) => {
-        if (ev.kind === 'tool') process.stderr.write(`  [subagent] ${ev.name}\n`);
-        else if (ev.kind === 'error') process.stderr.write(`  [subagent:error] ${ev.message}\n`);
+      onEvent: (id, ev) => {
+        // stream-json：五种事件全量进 stdout，保留 id 供并行子 agent 归属
+        if (streamJson) {
+          process.stdout.write(`${JSON.stringify(toSubagentStreamEvent(id, ev))}\n`);
+          return;
+        }
+        const line = subagentTextLine(ev);
+        if (line !== null) process.stderr.write(line);
       },
     }),
   };
@@ -747,16 +778,27 @@ async function runPrint(prompt: string): Promise<void> {
   // Stop hook 续接（headless 无 goal，continuation 只会来自 Stop hook）：
   // 收到 continuation 时把 inject 注入会话历史再跑一轮；一次性语义由 composeLoopHooks 的防循环标志保证
   let pendingInject: string | null = null;
-  do {
-    if (pendingInject !== null) {
-      session.messages.push(stored({ role: 'user', content: pendingInject }, 'user'));
-      pendingInject = null;
-    }
-    for await (const ev of runOnce()) {
-      if (ev.type === 'continuation') pendingInject = ev.inject;
-      emit(ev);
-    }
-  } while (pendingInject !== null);
+  // agent 循环的异常兜底：没有这层，任何冒泡异常会走 Node 默认未捕获 rejection——
+  // stream-json 消费方只会拿到半截 JSON 流 + stderr 里一坨堆栈，收不到任何结构化 error 事件，
+  // 且下方的落盘与 resume 提示会被整个跳过（会话丢失、无法 resume）。
+  // 对照 Claude Agent SDK 的「错误提升」（query.py:340-349）：异常必须转成调用方可消费的
+  // 结构化错误，而不是只留一个无信息的非零退出码。
+  try {
+    do {
+      if (pendingInject !== null) {
+        session.messages.push(stored({ role: 'user', content: pendingInject }, 'user'));
+        pendingInject = null;
+      }
+      for await (const ev of runOnce()) {
+        if (ev.type === 'continuation') pendingInject = ev.inject;
+        emit(ev);
+      }
+    } while (pendingInject !== null);
+  } catch (e) {
+    // 走与循环内 error 相同的出口：stream-json 得到 {"type":"error",...}，text 模式得到 [error] 行，
+    // 两者都由 emit 统一置 exitCode=1。异常吞在这里是有意的——落盘与 resume 提示必须继续执行。
+    emit(errorEventFromThrown(e));
+  }
   if (!streamJson) process.stdout.write('\n');
   // drain：把运行期间已终态的后台任务通知打到 stderr（未送达的注入通道降级；仍在运行的任务不等待）
   for (const note of settledNotes) {
