@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import { runAgent } from '../../src/agent/loop.js';
-import { estimateTokens } from '../../src/agent/compaction/compact.js';
+import { estimateTextTokens, estimateTokens } from '../../src/agent/compaction/compact.js';
+import { toAnthropicTools } from '../../src/tools/index.js';
 import { stored, type StoredMessage } from '../../src/agent/message.js';
 import { collect, makeFakeProvider, textBlock, toolUseBlock } from '../helpers/fakeProvider.js';
 
@@ -45,6 +46,17 @@ function bigHistory(): StoredMessage[] {
 /** 本组统一的压缩阈值：maxContextSize=200 → 触发线 170。 */
 const THRESHOLDS = { maxContextSize: 200, triggerRatio: 0.85, reservedTokens: 10 };
 
+/**
+ * 框架固定开销（system + tools schema）的估算，与 loop 内 `frameworkTokens` 同算法。
+ *
+ * 测试必须自己算一遍，否则断言口径与被测量不对等：状态栏与预检报的都是
+ * 「历史估算 + 框架开销」，拿裸历史估算去比必然失败（本仓库工具表本身就有约 8k tok）。
+ * 这正是被修复的那个 bug 在测试侧的镜像，故这里刻意复算而不是放宽阈值。
+ */
+function frameworkTokensOf(system: string): number {
+  return estimateTextTokens(system) + estimateTextTokens(JSON.stringify(toAnthropicTools(undefined)));
+}
+
 describe('发请求前的压缩预检', () => {
   it('纯对话轮：模型不调工具也会在发请求前压缩（修复前此路径永不压缩）', async () => {
     // 只给两个行为：摘要调用 + 唯一的主会话请求（end_turn）。
@@ -84,7 +96,8 @@ describe('发请求前的压缩预检', () => {
       { textChunks: ['答复'], finalContent: [textBlock('答复')] },
     ]);
     const messages = bigHistory();
-    const beforeEstimate = estimateTokens(messages);
+    // 同口径基线：状态栏报的是「历史估算 + 框架开销」，基线也必须含框架开销
+    const beforeSameUnit = estimateTokens(messages) + frameworkTokensOf('sys');
 
     const events = await collect(
       runAgent({ ...baseOpts(provider, messages), compaction: THRESHOLDS }),
@@ -95,7 +108,9 @@ describe('发请求前的压缩预检', () => {
       | undefined;
     expect(usage).toBeDefined();
     // 压缩后的估算必须低于压缩前，否则「立即回落」没有意义
-    expect(usage!.totalTokens).toBeLessThan(beforeEstimate);
+    expect(usage!.totalTokens).toBeLessThan(beforeSameUnit);
+    // 且必须仍然含框架开销：低于框架开销说明又退回了裸历史口径（口径不一致的回归信号）
+    expect(usage!.totalTokens).toBeGreaterThanOrEqual(frameworkTokensOf('sys'));
     // usage 事件必须排在任何模型输出之前 —— 这是「预检发生在发请求前」的直接证据
     const usageIdx = events.findIndex((e) => e.type === 'usage');
     const firstTextIdx = events.findIndex((e) => e.type === 'text');

@@ -56,10 +56,28 @@ import { join } from 'node:path';
 
 /** stdout 与 stderr 的内存预算合计（字节）。 */
 const TOTAL_BUDGET = 10 * 1024 * 1024;
-/** stderr 的独立预算：stdout 刷爆也动不了这部分，保证错误信息拿得到。 */
-const STDERR_BUDGET = 1 * 1024 * 1024;
-/** stdout 预算 = 总预算扣除 stderr 保留额。 */
-const STDOUT_BUDGET = TOTAL_BUDGET - STDERR_BUDGET;
+/**
+ * 每条流的**保底额**：另一条流再怎么刷也吃不掉这部分。
+ *
+ * 两个方向都要保底，不是只保 stderr：
+ * - 保 stderr，防「大量 stdout + 尾部几行报错」——错误信息被日志洪水冲掉（已实测过的 bug）。
+ * - 保 stdout，防反向情形「stderr 洪水」——不少构建工具（cargo / tsc / python logging 默认）
+ *   把全部输出写 stderr，不保底则正常产物一个字节都留不下。
+ */
+const PER_STREAM_RESERVE = 1 * 1024 * 1024;
+/**
+ * 保底之外的**共享池**，两条流先到先得。
+ *
+ * 为什么需要它：原实现是硬切分（stdout 9MB / stderr 1MB），于是「全部输出走 stderr」的命令
+ * 只能留 1MB，而 9MB 的 stdout 额度整场空转——这与「stderr 被 stdout 冲掉」是同一类缺陷的
+ * 反向，当时没意识到。加共享池后同一场景可留 1MB 保底 + 8MB 共享 = 9MB。
+ *
+ * 与外部成熟实现的差别在**时机**不在思想：有的实现在两条流都收完后再分配（stdout 先保底 1/3，
+ * stderr 按实际长度取，stderr 没用完的额度回补 stdout），因此能精确回补；我们是流式收集，append
+ * 时无法预知后面还有多少字节，做不到后验回补，只能「保底 + 先到先得」。代价是先刷的那条流会
+ * 占掉更多共享池——可接受，因为保底额已保证另一条流不会归零。
+ */
+const SHARED_BUDGET = TOTAL_BUDGET - PER_STREAM_RESERVE * 2;
 
 /** 溢出文件保留个数上限：写新文件前把最旧的删到这个数以内，防止无限堆积。 */
 const MAX_OVERFLOW_FILES = 20;

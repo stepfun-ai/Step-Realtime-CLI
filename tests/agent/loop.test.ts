@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import { runAgent } from '../../src/agent/loop.js';
-import { estimateTokens } from '../../src/agent/compaction/compact.js';
+import { estimateTextTokens, estimateTokens } from '../../src/agent/compaction/compact.js';
+import { toAnthropicTools } from '../../src/tools/index.js';
 import { GoalMode } from '../../src/agent/goal/mode.js';
 import { stored, type StoredMessage } from '../../src/agent/message.js';
 import { collect, makeFakeProvider, textBlock, toolUseBlock } from '../helpers/fakeProvider.js';
@@ -16,6 +17,15 @@ const baseOpts = (
   messages: StoredMessage[],
   signal?: AbortSignal,
 ) => ({ provider, system: 'sys', ctx: { cwd: process.cwd(), signal }, messages, signal });
+
+/**
+ * 框架固定开销（system + tools schema），与 loop 内 `frameworkTokens` 同算法。
+ * 状态栏与预检报的都是「历史估算 + 框架开销」，断言基线必须同口径——
+ * 拿裸历史估算去比会必然失败（本仓库工具表本身约 8k tok）。
+ */
+function frameworkTokensOf(system: string): number {
+  return estimateTextTokens(system) + estimateTextTokens(JSON.stringify(toAnthropicTools(undefined)));
+}
 
 describe('runAgent', () => {
   it('纯文本回合：产出 text 与 turn_done，并把 assistant 推入历史', async () => {
@@ -123,7 +133,8 @@ describe('runAgent', () => {
         ? sm({ role: 'user', content: `历史消息内容${'x'.repeat(100)}` })
         : sm({ role: 'assistant', content: [textBlock(`回复${'y'.repeat(100)}`)] }, 'assistant'),
     );
-    const beforeEstimate = estimateTokens(big2);
+    // 同口径基线：含框架开销（被测量本身也含）
+    const beforeEstimate = estimateTokens(big2) + frameworkTokensOf('sys');
     const events = await collect(
       runAgent({
         ...baseOpts(provider, big2),
@@ -186,7 +197,9 @@ describe('runAgent', () => {
     expect(usageAfter).toBeDefined();
     // 该值是压缩后全量估算：游标必须为全长，否则 UI 会把全部消息再当尾部估算一遍（翻倍）
     expect(usageAfter!.measuredLength).toBeGreaterThan(0);
-    expect(usageAfter!.totalTokens).toBe(estimateTokens(msgs.slice(0, usageAfter!.measuredLength)));
+    expect(usageAfter!.totalTokens).toBe(
+      estimateTokens(msgs.slice(0, usageAfter!.measuredLength)) + frameworkTokensOf('sys'),
+    );
   });
 
   it('上下文溢出：压缩历史后重试本回合完成', async () => {

@@ -76,6 +76,69 @@ describe('两条流分别记账', () => {
   });
 });
 
+describe('保底额 + 共享池', () => {
+  it('stderr 洪水能借用共享池，远超自己的保底额（硬切分时代的反向缺陷）', () => {
+    // 硬切分实现下 stderr 只能留 4 字节；有共享池后可留 4 + 20 = 24。
+    const c = createOutputCollector({
+      stdoutReserve: 4,
+      stderrReserve: 4,
+      sharedBudget: 20,
+      cwd: null,
+    });
+    for (let i = 0; i < 6; i++) c.append(buf('EEEE'), 'stderr'); // 24 字节
+
+    const snap = c.snapshot();
+    expect(snap.text).toBe('E'.repeat(24));
+    expect(snap.droppedStderr).toBe(0);
+  });
+
+  it('一条流借空共享池后，另一条流的保底额依然不可侵占', () => {
+    const c = createOutputCollector({
+      stdoutReserve: 4,
+      stderrReserve: 4,
+      sharedBudget: 8,
+      cwd: null,
+    });
+    // stdout 吃掉自己的保底 4 + 全部共享 8 = 12，再往后就该丢
+    c.append(buf('A'.repeat(12)), 'stdout');
+    c.append(buf('DROP'), 'stdout');
+    // stderr 的 4 字节保底没被动过
+    c.append(buf('BOOM'), 'stderr');
+
+    const snap = c.snapshot();
+    expect(snap.text).toBe(`${'A'.repeat(12)}BOOM`);
+    expect(snap.droppedStdout).toBe(4);
+    expect(snap.droppedStderr).toBe(0);
+  });
+
+  it('共享池先到先得：先刷的那条占住，后来者只剩自己的保底', () => {
+    const c = createOutputCollector({
+      stdoutReserve: 2,
+      stderrReserve: 2,
+      sharedBudget: 6,
+      cwd: null,
+    });
+    c.append(buf('A'.repeat(8)), 'stdout'); // 2 保底 + 6 共享，共享池清零
+    c.append(buf('EE'), 'stderr'); // 只能用自己的 2 保底
+    c.append(buf('XX'), 'stderr'); // 保底用尽且共享池空 → 丢
+
+    const snap = c.snapshot();
+    expect(snap.text).toBe(`${'A'.repeat(8)}EE`);
+    expect(snap.droppedStderr).toBe(2);
+  });
+
+  it('默认预算下 stderr 独占场景可留远超 1MB（对比硬切分的 1MB 上限）', () => {
+    const c = createOutputCollector({ cwd: null });
+    const mb = Buffer.alloc(1024 * 1024, 0x45);
+    for (let i = 0; i < 9; i++) c.append(mb, 'stderr'); // 9MB 全走 stderr
+
+    const snap = c.snapshot();
+    // 1MB 保底 + 8MB 共享 = 9MB 全部留下；硬切分实现下这里只会留 1MB
+    expect(snap.droppedStderr).toBe(0);
+    expect(snap.text.length).toBe(9 * 1024 * 1024);
+  });
+});
+
 describe('触顶溢出落盘', () => {
   it('文件是完整输出，不是「触顶之后的尾巴」', () => {
     const c = createOutputCollector({ stdoutBudget: 5, stderrBudget: 5, cwd: dir });
