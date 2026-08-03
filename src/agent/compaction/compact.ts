@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { isAbortError } from '../../provider/retry.js';
 import type { ChatProvider } from '../../provider/types.js';
 import { isStepref, STEPREF_PREFIX } from '../../session/attachments.js';
 import { mapBlocksDeep, stored, type MessageOrigin, type StoredMessage } from '../message.js';
@@ -644,6 +645,14 @@ const SUMMARY_INSTRUCTION = [
  * 若无可压缩内容、无安全切点或摘要失败，原样返回（返回同引用，供调用方判断未压缩）。
  * model 为压缩摘要专用模型覆盖（大小模型协同），省略时用 provider 构造模型。
  * userBudget 覆盖用户原话保真预算（省略 = COMPACT_USER_MESSAGE_MAX_TOKENS）。
+ *
+ * signal 为中断信号：摘要调用可能耗时数十秒（历史越长越久），期间用户按 Esc 应当能放弃。
+ * 中断语义是「彻底放弃本次压缩」而非「失败重试」——故中断不进重试环（否则按一次 Esc
+ * 还要再等三轮请求），直接原样返回历史。
+ *
+ * **中断安全性**：本函数对入参 messages 只读，新序列先在局部算完，由调用方 replaceMessages
+ * 一次性 splice 生效。因此中断只要发生在返回前，历史就一定处于压缩前的完整状态，
+ * 不存在「压缩到一半」的中间态。这是中断可以做得如此简单的前提。
  */
 export async function fullCompact(
   provider: ChatProvider,
@@ -652,7 +661,18 @@ export async function fullCompact(
   todos?: readonly { title: string; status: string }[],
   model?: string,
   userBudget?: { maxTokens?: number; headTokens?: number },
+  signal?: AbortSignal,
 ): Promise<StoredMessage[]> {
+  /**
+   * 中断判定统一走这里读实时值。
+   *
+   * 不直接写 `signal?.aborted === true`：函数入口已有一次 early return，TS 的控制流分析会把
+   * `aborted` 收窄成 `false`，后续同样的比较被判定为「永不成立」而报 TS2367。但运行时它确实会变——
+   * 摘要请求 await 期间用户按 Esc 正是要检测的情形。读函数调用的返回值绕开收窄，语义也更清楚。
+   */
+  const aborted = (): boolean => signal?.aborted === true;
+  // 进门即已中断：不发请求，原样返回（历史零改动）
+  if (aborted()) return messages;
   const desired = messages.length - keepRecent;
   if (desired <= 1) return messages; // 太短，不值得压缩
   const cutoff = safeCutoff(messages, desired);
@@ -682,6 +702,8 @@ export async function fullCompact(
   let mediaStripAttempted = false;
   let overflowShrinkCount = 0;
   for (let attempt = 1; attempt <= COMPACTION_MAX_RETRIES; attempt++) {
+    // 每轮开工前检查：中断可能发生在上一轮请求之后、本轮之前（如收缩历史期间）
+    if (aborted()) return messages;
     const summaryPrompt =
       `${SUMMARY_INSTRUCTION}\n\n--- 以下是即将被清空的对话历史 ---\n\n` +
       olderForSummary.map((m) => `${m.message.role}: ${serializeContent(m.message.content)}`).join('\n');
@@ -693,6 +715,7 @@ export async function fullCompact(
         tools: [],
         messages: [{ role: 'user', content: summaryPrompt }],
         model,
+        signal,
       });
       const final: Anthropic.Message = await stream.finalMessage();
       candidate = final.content
@@ -700,6 +723,9 @@ export async function fullCompact(
         .map((b) => b.text)
         .join('');
     } catch (err) {
+      // 用户中断：语义是「放弃压缩」，不是「这次失败换个规模再试」。
+      // 必须在所有降级分支之前判定并直接返回，否则按一次 Esc 仍要走完剩余重试。
+      if (aborted() || isAbortError(err)) return messages;
       const isOverflow = isContextOverflowOrTooLarge(err);
       // overflow / 413：先剥离媒体块再试一次（媒体常是 413 主因，且 marker 仍保留定位信息）
       if (isOverflow && !mediaStripAttempted) {
