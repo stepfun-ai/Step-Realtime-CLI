@@ -163,6 +163,8 @@ pnpm unlink --global   # 移除全局 step 命令
 
 **`step` 命令找不到**：npm 全局装的话，检查 `npm bin -g` 的目录是否在 PATH 里；源码安装则看 `pnpm bin --global`。把对应目录加入 PATH 后重开终端。
 
+**分不清自己跑的是哪个版本**：`step --version` 的输出形如 `0.1.0 (a1b2c3d 2026-08-03T02:46Z)`，括号里是构建时的 commit 与时间。版本号一个发布周期才动一次，构建标识每次构建都变——这两个信息合起来才能唯一定位一份产物。带 `+dirty` 说明它构建自有未提交改动的工作区，不对应任何一个 commit；只有版本号没有括号，说明构建时拿不到 git 信息（例如从 tarball 构建）。
+
 **Windows 下 `bash` 工具报错「未找到可用的 shell 解释器」**：说明 Git Bash、WSL、busybox、PowerShell 都没探测到。装 [Git for Windows](https://git-scm.com/download/win) 最省事；已装但在非标准路径时，把 `bash.exe` 绝对路径设到环境变量 `STEP_SHELL_PATH`。
 
 **构建报类型错误**：先 `pnpm install` 确保依赖完整，再 `pnpm build`；仍失败跑 `pnpm typecheck` 看具体位置。

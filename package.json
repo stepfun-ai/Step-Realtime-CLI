@@ -28,8 +28,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx src/main.ts",
-    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/main.tsx",
+    "build": "tsc -p tsconfig.json && node scripts/gen-build-info.mjs",
     "build:bundle": "npm run build && node scripts/build-bundle.mjs",
     "build:sea": "npm run build:bundle && node scripts/build-sea.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",

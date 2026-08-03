@@ -64,13 +64,13 @@ import { App } from './tui/App.js';
 import { SessionPicker, relativeTime } from './tui/SessionPicker.js';
 import type { ToolContext } from './tools/types.js';
 import { configureLogger, logError } from './utils/logger.js';
-import { VERSION } from './version.js';
+import { versionLine } from './buildInfo.js';
 
 const program = new Command();
 program
   .name('step')
   .description('Step Code — 终端编码 agent，由阶跃 Step 系列模型驱动')
-  .version(VERSION)
+  .version(versionLine())
   // 允许位置参数（用于 `step sessions [list|show|delete] <id>` 子命令检测）
   .allowExcessArguments(true)
   .option('-p, --print <prompt>', '非交互模式：执行单条指令，流式打印结果后退出')
