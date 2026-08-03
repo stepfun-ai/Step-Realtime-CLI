@@ -34,13 +34,14 @@ vi.mock('@anthropic-ai/sdk', () => {
 });
 
 const { StepMessagesProvider } = await import('../../src/provider/step/stepMessages.js');
+type ThinkingParam = { level?: 'low' | 'medium' | 'high'; budgetTokens?: number };
 
 const MSG: Anthropic.MessageParam[] = [{ role: 'user', content: 'hi' }];
 
 function send(opts: {
   sendThinking?: boolean;
-  thinking?: { budgetTokens?: number };
-  streamThinking?: { budgetTokens?: number } | null;
+  thinking?: ThinkingParam;
+  streamThinking?: ThinkingParam | null;
 }): Record<string, unknown> {
   captured.bodies.length = 0;
   const p = new StepMessagesProvider({
@@ -66,30 +67,30 @@ function effortOf(body: Record<string, unknown>): unknown {
 }
 
 describe('StepMessagesProvider：output_config.effort 而非 thinking', () => {
-  it('sendThinking + budget → output_config.effort，且 wire 上没有 thinking 字段', () => {
-    const body = send({ sendThinking: true, thinking: { budgetTokens: 4096 } });
+  it('sendThinking + 档位 → output_config.effort，且 wire 上没有 thinking 字段', () => {
+    const body = send({ sendThinking: true, thinking: { level: 'medium' } });
     expect(effortOf(body)).toBe('medium');
     expect(body).not.toHaveProperty('thinking');
     // 顶层 effort 是曾经的错误写法，Step 静默忽略它，必须确认不再发送
     expect(body).not.toHaveProperty('effort');
   });
 
-  it('低预算 → low 档', () => {
-    expect(effortOf(send({ sendThinking: true, thinking: { budgetTokens: 1024 } }))).toBe('low');
+  it('low 档位原样下发', () => {
+    expect(effortOf(send({ sendThinking: true, thinking: { level: 'low' } }))).toBe('low');
   });
 
-  it('高预算 → high 档', () => {
-    expect(effortOf(send({ sendThinking: true, thinking: { budgetTokens: 32000 } }))).toBe('high');
+  it('high 档位原样下发', () => {
+    expect(effortOf(send({ sendThinking: true, thinking: { level: 'high' } }))).toBe('high');
   });
 
   it('sendThinking=false → 不发 output_config', () => {
-    const body = send({ sendThinking: false, thinking: { budgetTokens: 4096 } });
+    const body = send({ sendThinking: false, thinking: { level: 'medium' } });
     expect(body).not.toHaveProperty('output_config');
     expect(body).not.toHaveProperty('thinking');
   });
 
   it('thinking=null（/think off）→ 不发 output_config', () => {
-    const body = send({ sendThinking: true, thinking: { budgetTokens: 4096 }, streamThinking: null });
+    const body = send({ sendThinking: true, thinking: { level: 'medium' }, streamThinking: null });
     expect(body).not.toHaveProperty('output_config');
   });
 
@@ -99,11 +100,11 @@ describe('StepMessagesProvider：output_config.effort 而非 thinking', () => {
   });
 
   it('max_tokens 始终发送（Step Messages 必填，缺省 400）', () => {
-    expect(send({ sendThinking: true, thinking: { budgetTokens: 4096 } })['max_tokens']).toBe(2048);
+    expect(send({ sendThinking: true, thinking: { level: 'medium' } })['max_tokens']).toBe(2048);
   });
 
   it('cache_control 默认不注入（Step 全通道不兼容）', () => {
-    const body = send({ sendThinking: true, thinking: { budgetTokens: 4096 } });
+    const body = send({ sendThinking: true, thinking: { level: 'medium' } });
     expect(JSON.stringify(body)).not.toContain('cache_control');
   });
 });

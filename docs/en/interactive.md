@@ -280,3 +280,5 @@ step -p --output-format stream-json "..."   # one JSON line per event, for progr
 ```
 
 Non-interactive mode can be used in a pipeline: `step -p "summarize this file" < README.md` puts the assistant output on stdout, ready to feed into a downstream command.
+
+To consume a run programmatically (envelope contract, all event types, versioning rules), see [stream-json event stream](./stream-json.md).

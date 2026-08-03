@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import type { PermissionMode } from '../agent/permission/mode.js';
+import { CAPABILITY_KEYS } from '../provider/capability-registry.js';
 import type { Locale } from '../i18n.js';
 
 /**
@@ -60,6 +61,18 @@ export interface CompactionConfig {
 }
 
 /**
+ * 输出截断自动续写配置（[continuation] 段）。
+ */
+export interface ContinuationConfig {
+  /**
+   * 输出被 max_tokens 截断时，自动续写的最大次数。默认 3。
+   * 0 = 关闭自动续写，保持既有行为。
+   * 每轮续写都经过循环守卫，异常循环会在次数上限或病态特征处停下。
+   */
+  maxAutoContinues?: number;
+}
+
+/**
  * 后台执行配置（[background] 段）。四个字段全部可选，缺省不进结果对象，
  * 消费方用 ?? 落默认（notifyOnComplete / bashAutoBackgroundOnTimeout 默认 true，
  * bashTaskTimeoutS 默认 600、0 = 不限；notifyTerminal 默认 true）。
@@ -106,20 +119,31 @@ export interface SearchConfig {
 
 /**
  * thinking（推理过程）请求配置（[thinking] 段）。
- * enabled 默认 false：不主动发 thinking 字段，保持既有请求行为（部分服务端对该字段 400）；
- * budget_tokens 可选，Anthropic 协议要求 ≥1024 且 < max_tokens。
- * 思考深度档位（levels + default_level）是数据不是代码：档位名 → budget 的映射放 config，
- * 会话级 /think 切换在此表内选档；未配置 [thinking.levels] 时用 {@link DEFAULT_THINKING_LEVELS}。
+ *
+ * enabled 默认 false：不主动发 thinking 字段，保持既有请求行为（部分服务端对该字段 400）。
+ *
+ * ## 用户接口是档位名，不是 token 数
+ *
+ * 唯一的用户旋钮是 `default_level`（low|medium|high），会话级用 `/think <档位>` 切换。
+ * 曾经存在的 `[thinking] budget_tokens = <数字>` 已删除，原因是那个数字对阶跃渠道
+ * **从未真正发出**：它只被用来折算档位，而折算阈值是硬编码的，用户改了
+ * `[thinking.levels]` 的数字就会错档（配 medium=20000 实际发出 high）。
+ * 让用户填一个既不会送达、又可能被错误折算的数字，是有害的接口。
+ *
+ * `levels` 表保留但语义降级为高级选项，作用范围只有原生 Anthropic 渠道，
+ * 详见 {@link DEFAULT_THINKING_LEVELS} 的注释。
  */
 export interface ThinkingConfig {
   /** 是否主动发送 thinking 请求字段（budget 控制手段；思考本身是服务端固有行为，渲染不受影响）。 */
   enabled: boolean;
-  /** 思考预算 token 数（clamp ≥1024）；未配置时请求只带 {type:'enabled'}。 */
-  budgetTokens?: number;
-  /** 思考深度档位表（档位名 → budget token 数，单个档位 clamp ≥1024）。恒非空（缺省落内置默认表）。 */
-  levels: Record<string, number>;
-  /** 默认档位名（[thinking] default_level）；必须命中 levels 内的档位，否则 loadConfig 报配置错误。 */
-  defaultLevel?: string;
+  /** 档位 → budget token 数映射（仅原生 Anthropic 渠道生效，每档 clamp ≥1024）。恒含三档。 */
+  levels: Record<ThinkingLevelName, number>;
+  /**
+   * 默认档位（[thinking] default_level）。恒有值——未配置时取
+   * {@link DEFAULT_THINKING_LEVEL}（medium），不留 undefined。
+   * 留空等于「不发 effort」，而实测「不发 effort = 跑最高思考量」，会导致正文被思考挤空。
+   */
+  defaultLevel: ThinkingLevelName;
 }
 
 /**
@@ -207,6 +231,8 @@ export interface StepCodeConfig {
   subagent: SubagentLimits;
   /** 上下文压缩配置。 */
   compaction: CompactionConfig;
+  /** 输出截断自动续写配置。 */
+  continuation?: ContinuationConfig;
   /** 后台执行配置（[background] 段）。字段全部可选，缺省键不进对象。 */
   background?: BackgroundConfig;
   /** thinking（推理过程）请求配置（[thinking] 段）。loadConfig 恒赋值（默认 { enabled: false }），消费方仍按可选处理。 */
@@ -253,6 +279,7 @@ const DEFAULT_BASE_URL = 'https://api.stepfun.com';
 const DEFAULT_MODEL = 'step-3.7-flash';
 const DEFAULT_MAX_CONTEXT = 262_144;
 const DEFAULT_MAX_TOKENS = 65536;
+const DEFAULT_MAX_AUTO_CONTINUES = 3;
 
 /**
  * provider 协议维度：决定 provider 工厂分发到哪个适配器实现。
@@ -351,10 +378,46 @@ const THINKING_BUDGET_MIN = 1024;
 export const THINKING_TEXT_MARGIN = 2048;
 
 /**
- * 内置默认思考深度档位表（[thinking.levels] 未配置或全部无效时使用）。
- * 取实战验证过的档位值；用户可在 config.toml 用 [thinking.levels] 整体覆盖（档位是数据不是代码）。
+ * 合法档位名（用户接口只有这三个，与 Step 三接口的 effort 取值一一对应）。
+ * 不再支持自定义档位名：档位名要直接作为 effort 值发给服务端，自造的名字服务端不认。
  */
-export const DEFAULT_THINKING_LEVELS: Record<string, number> = { low: 1024, medium: 4096, high: 32000 };
+export const THINKING_LEVEL_NAMES = ['low', 'medium', 'high'] as const;
+
+export type ThinkingLevelName = (typeof THINKING_LEVEL_NAMES)[number];
+
+/** 判定字符串是否为合法档位名。 */
+export function isThinkingLevelName(value: unknown): value is ThinkingLevelName {
+  return typeof value === 'string' && (THINKING_LEVEL_NAMES as readonly string[]).includes(value);
+}
+
+/**
+ * `[thinking] default_level` 未配置时的兜底档位。
+ *
+ * 为什么必须有兜底、且不能是「不发档位」：2026-08-03 实测，阶跃三通道在**不发 effort**
+ * 时的思考量全部落在 high 附近（三通道基线与 high 档同量级）。即「空档位 = 跑最高思考量」，
+ * 而 high 档在难任务上会把 max_tokens 打满、正文零输出——这正是「服务端返回了空响应」
+ * 那个 bug 的成因之一。所以缺省必须显式取中档，不能留空交给服务端默认。
+ */
+export const DEFAULT_THINKING_LEVEL: ThinkingLevelName = 'medium';
+
+/**
+ * 内置档位 → budget token 数映射表。
+ *
+ * ## 这张表的作用范围很窄，别误解
+ *
+ * 它**只在原生 Anthropic 渠道（api.anthropic.com）生效**，在那条路径上被翻译成
+ * `thinking.budget_tokens` 真实发出。阶跃三个接口一律不收数字，收的是
+ * `effort: 'low'|'medium'|'high'` 字符串（见 provider/step/stepCommon.ts），
+ * 档位名直接作为 effort 值发出，**根本不经过这张表**。
+ *
+ * 因此改这张表的数字，对阶跃渠道零影响。它属于高级选项，不是普通用户的调节旋钮——
+ * 普通用户只需要 `default_level` 和 `/think <档位>`。
+ */
+export const DEFAULT_THINKING_LEVELS: Record<ThinkingLevelName, number> = {
+  low: 1024,
+  medium: 4096,
+  high: 32000,
+};
 
 /**
  * 从 cwd 下的 .env 文件读取键值（若存在），只填充尚未在 process.env 中的键。
@@ -392,6 +455,7 @@ interface TomlConfigShape {
   max_tokens?: unknown;
   subagent?: unknown;
   compaction?: unknown;
+  continuation?: unknown;
   background?: unknown;
   thinking?: unknown;
   search?: unknown;
@@ -529,6 +593,22 @@ export function resolveCompactionConfig(raw: unknown): CompactionConfig {
 }
 
 /**
+ * 从 [continuation] 段解析输出截断自动续写配置。
+ * 未配置时键不进结果对象，消费方用 ?? 落到默认（默认开启 3 次）。
+ */
+export function resolveContinuationConfig(raw: unknown): ContinuationConfig | undefined {
+  const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const maxAutoContinues = clampInt(
+    t['max_auto_continues'],
+    0,
+    100,
+    DEFAULT_MAX_AUTO_CONTINUES,
+  );
+  if (maxAutoContinues === DEFAULT_MAX_AUTO_CONTINUES) return undefined;
+  return { maxAutoContinues };
+}
+
+/**
  * 从 config.toml 顶层字符串数组字段解析路径列表（agents_paths / extra_skill_dirs）。纯函数，便于单测。
  * 全部元素是非空字符串才返回数组；未配置、非数组、空数组或含非法元素时返回 undefined（键不进结果对象）。
  */
@@ -608,14 +688,25 @@ export function resolveSearchEndpoint(
 
 /**
  * 解析 [thinking.levels] 档位表。纯函数。
- * raw 非对象 → undefined；档位名空串或值非有限数字 → 跳过该档；合法值取整并 clamp ≥1024。
- * 没有任何有效档位时返回 undefined（调用方回落 {@link DEFAULT_THINKING_LEVELS}）。
+ *
+ * 只接受 low / medium / high 三个键——档位名会直接作为 effort 值发给服务端，
+ * 自造的名字服务端不认。遇到未知键抛配置错误（不静默忽略：静默忽略会让用户
+ * 以为自定义档位生效了，而实际请求里根本没有它）。
+ *
+ * raw 非对象 → undefined（调用方回落内置表）；值非有限数字 → 跳过该档保留内置值；
+ * 合法值取整并 clamp ≥1024。缺档不报错，按内置值补齐。
+ * @throws 出现 low/medium/high 之外的键。
  */
-function parseThinkingLevels(raw: unknown): Record<string, number> | undefined {
+function parseThinkingLevels(raw: unknown): Partial<Record<ThinkingLevelName, number>> | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
-  const out: Record<string, number> = {};
+  const out: Partial<Record<ThinkingLevelName, number>> = {};
   for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (name === '') continue;
+    if (!isThinkingLevelName(name)) {
+      throw new Error(
+        `[thinking.levels] 不认识档位名 "${name}"（只支持：${THINKING_LEVEL_NAMES.join(' | ')}）。` +
+          `档位名会直接作为思考强度值发给服务端，自定义名称不被支持。`,
+      );
+    }
     const budget = asNumber(value);
     if (budget === undefined) continue;
     out[name] = Math.max(THINKING_BUDGET_MIN, Math.round(budget));
@@ -625,52 +716,63 @@ function parseThinkingLevels(raw: unknown): Record<string, number> | undefined {
 
 /**
  * 从 [thinking] 段解析 thinking 请求配置。纯函数，便于单测。
- * enabled 缺省 false（非布尔按 false）；budget_tokens 非法时键不进结果对象，
- * 合法时取整并 clamp 到 ≥1024。levels 未配置或全部无效时回落内置默认表
- * （{@link DEFAULT_THINKING_LEVELS}）；default_level 必须命中最终档位表，否则抛配置错误。
- * 启用且配了 budget 时校验正文最小余量 maxTokens - budget ≥ 2048，不满足抛配置错误
- * 并给出调整方向；用户自定义 levels 在启用时逐档套用同一余量校验（内置默认表不校验——
- * 它是兜底数据，运行时档位由用户经 /think 显式选择）。
+ *
+ * enabled 缺省 false（非布尔按 false）。
+ * default_level 缺省 {@link DEFAULT_THINKING_LEVEL}（medium），必须是 low|medium|high 之一。
+ * levels 逐档合并进内置表（未配的档位保留内置值），只对原生 Anthropic 渠道生效。
+ *
+ * ## 已删除的两样东西
+ *
+ * 1. `budget_tokens` 键：见 {@link ThinkingConfig} 注释。出现即报错，不做折算兼容——
+ *    静默折算会让用户以为自己填的数字生效了。
+ * 2. `budget_tokens` 的正文余量校验：被校验的数字对阶跃渠道根本不会发出，
+ *    校验它只提供虚假的安全感。levels 的余量校验保留，因为那些数字在原生
+ *    Anthropic 渠道确实会发出（仅 enabled 时校验，未启用不发字段）。
+ *
  * @param raw config.toml 里 [thinking] 段的原始值（可能为 undefined / 非对象）。
  * @param maxTokens 最终生效的 max_tokens（余量校验基准）。
- * @throws 启用时 budget/自定义档位未给正文留出最小余量；default_level 引用不存在的档位。
+ * @throws 出现已删除的 budget_tokens 键；default_level 非法；levels 含未知档位名；
+ *         启用时 levels 某档未给正文留出最小余量。
  */
 export function resolveThinkingConfig(raw: unknown, maxTokens: number): ThinkingConfig {
   const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
-  const userLevels = parseThinkingLevels(t['levels']);
-  const cfg: ThinkingConfig = {
-    enabled: t['enabled'] === true,
-    levels: userLevels ?? { ...DEFAULT_THINKING_LEVELS },
-  };
-  const budget = asNumber(t['budget_tokens']);
-  if (budget !== undefined) {
-    cfg.budgetTokens = Math.max(THINKING_BUDGET_MIN, Math.round(budget));
-  }
-  if (cfg.enabled && cfg.budgetTokens !== undefined && maxTokens - cfg.budgetTokens < THINKING_TEXT_MARGIN) {
+
+  if (t['budget_tokens'] !== undefined) {
     throw new Error(
-      `[thinking] budget_tokens=${cfg.budgetTokens} 未给正文留出最小余量：max_tokens(${maxTokens}) - budget_tokens(${cfg.budgetTokens}) < ${THINKING_TEXT_MARGIN}。` +
-        `请调大 max_tokens 或调小 budget_tokens（思考会消耗 max_tokens，余量不足时正文可能零输出）。`,
+      `[thinking] budget_tokens 已移除，请改用 default_level = "low" | "medium" | "high"。` +
+        `原因：该数字对阶跃渠道从不发出（三个接口只收档位字符串），仅被用于折算档位，` +
+        `且折算阈值固定，改了 [thinking.levels] 就会错档。档位现在是唯一的用户接口。`,
     );
   }
-  // 用户自定义档位沿用同一余量校验（仅启用时；未启用就不发字段，与 budget_tokens 的既有口径一致）
+
+  const userLevels = parseThinkingLevels(t['levels']);
+  const levels: Record<ThinkingLevelName, number> = { ...DEFAULT_THINKING_LEVELS, ...userLevels };
+
+  const rawLevel = asString(t['default_level']);
+  if (rawLevel !== undefined && !isThinkingLevelName(rawLevel)) {
+    throw new Error(
+      `[thinking] default_level="${rawLevel}" 不是合法档位（可用：${THINKING_LEVEL_NAMES.join(' | ')}）。`,
+    );
+  }
+
+  const cfg: ThinkingConfig = {
+    enabled: t['enabled'] === true,
+    levels,
+    defaultLevel: rawLevel ?? DEFAULT_THINKING_LEVEL,
+  };
+
+  // 档位余量校验：仅在启用且用户显式配了 levels 时做。
+  // 内置默认表不校验——它是兜底数据，且 32000 这类高档值在小 max_tokens 下必然触发，
+  // 而该数字对阶跃渠道不会发出，报错会拦住本来能正常跑的配置。
   if (cfg.enabled && userLevels !== undefined) {
-    for (const [name, levelBudget] of Object.entries(userLevels)) {
+    for (const [name, levelBudget] of Object.entries(userLevels) as [ThinkingLevelName, number][]) {
       if (maxTokens - levelBudget < THINKING_TEXT_MARGIN) {
         throw new Error(
           `[thinking.levels] 档位 ${name}=${levelBudget} 未给正文留出最小余量：max_tokens(${maxTokens}) - ${name}(${levelBudget}) < ${THINKING_TEXT_MARGIN}。` +
-            `请调大 max_tokens 或调小该档位的 budget（思考会消耗 max_tokens，余量不足时正文可能零输出）。`,
+            `请调大 max_tokens 或调小该档位的 budget（该值在原生 Anthropic 渠道会作为 thinking.budget_tokens 发出，思考会消耗 max_tokens，余量不足时正文可能零输出）。`,
         );
       }
     }
-  }
-  const defaultLevel = asString(t['default_level']);
-  if (defaultLevel !== undefined) {
-    if (cfg.levels[defaultLevel] === undefined) {
-      throw new Error(
-        `[thinking] default_level="${defaultLevel}" 未命中任何档位（可用：${Object.keys(cfg.levels).join(' | ')}）。`,
-      );
-    }
-    cfg.defaultLevel = defaultLevel;
   }
   return cfg;
 }
@@ -705,14 +807,28 @@ export function resolveModels(raw: unknown): Record<string, ModelEntry> | undefi
     if (maxTokens !== undefined) entry.maxTokens = maxTokens;
     const displayName = asString(t['display_name']);
     if (displayName !== undefined) entry.displayName = displayName;
-    // capabilities 原样透传：仅接受纯字符串数组，消费方自己解释语义
+    // capabilities 白名单校验：未知值直接报错，不静默失效。
+    // 拼写错误（如 image-in）以前会被原样透传、消费方查不到就当没声明，
+    // 表现为「配了但不生效」且无任何提示——这类静默失效极难排查。
     const capabilities = t['capabilities'];
-    if (
-      Array.isArray(capabilities) &&
-      capabilities.length > 0 &&
-      capabilities.every((c) => typeof c === 'string' && c.length > 0)
-    ) {
-      entry.capabilities = capabilities as string[];
+    if (capabilities !== undefined) {
+      if (
+        !Array.isArray(capabilities) ||
+        capabilities.length === 0 ||
+        !capabilities.every((c) => typeof c === 'string' && c.length > 0)
+      ) {
+        throw new Error(
+          `[models.${alias}] capabilities 必须是非空字符串数组（可用值：${CAPABILITY_KEYS.join(' | ')}）。`,
+        );
+      }
+      const normalized = (capabilities as string[]).map((c) => c.trim().toLowerCase());
+      const unknown = normalized.filter((c) => !(CAPABILITY_KEYS as readonly string[]).includes(c));
+      if (unknown.length > 0) {
+        throw new Error(
+          `[models.${alias}] capabilities 含未知能力名：${unknown.join(', ')}（可用值：${CAPABILITY_KEYS.join(' | ')}）。`,
+        );
+      }
+      entry.capabilities = normalized;
     }
     out[alias] = entry;
   }
@@ -912,6 +1028,7 @@ export function loadConfig(cwd: string = process.cwd(), overrides: ConfigOverrid
     maxTokens: asNumber(toml.max_tokens) ?? DEFAULT_MAX_TOKENS,
     subagent: resolveSubagentLimits(toml.subagent),
     compaction: resolveCompactionConfig(toml.compaction),
+    continuation: resolveContinuationConfig(toml.continuation),
     background: resolveBackgroundConfig(toml.background),
     language: resolveLanguage(toml.language),
   };

@@ -20,7 +20,15 @@ export type Behavior =
     };
 
 /** 构造满足 runTurn/runAgent 所需最小契约的假 provider（async 迭代 + finalMessage）。 */
-export function makeFakeProvider(behaviors: Behavior[]): {
+export function makeFakeProvider(
+  behaviors: Behavior[],
+  /**
+   * 单次响应输出上限。真实 provider 恒有此值（config 的 max_tokens 有默认值 65536），
+   * 空响应诊断要靠「outputTokens / maxTokens」的比值区分「预算烧光」与「正常结束无正文」，
+   * 需要覆盖该判据的测试必须显式给这个值。
+   */
+  maxTokens?: number,
+): {
   provider: ChatProvider;
   streamCalls: () => number;
   /** 历次 stream() 调用的入参快照（用于断言 model 等覆盖字段）。 */
@@ -29,6 +37,7 @@ export function makeFakeProvider(behaviors: Behavior[]): {
   let call = 0;
   const params: Record<string, unknown>[] = [];
   const provider = {
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
     stream(p: Record<string, unknown>) {
       params.push(p);
       const behavior = behaviors[call++];

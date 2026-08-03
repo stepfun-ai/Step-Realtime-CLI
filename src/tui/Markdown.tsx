@@ -2,7 +2,7 @@ import { Text, Box } from 'ink';
 import { marked, type Token, type Tokens } from 'marked';
 import { highlight } from 'cli-highlight';
 import type React from 'react';
-import { displayWidth } from './liveBudget.js';
+import { displayWidth, wrappedRows } from './liveBudget.js';
 
 /**
  * markdown 终端渲染（marked lexer + cli-highlight + chalk/Ink 样式）。
@@ -585,4 +585,94 @@ export function Markdown({
       {tokens.map((t) => renderBlock(t, transient, width))}
     </Box>
   );
+}
+
+/**
+ * 测量一段 markdown 渲染后占用的终端行数。
+ *
+ * 存在的理由：`liveBudget` 要求弹层给出行数预算，而 markdown 的**渲染行数与源行数不等**——
+ * 表格一条数据行可能渲染成多行（单元格折行）、外框另占 4 行，代码块有边框和可选语言行。
+ * 直接用 `text.split('\n').length` 会系统性低估，低估会让动态帧超过终端高度，
+ * 触发 Ink 的全量清屏分支（清空 scrollback，历史输出丢失）。
+ *
+ * **契约是单向的：返回值必须 ≥ 实际渲染行数。** 允许高估（代价是动态区少用一行），
+ * 禁止低估（代价是清屏）。因此所有拿不准的地方一律向上取整。
+ *
+ * 与 `renderBlock` 共用 `marked.lexer` token 流、`computeColumnWidths` 列宽算法与
+ * `wrapStyledSegments` 折行逻辑，两者不是各写一份、不会各自漂移。
+ * 改 `renderBlock` 的行结构时必须同步改这里（tests/tui/measureMarkdownRows.test.tsx 会失败提醒）。
+ */
+export function measureMarkdownRows(text: string, width?: number): number {
+  let rows = 0;
+  for (const token of marked.lexer(text)) rows += measureBlock(token, width);
+  return rows;
+}
+
+/** 单个 token 的渲染行数。分支与 renderBlock 的 switch 逐个对应。 */
+function measureBlock(t: Token, width?: number): number {
+  switch (t.type) {
+    case 'heading': {
+      const h = t as Tokens.Heading;
+      const prefix = h.depth <= 2 ? '' : `${'#'.repeat(h.depth)} `;
+      return wrappedRows(prefix + renderInlineText(h.tokens), width);
+    }
+    case 'paragraph':
+      return wrappedRows(renderInlineText((t as Tokens.Paragraph).tokens), width);
+    case 'code': {
+      const c = t as Tokens.Code;
+      // Box borderStyle=round + paddingX=1：上下边框 2 行，左右边框+padding 占 4 列
+      const inner = width === undefined ? undefined : Math.max(1, width - 4);
+      const langRow = c.lang !== undefined && c.lang !== '' ? 1 : 0;
+      // highlightCode 只加 ANSI 着色、不改行结构，故按原文逐行折行计
+      const codeRows = c.text.split('\n').reduce((n, line) => n + wrappedRows(line, inner), 0);
+      return 2 + langRow + codeRows;
+    }
+    case 'list': {
+      const l = t as Tokens.List;
+      return l.items.reduce((n, item, i) => {
+        const marker = l.ordered ? `${(l.start as number) + i}. ` : '• ';
+        const task = item.task ? (item.checked ? '[x] ' : '[ ] ') : '';
+        // 列表项整行（含 marker）参与折行，与 renderBlock 的单个 <Text> 结构一致
+        return n + wrappedRows(marker + task + renderInlineText(item.tokens), width);
+      }, 0);
+    }
+    case 'blockquote':
+      return wrappedRows(`│ ${(t as Tokens.Blockquote).text}`, width);
+    case 'hr':
+      return wrappedRows('─'.repeat(40), width);
+    case 'table':
+      return measureTable(t as Tokens.Table, width);
+    case 'space':
+      return 1;
+    default:
+      return 'text' in t && typeof (t as { text?: string }).text === 'string'
+        ? wrappedRows((t as { text: string }).text, width)
+        : 0;
+  }
+}
+
+/** 表格的渲染行数：三种模式（窄屏回退 / 自然宽度 / 宽度自适应）与 renderBlock 一一对应。 */
+function measureTable(tbl: Tokens.Table, width?: number): number {
+  const hasWidth = width !== undefined;
+  const widthResult = hasWidth ? computeColumnWidths(tbl, width) : null;
+
+  // 模式一：宽度太窄，renderBlock 回退渲染 tbl.raw 纯文本
+  if (hasWidth && widthResult === null) {
+    return (tbl.raw || '').split('\n').reduce((n, line) => n + wrappedRows(line, width), 0);
+  }
+
+  // 模式二：无宽度信息，自然宽度渲染（表头 + 分隔线 + 每数据行各 1 行，超宽交给终端硬折行）
+  if (!hasWidth) return 2 + tbl.rows.length;
+
+  // 模式三：宽度自适应。外框 4 行（顶框/表头分隔/底框 3 行 + 表头自身另算）
+  // 每个逻辑行的高度 = 该行各单元格折行后的最大行数
+  const { allocated } = widthResult!;
+  const rowHeight = (cells: Tokens.TableCell[]): number => {
+    const lines = allocated.map((w, ci) =>
+      wrapStyledSegments(extractCellSegments(cells[ci]?.tokens, false), w).length,
+    );
+    return Math.max(...lines, 1);
+  };
+  // 顶框 1 + 表头 n + 分隔线 1 + 数据行各自高度 + 底框 1
+  return 3 + rowHeight(tbl.header) + tbl.rows.reduce((n, row) => n + rowHeight(row), 0);
 }

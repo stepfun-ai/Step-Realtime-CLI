@@ -54,4 +54,40 @@ describe('redactByKeyName', () => {
     redactByKeyName(obj);
     expect(obj).toEqual({ a: 1, b: 'x', c: [1, 2, 3] });
   });
+
+  it('裸 `key` 字段必须脱敏：[search] 段的密钥字段名就叫 key（2026-08-03 实测泄漏）', () => {
+    // 实测事故：一个不以 sk- 开头的搜索密钥因字段名是裸 `key` 而未被任何规则命中，
+    // 明文写进了 debug-zip，而那个包的用途恰恰是发给他人排查。
+    const obj = {
+      search: {
+        url: 'https://api.stepfun.com/step_plan/v1',
+        key: 'A1bC2dE3fG4hI5jK6lM7nO8pQ9rS0tU1vW2xY3z',
+        web: { key: 'anotherLongLookingSecretValue123456' },
+      },
+    };
+    redactByKeyName(obj);
+    expect(obj.search.key).toBe('[REDACTED]');
+    expect(obj.search.web.key).toBe('[REDACTED]');
+    // url 不是密钥，必须保留——它对排查有用
+    expect(obj.search.url).toBe('https://api.stepfun.com/step_plan/v1');
+  });
+});
+
+describe('redactSecrets 的裸 key 规则（会话正文/日志路径）', () => {
+  it('值像密钥时擦除：非 sk- 前缀的长串也兜住', () => {
+    const out = redactSecrets('key = "A1bC2dE3fG4hI5jK6lM7nO8pQ9rS0tU1vW2xY3z"');
+    expect(out).toBe('key = "[REDACTED]"');
+    expect(out).not.toContain('A1bC2dE3');
+  });
+
+  it('值不像密钥时不擦——编程对话里 key = "name" 极常见，误伤会让调试包失去价值', () => {
+    for (const clean of ['key = "name"', "key: 'id'", 'const key = value', 'key = 42']) {
+      expect(redactSecrets(clean)).toBe(clean);
+    }
+  });
+
+  it('TOML 与 JSON 两种赋值形态都覆盖', () => {
+    expect(redactSecrets('key="Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0Fe"')).toContain('[REDACTED]');
+    expect(redactSecrets('"key": "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0Fe"')).toContain('[REDACTED]');
+  });
 });

@@ -20,8 +20,17 @@ export function previewEntry(text: string): string {
  * 每行独立 Text + wrap=truncate：行数截行数、宽度截宽度，
  * 长行不再折行，动态区高度预算按渲染行数精确成立。
  * 数据来自 App 的 queue.current；空队列不渲染。
+ *
+ * 系统合成注入条目（后台通知 XML 信封 / cron prompt / 技能正文）由 isSystemInjected 判出，
+ * 显示成人读占位而非原文——那些正文是给模型看的，展示给用户既无意义又刷屏。
  */
-export function QueuePreview({ queue }: { queue: string[] }): React.ReactElement | null {
+export function QueuePreview({
+  queue,
+  isSystemInjected,
+}: {
+  queue: string[];
+  isSystemInjected?: (text: string) => boolean;
+}): React.ReactElement | null {
   if (queue.length === 0) return null;
   const shown = queue.slice(0, MAX_ITEMS);
   const rest = queue.length - shown.length;
@@ -29,7 +38,7 @@ export function QueuePreview({ queue }: { queue: string[] }): React.ReactElement
     <Box flexDirection="column">
       <Text color="gray" wrap="truncate">{t('app.queue.previewTitle', { count: queue.length })}</Text>
       {shown.map((q, i) =>
-        previewEntry(q)
+        (isSystemInjected?.(q) === true ? t('app.queue.previewSystemEntry') : previewEntry(q))
           .split('\n')
           .map((line, j) => (
             <Text key={`${i}:${j}`} color="gray" dimColor wrap="truncate">

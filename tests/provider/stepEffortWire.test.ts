@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import { OpenAiChatProvider } from '../../src/provider/openaiChat.js';
 import { OpenAiResponsesProvider } from '../../src/provider/openaiResponses.js';
-import { budgetToEffort, stepEffortParam } from '../../src/provider/step/stepCommon.js';
+import { stepEffortParam } from '../../src/provider/step/stepCommon.js';
 
 /**
  * 三通道 effort 下发的端到端回归。
@@ -39,11 +39,11 @@ async function drain(stream: { [Symbol.asyncIterator]: () => AsyncIterator<unkno
 }
 
 describe('Chat Completions 通道：reasoning_effort 下发', () => {
-  it('sendThinking + budget → 顶层 reasoning_effort', async () => {
+  it('sendThinking + 档位 → 顶层 reasoning_effort', async () => {
     const { calls, impl } = recordingFetch();
     const p = new OpenAiChatProvider({
       apiKey: 'k', baseUrl: 'http://x/v1', model: 'step-3.7-flash', maxTokens: 1000,
-      fetchImpl: impl, sendThinking: true, thinking: { budgetTokens: 4096 },
+      fetchImpl: impl, sendThinking: true, thinking: { level: 'medium' },
     });
     await drain(p.stream({ system: 's', tools: [], messages: MSG }));
     expect(calls[0]!['reasoning_effort']).toBe('medium');
@@ -53,7 +53,7 @@ describe('Chat Completions 通道：reasoning_effort 下发', () => {
     const { calls, impl } = recordingFetch();
     const p = new OpenAiChatProvider({
       apiKey: 'k', baseUrl: 'http://x/v1', model: 'step-3.7-flash', maxTokens: 1000,
-      fetchImpl: impl, sendThinking: false, thinking: { budgetTokens: 4096 },
+      fetchImpl: impl, sendThinking: false, thinking: { level: 'medium' },
     });
     await drain(p.stream({ system: 's', tools: [], messages: MSG }));
     expect(calls[0]).not.toHaveProperty('reasoning_effort');
@@ -63,7 +63,7 @@ describe('Chat Completions 通道：reasoning_effort 下发', () => {
     const { calls, impl } = recordingFetch();
     const p = new OpenAiChatProvider({
       apiKey: 'k', baseUrl: 'http://x/v1', model: 'step-3.7-flash', maxTokens: 1000,
-      fetchImpl: impl, sendThinking: true, thinking: { budgetTokens: 32000 },
+      fetchImpl: impl, sendThinking: true, thinking: { level: 'high' },
     });
     await drain(p.stream({ system: 's', tools: [], messages: MSG, thinking: null }));
     expect(calls[0]).not.toHaveProperty('reasoning_effort');
@@ -73,19 +73,19 @@ describe('Chat Completions 通道：reasoning_effort 下发', () => {
     const { calls, impl } = recordingFetch();
     const p = new OpenAiChatProvider({
       apiKey: 'k', baseUrl: 'http://x/v1', model: 'step-3.7-flash', maxTokens: 1000,
-      fetchImpl: impl, sendThinking: true, thinking: { budgetTokens: 32000 },
+      fetchImpl: impl, sendThinking: true, thinking: { level: 'high' },
     });
-    await drain(p.stream({ system: 's', tools: [], messages: MSG, thinking: { budgetTokens: 1024 } }));
+    await drain(p.stream({ system: 's', tools: [], messages: MSG, thinking: { level: 'low' } }));
     expect(calls[0]!['reasoning_effort']).toBe('low');
   });
 });
 
 describe('Responses 通道：reasoning.effort 下发', () => {
-  it('sendThinking + budget → 嵌套 reasoning.effort（不是顶层）', async () => {
+  it('sendThinking + 档位 → 嵌套 reasoning.effort（不是顶层）', async () => {
     const { calls, impl } = recordingFetch();
     const p = new OpenAiResponsesProvider({
       apiKey: 'k', baseUrl: 'http://x/v1', model: 'step-3.7-flash', maxTokens: 1000,
-      fetchImpl: impl, sendThinking: true, thinking: { budgetTokens: 32000 },
+      fetchImpl: impl, sendThinking: true, thinking: { level: 'high' },
     });
     await drain(p.stream({ system: 's', tools: [], messages: MSG }));
     expect(calls[0]!['reasoning']).toEqual({ effort: 'high' });
@@ -97,30 +97,14 @@ describe('Responses 通道：reasoning.effort 下发', () => {
     const { calls, impl } = recordingFetch();
     const p = new OpenAiResponsesProvider({
       apiKey: 'k', baseUrl: 'http://x/v1', model: 'step-3.7-flash', maxTokens: 1000,
-      fetchImpl: impl, thinking: { budgetTokens: 4096 },
+      fetchImpl: impl, thinking: { level: 'medium' },
     });
     await drain(p.stream({ system: 's', tools: [], messages: MSG }));
     expect(calls[0]).not.toHaveProperty('reasoning');
   });
 });
 
-describe('budgetToEffort 折算与通道参数形态', () => {
-  it('档位阈值取内置默认表区间中点', () => {
-    expect(budgetToEffort(1024)).toBe('low');
-    expect(budgetToEffort(2559)).toBe('low');
-    expect(budgetToEffort(2560)).toBe('medium');
-    expect(budgetToEffort(4096)).toBe('medium');
-    expect(budgetToEffort(18047)).toBe('medium');
-    expect(budgetToEffort(18048)).toBe('high');
-    expect(budgetToEffort(32000)).toBe('high');
-  });
-
-  it('undefined / 非有限数 → undefined（不替用户猜档位）', () => {
-    expect(budgetToEffort(undefined)).toBeUndefined();
-    expect(budgetToEffort(Number.NaN)).toBeUndefined();
-    expect(budgetToEffort(Number.POSITIVE_INFINITY)).toBeUndefined();
-  });
-
+describe('三通道 effort 参数形态', () => {
   it('三通道参数名与层级各不相同', () => {
     // messages 是 output_config.effort（官方文档），不是顶层 effort
     expect(stepEffortParam('messages', 'low')).toEqual({ output_config: { effort: 'low' } });

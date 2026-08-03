@@ -30,6 +30,7 @@ export const CONFIG_TOP_LEVEL_KEYS = [
   'max_tokens',
   'subagent',
   'compaction',
+  'continuation',
   'background',
   'thinking',
   'search',

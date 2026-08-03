@@ -20,8 +20,53 @@ import { type StoredMessage, stored } from './message.js';
 import { buildSettleMessage, notificationIdFor } from './background/notify.js';
 import type { WireEvent } from './wirelog.js';
 import { runTurn } from './runTurn.js';
+import { emptyContinuationState, advanceContinuation, checkContinuationSafety } from './continuation.js';
 
 export type { AgentEvent } from './events.js';
+
+/** 取最后一条 assistant 消息的正文文本（拼接所有 text 块，忽略思考/工具块）。无则空串。 */
+function lastAssistantText(messages: StoredMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const sm = messages[i]!;
+    if (sm.message.role !== 'assistant') continue;
+    const content = sm.message.content;
+    if (typeof content === 'string') return content;
+    let out = '';
+    for (const block of content) {
+      if (block.type === 'text') out += block.text;
+    }
+    return out;
+  }
+  return '';
+}
+
+/** 守卫拦下自动续写时的用户提示：说清停在哪一步、为什么、下一步做什么。 */
+function continuationStopMessage(
+  reason: string,
+  detail: number | undefined,
+  limit: number | undefined,
+): string {
+  switch (reason) {
+    case 'no_progress':
+      return t('loop.continue.stop.noProgress');
+    case 'identical_to_previous':
+      return t('loop.continue.stop.identical');
+    case 'restarted_from_beginning':
+      return t('loop.continue.stop.restarted');
+    case 'repeating_tail':
+      return t('loop.continue.stop.repeating', { n: detail ?? 0 });
+    case 'stalled':
+      return t('loop.continue.stop.stalled', { n: detail ?? 0 });
+    case 'max_continues':
+      return limit !== undefined
+        ? t('loop.continue.stop.maxWithLimit', { n: detail ?? 0, limit })
+        : t('loop.continue.stop.max', { n: detail ?? 0 });
+    default:
+      return limit !== undefined
+        ? t('loop.maxTokens.truncatedWithLimit', { limit })
+        : t('loop.maxTokens.truncated');
+  }
+}
 
 /** 压缩时保留的最近消息条数。 */
 const KEEP_RECENT = 6;
@@ -44,6 +89,14 @@ export interface RunAgentOptions {
   maxIterations?: number;
   /** 工具白名单（工具名）。省略 = 全部工具。子 agent 用它收窄工具集。 */
   allowedTools?: readonly string[];
+  /**
+   * 输出被 `max_tokens` 截断时，自动续写的最大次数。默认 0（不自动续写，保持既有行为）。
+   *
+   * 只对「正文被截断」生效；「思考吃满预算、正文零输出」不走续写——那是预算配置问题，
+   * 续写不改变预算，实测续两轮正文仍为空。判据是 `TurnOutcome.thinkingExhausted`。
+   * 每轮续写产出都过 {@link checkContinuationSafety} 的循环守卫。
+   */
+  maxAutoContinues?: number;
   /** 模型覆盖。省略 = 用 provider 默认模型。子 agent 可指定不同模型。 */
   model?: string;
   /** thinking 覆盖（三态：undefined 构造默认 / 对象覆盖 / null 抑制），透传到每回合的 provider.stream。 */
@@ -153,7 +206,8 @@ async function maybeCompact(
  * 自身不含回合内逻辑（那些在 runTurn），负责多回合编排、终止事件、循环内压缩与溢出兜底。
  */
 export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEvent> {
-  const { provider, system, ctx, messages, signal, model, thinking, compaction } = opts;
+  const { provider, system, ctx, messages, signal, model, thinking, compaction, maxAutoContinues = 0 } = opts;
+  const safeMaxAutoContinues = maxAutoContinues ?? 0;
   // 能力门控的工具卸载：模型未声明对应能力（如 image_in）时，门控工具（如 read_media）
   // 不进 tools 数组也不进执行白名单——模型看不到就不会尝试调用；工具内运行时检查保留为兜底。
   // ctx.capabilities 随 /model、/provider 切换刷新，本过滤每 run 生效、逐回合一致。
@@ -184,6 +238,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
    * 改为明确告知用户「压不下去了，请 /compact 或 /new」，把决定权交回去。
    */
   let compactionSaturated = false;
+  let contState: ReturnType<typeof emptyContinuationState> | undefined;
 
   for (let iter = 0; iter < maxIterations; iter++) {
     // step 边界注入：上一回合期间终态的后台任务通知在此 flush 进 messages，
@@ -365,19 +420,36 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
             billedDelta: billedTokens(outcome.usage),
           };
         }
-        // 截断提示（终止 + 明确提示，不自动续写）：带上当前上限便于用户调整。
-        // thinkingExhausted：思考吃满预算、正文零输出——给「调 max_tokens / 降档」的确定性提示，
-        // 而非普通截断的「回复继续」（继续也没用，预算组合不变必然复现）。
         const limit = provider.maxTokens;
+        // B 类：思考吃满预算、正文零输出。先判这一条，因为它走「预算配置问题」提示，
+        // 不该进入自动续写守卫。
+        if (outcome.thinkingExhausted === true) {
+          yield {
+            type: 'notice',
+            message:
+              limit !== undefined
+                ? t('loop.maxTokens.thinkingExhaustedWithLimit', { limit })
+                : t('loop.maxTokens.thinkingExhausted'),
+          };
+          yield { type: 'turn_done' };
+          return;
+        }
+        // A 类：正文被截断。有实质产出，续写会推进，交循环守卫决定能不能续。
+        const chunk = lastAssistantText(messages);
+        contState ??= emptyContinuationState();
+        const verdict = checkContinuationSafety(chunk, contState, safeMaxAutoContinues);
+        if (verdict.safe) {
+          contState = advanceContinuation(chunk, contState);
+          messages.push(
+            stored({ role: 'user', content: t('loop.continue.prompt') }, { kind: 'injection' }),
+          );
+          yield { type: 'notice', message: t('loop.continue.auto', { n: contState.count }) };
+          continue; // 进入下一回合续写
+        }
+        // 守卫拦下或未开启自动续写：报明确理由，让用户知道停在哪一步、下一步做什么
         yield {
           type: 'notice',
-          message: outcome.thinkingExhausted
-            ? limit !== undefined
-              ? t('loop.maxTokens.thinkingExhaustedWithLimit', { limit })
-              : t('loop.maxTokens.thinkingExhausted')
-            : limit !== undefined
-              ? t('loop.maxTokens.truncatedWithLimit', { limit })
-              : t('loop.maxTokens.truncated'),
+          message: continuationStopMessage(verdict.reason, verdict.detail, limit),
         };
         yield { type: 'turn_done' };
         return;
@@ -390,6 +462,12 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
             measuredLength: messages.length,
             billedDelta: billedTokens(outcome.usage),
           };
+        }
+        // 工具调用通道退化：模型把工具调用打成了纯文本，工具一个也没执行。
+        // 不修复只告知——静默是这里最贵的部分（用户会以为文件真被改了）。放在 continuation 之前，
+        // 保证自主续接场景下用户也能先看到这条。
+        if (outcome.toolCallLeak === true) {
+          yield { type: 'notice', message: t('loop.toolCallLeak') };
         }
         // goal 等自主续接：不在本 run 内续跑，产出 continuation 事件回 App 层，由 App 发起下一轮 run
         const cont = await resolveContinuation(hooks);

@@ -175,14 +175,19 @@ export class BackgroundManager {
     return n;
   }
 
-  /** 起一个后台 async 任务（如后台子 agent）。立即返回 task id，完成/失败自动置终态。 */
+  /**
+   * 起一个后台 async 任务（如后台子 agent）。立即返回 task id，完成/失败自动置终态。
+   * opts.onStop 为终止钩子：async 任务无进程可杀，stop/超时经它传达终止（如中断子 agent）。
+   * 不传则 task_stop 只能标记状态、无法真正中止执行中的任务。
+   */
   startTask(
     label: string,
     run: Promise<{ output: string; ok: boolean }>,
     onDone?: (t: BackgroundTask) => void,
     meta?: { kind: 'subagent' | 'workflow'; agentType?: string },
+    opts?: { onStop?: () => void },
   ): string {
-    return this.registerAsyncTask(label, run, false, onDone, meta);
+    return this.registerAsyncTask(label, run, false, onDone, meta, opts);
   }
 
   /**

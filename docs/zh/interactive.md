@@ -275,3 +275,5 @@ step -p --output-format stream-json "..."   # 每事件一行 JSON，供程序�
 ```
 
 非交互模式可进管道：`step -p "总结这个文件" < README.md`，assistant 输出在 stdout，可直接接下游命令。
+
+要用程序消费运行过程（事件信封、全部事件类型、版本兼容规则），见 [stream-json 事件流](./stream-json.md)。

@@ -39,6 +39,12 @@ export interface EmptyResponseContext {
   stopReason?: string | null;
   /** 本次输出消耗的 token 数。与 hadReasoning 一起看即可区分「没生成」与「全烧在思考上」。 */
   outputTokens?: number;
+  /**
+   * 本次请求发出的输出上限。**必须与 outputTokens 一起看**——只有二者的比值能回答
+   * 「预算是否真的被烧光」。单看 outputTokens 的绝对值不行：155 tok 在 64K 预算下是 0.24%，
+   * 与「预算耗尽」相差三个数量级，但若只判 `outputTokens > 0` 就会把它误诊成耗尽。
+   */
+  maxTokens?: number;
   /** 模型名，多渠道场景下用于定位是哪个模型的行为。 */
   model?: string;
 }

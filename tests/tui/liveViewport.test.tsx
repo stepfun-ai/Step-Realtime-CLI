@@ -192,5 +192,13 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     expect(out).toContain('s40');
     expect(out).toContain('已隐藏');
     expect(frameLines(out).length).toBeLessThanOrEqual(6);
-  }, 30000);
+    // timeout 60s（2026-08-03 从 30s 提高）：本例单跑约 5.5s，但它是全套件里最重的一个
+    // ——40 次 rerender，每次都要真实渲染 + 触发测量 dispatch + 等异步 flush。满负载
+    // 并发下实测放大约 5.5 倍（一次全量跑到 30514ms，顶穿自己原本的 30s 上限），三次
+    // 全量里挂 2 次、且**不跨文件漂移**，所以不是调度抖动型 flake，是这个用例稳定贴线。
+    //
+    // 选择加时间而不是减循环次数：40 拍是最接近线上闪退现场的强度，降下来等于削弱这道
+    // 回归防护。若后续再次顶穿，应改为限制并发度（vitest poolOptions）而不是继续加时间
+    // ——那时问题已经是「套件总负载」而不是「本例太慢」。
+  }, 60000);
 });

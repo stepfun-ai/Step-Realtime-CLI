@@ -62,9 +62,49 @@ export function formatAgentGroupSummary(agents: readonly SubagentProgress[]): st
 }
 
 /**
+ * 转入后台时的交接记录（进历史，scrollback 留痕）。
+ *
+ * 面板只承载「前台在跑、用户正在等」的子 agent，回合收尾即撤下。但仍在运行的条目
+ * 此刻是转入后台继续跑，不是结束——直接撤下会表现为「进度和 token 凭空消失」。
+ * 这条记录交代清楚：谁还在跑、跑到哪了、去哪看后续（bg:N 徽章 / /tasks / 终态通知）。
+ */
+export function formatDetachedHandoff(agents: readonly SubagentProgress[]): string {
+  const now = Date.now();
+  const lines = agents.map((a, i) => {
+    const branch = i === agents.length - 1 ? '└─' : '├─';
+    return `${branch} ${a.type} · ${a.description} · ${formatSubagentStats(a, now)}`;
+  });
+  return [t('agentGroup.detachedHandoff', { count: agents.length }), ...lines].join('\n');
+}
+
+/**
+ * 面板渲染行数（动态区高度预算用）。
+ *
+ * 与本文件的渲染结构严格对应，**必须与 AgentGroup 的 JSX 同步修改**：
+ * margin 1 + 边框 2 + 头部 1 = 4 固定；每个子 agent 1 行（running 且有 activity 再 +1）；
+ * 存在 running 条目时尾部多一行 backgroundHint。
+ *
+ * 为什么放在组件文件里：这个公式原先散在 App.tsx 的预算组装处，与渲染分离两地，
+ * backgroundHint 加入渲染时预算侧漏改，帧高超预算 1 行、恰好越过 rows−1 红线，
+ * Ink 走全量清屏分支（clearTerminal 含 \x1b[3J）清掉 scrollback，
+ * 表现为「向上滚动被拽回顶部」。同文件同步维护，杜绝这类漂移。
+ */
+export function agentGroupRows(agents: readonly SubagentProgress[]): number {
+  if (agents.length === 0) return 0;
+  const bodyRows = agents.reduce(
+    (n, a) => n + 1 + (a.status === 'running' && a.activity !== undefined && a.activity !== '' ? 1 : 0),
+    0,
+  );
+  const hintRows = agents.some((a) => a.status === 'running') ? 1 : 0;
+  return 4 + bodyRows + hintRows;
+}
+
+/**
  * 并行子 agent（一轮多调用并行）的树形分组面板。
  * 头部计数 + 每个子 agent 一行（类型·描述·tools·时长·tok·状态）+ 运行中的最新活动。
  * 时长跳动：仅存在 running 条目时起 1s tick（useNowTick 纪律：空闲零成本），终态行用 endedAt 定格。
+ *
+ * 改动渲染结构时同步改 agentGroupRows（见其注释）。
  */
 export function AgentGroup({ agents }: { agents: SubagentProgress[] }): React.ReactElement | null {
   const hasRunning = agents.some((a) => a.status === 'running');

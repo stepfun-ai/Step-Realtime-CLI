@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { StepCodeConfig } from '../../src/config/config.js';
+import { DEFAULT_THINKING_LEVELS, type StepCodeConfig } from '../../src/config/config.js';
 import { createProvider } from '../../src/provider/factory.js';
 import { StepfunAdapter } from '../../src/provider/adapter.js';
 import { AnthropicMessagesProvider } from '../../src/provider/anthropicMessages.js';
@@ -55,36 +55,56 @@ describe('createProvider', () => {
     expect(() => createProvider(baseConfig({ provider: 'not-a-real-provider' }))).toThrow(/未知服务商/);
   });
 
-  it('stepfun + [thinking] enabled=true → sendThinking 覆盖为 true 并注入 budget', () => {
-    const p = createProvider(baseConfig({ thinking: { enabled: true, budgetTokens: 4096, levels: { low: 1024 } } }));
-    const internals = p as unknown as { sendThinking: boolean; thinking?: { budgetTokens?: number } };
+  it('stepfun + [thinking] enabled=true → sendThinking 覆盖为 true 并注入档位', () => {
+    const p = createProvider(
+      baseConfig({
+        thinking: { enabled: true, levels: { low: 1024, medium: 4096, high: 32000 }, defaultLevel: 'medium' },
+      }),
+    );
+    const internals = p as unknown as { sendThinking: boolean; thinking?: { level?: string; budgetTokens?: number } };
     expect(internals.sendThinking).toBe(true);
-    expect(internals.thinking).toEqual({ budgetTokens: 4096 });
+    // 同时带 level 与 budgetTokens：阶跃三协议取 level，原生 Anthropic 取 budgetTokens。
+    expect(internals.thinking).toEqual({ level: 'medium', budgetTokens: 4096 });
   });
 
-  it('stepfun + [thinking] enabled=true 未配 budget → 只开 sendThinking，不构造空 thinking 对象', () => {
-    const p = createProvider(baseConfig({ thinking: { enabled: true, levels: { low: 1024 } } }));
-    const internals = p as unknown as { sendThinking: boolean; thinking?: { budgetTokens?: number } };
+  it('[thinking] enabled=true 未配 default_level → 仍注入 medium 档，不留空', () => {
+    // 行为变更（2026-08-03）：旧实现在「启用但没给 budget」时故意不构造 thinking 对象，
+    // 理由是「不替用户猜档位」。这个理由被实测推翻——不发 effort 不是中性的，
+    // 阶跃三通道在不发 effort 时思考量全部落在 high 附近，即「留空 = 跑最高思考量」，
+    // 而 high 档在难任务上会把 max_tokens 打满、正文零输出。
+    // 所以「不猜」实际效果等于「悄悄选了最高档」，反而是最危险的一种默认。
+    const p = createProvider(baseConfig({ thinking: { enabled: true, levels: DEFAULT_THINKING_LEVELS } }));
+    const internals = p as unknown as { sendThinking: boolean; thinking?: { level?: string } };
     expect(internals.sendThinking).toBe(true);
-    // 旧行为构造 { budgetTokens: undefined }：一个「存在但内部为空」的对象，语义上表达
-    // 「用户指定了预算」，实际没有。三通道的 effort 下发都以 thinking !== undefined 为门槛，
-    // 空对象会让它们进入下发分支再靠内层 undefined 兜回来，多一层无谓状态。
-    expect(internals.thinking).toBeUndefined();
+    expect(internals.thinking?.level).toBe('medium');
   });
 
-  it('[thinking] default_level 命中档位 → 该档 budget 作为构造默认（优先于 budget_tokens）', () => {
+  it('[thinking] default_level 决定构造默认档位', () => {
     const p = createProvider(
       baseConfig({
         thinking: {
           enabled: true,
-          budgetTokens: 4096,
-          levels: { low: 1024, high: 32000 },
+          levels: { low: 1024, medium: 4096, high: 32000 },
           defaultLevel: 'high',
         },
       }),
     );
-    const internals = p as unknown as { thinking?: { budgetTokens?: number } };
-    expect(internals.thinking).toEqual({ budgetTokens: 32000 });
+    const internals = p as unknown as { thinking?: { level?: string; budgetTokens?: number } };
+    expect(internals.thinking).toEqual({ level: 'high', budgetTokens: 32000 });
+  });
+
+  it('自定义 levels 数字不影响下发的档位名（曾经会静默错档）', () => {
+    // 回归护栏：旧实现把档位折算成数字再由 provider 反推档位，反推阈值硬编码
+    // （<2560→low、<18048→medium、其余 high）。用户把 medium 配成 20000 时，
+    // 反推结果是 high——选 medium 却发 high。现在档位名直达，数字只喂原生 Anthropic。
+    const p = createProvider(
+      baseConfig({
+        thinking: { enabled: true, levels: { low: 1024, medium: 20000, high: 32000 }, defaultLevel: 'medium' },
+      }),
+    );
+    const internals = p as unknown as { thinking?: { level?: string; budgetTokens?: number } };
+    expect(internals.thinking?.level).toBe('medium');
+    expect(internals.thinking?.budgetTokens).toBe(20000);
   });
 
   it('stepfun 未配 [thinking] → sendThinking 保持 false，无 thinking 参数（既有行为不变）', () => {

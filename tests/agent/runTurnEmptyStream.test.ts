@@ -85,14 +85,36 @@ describe('runAgent 空流/空响应重试', () => {
     expect((err as { message: string }).message).not.toContain('stream ended');
   });
 
-  it('thinking-only 空响应不重试：已流出思考（emittedText）守卫优先，避免重复展示', async () => {
+  it('thinking-only 空响应会自动重试：思考不算正文，不该阻断重试（router 实测场景）', async () => {
+    // 2026-08-03 实测：step-router-v1 每轮都先吐思考，服务端偶发返回 thinking-only 空响应。
+    // 旧行为把思考也算作「已吐字」，于是永远走不进重试分支——诊断文案说「重试往往有效」，
+    // 代码却直接报错退出，用户只能手动重发。此处钉住修复后的行为：自动重试并拿到正常回复。
     const { provider, streamCalls } = makeFakeProvider([
-      { thinkingChunks: ['嗯'], textChunks: [], finalContent: [thinkingBlock('嗯')] },
+      { thinkingChunks: ['先想一下'], textChunks: [], finalContent: [thinkingBlock('先想一下')] },
+      { thinkingChunks: ['再想一下'], textChunks: ['正常回复'], finalContent: [textBlock('正常回复')] },
     ]);
     const events = await collect(
       runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
     );
 
+    expect(streamCalls()).toBe(2);
+    expect(events.some((e) => e.type === 'retry')).toBe(true);
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    expect(events.filter((e) => e.type === 'text')).toEqual([{ type: 'text', text: '正常回复' }]);
+    expect(events.at(-1)!.type).toBe('turn_done');
+  });
+
+  it('已流出正文后出错仍不重试：正文重复展示的代价才是真的（守卫口径收窄到正文）', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      // 先吐正文，再在 finalMessage 阶段抛可重试错误
+      { textChunks: ['已经写了一半'], finalContent: [], stopReason: 'end_turn' },
+      { textChunks: ['不该被调用'], finalContent: [textBlock('不该被调用')] },
+    ]);
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
+    );
+
+    // 正文已进屏幕 → 不重试，直接报错，避免同一段话出现两遍
     expect(streamCalls()).toBe(1);
     expect(events.some((e) => e.type === 'retry')).toBe(false);
     expect(events.some((e) => e.type === 'error')).toBe(true);
@@ -159,9 +181,10 @@ describe('空响应诊断上下文（替代无证据的「瞬时故障」归因�
     expect(err!.message).toContain('结束原因');
   });
 
-  it('产出过思考且烧了 token → 附「调大 max_tokens」的可执行提示，并说明重发无效', async () => {
+  it('产出过思考且真把预算烧光（输出逼近上限）→ 附「降档 / 调大 max_tokens」并说明重发无效', async () => {
     // 思考存在但正文为空、且未流出思考文本（finalContent 有 thinking 但 thinkingChunks 为空），
-    // 走 EmptyResponseError 分支并带 hadReasoning=true
+    // 走 EmptyResponseError 分支并带 hadReasoning=true。
+    // 输出 4096 / 上限 4096 = 100%，预算确实被烧光，此时「重发无用」的判断成立。
     const { provider } = makeFakeProvider(
       Array.from({ length: RETRY_MAX_ATTEMPTS }, () => ({
         thinkingChunks: [],
@@ -169,6 +192,7 @@ describe('空响应诊断上下文（替代无证据的「瞬时故障」归因�
         finalContent: [thinkingBlock('想了很久')],
         usage: { input_tokens: 10, output_tokens: 4096 },
       })),
+      4096,
     );
     const events = await collect(
       runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
@@ -178,5 +202,66 @@ describe('空响应诊断上下文（替代无证据的「瞬时故障」归因�
     expect(err).toBeDefined();
     expect(err!.message).toContain('已产出思考内容');
     expect(err!.message).toContain('max_tokens');
+    expect(err!.message).toContain('重发无用');
+  });
+
+  it('正常结束且输出只占预算零头 → 给「重试往往有效」，不得说「重发无用」（用户实测数字：155/65536）', async () => {
+    // 这是 2026-08-03 用户实测报告的真实组合：step-3.7-flash、有思考、end_turn、输出 155 tok。
+    // 旧判据（hadReasoning && outputTokens > 0）把它诊断成「思考已消耗输出预算」并劝「重发无用」，
+    // 而 155/65536 = 0.24%，预算根本没参与——降档与调大都无效，重试才是唯一可能有效的动作。
+    const { provider } = makeFakeProvider(
+      Array.from({ length: RETRY_MAX_ATTEMPTS }, () => ({
+        thinkingChunks: [],
+        textChunks: [],
+        finalContent: [thinkingBlock('短暂思考')],
+        usage: { input_tokens: 10, output_tokens: 155 },
+      })),
+      65536,
+    );
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
+    );
+    const err = events.find((e) => e.type === 'error') as { message: string } | undefined;
+    expect(err).toBeDefined();
+    // 必须给出正确方向：这不是预算问题，重试有效
+    expect(err!.message).toContain('这不是预算问题');
+    expect(err!.message).toContain('重试');
+    // 必须不出现被推翻的那条建议（反向断言：只删错的不够，还要钉住不许复活）
+    expect(err!.message).not.toContain('重发无用');
+    expect(err!.message).not.toContain('思考已消耗输出预算');
+    // 诊断行要把比值摆出来，让用户自己也能看出「没耗尽」
+    expect(err!.message).toContain('155');
+    expect(err!.message).toContain('65536');
+  });
+
+  it('服务端明确报 max_tokens 时不看比值，直接判预算耗尽', () => {
+    // 该分支下服务端已确认截断，比值再小也以服务端信号为准（防御性：该路径通常被上游拦走）。
+    const ctx = { hadReasoning: true, stopReason: 'max_tokens', outputTokens: 10, maxTokens: 65536 };
+    const err = new EmptyResponseError('x', ctx);
+    expect(err.context).toEqual(ctx);
+  });
+
+  it('拿不到 maxTokens 时不给任何建议——宁可不给，也不给可能相反的建议', async () => {
+    // 不传 maxTokens（模拟自定义 provider 实现省略该字段）。此时无法判断预算是否耗尽，
+    // 两条建议恰好相反，猜错就把用户推向无效动作，所以只报事实、不给建议。
+    const { provider } = makeFakeProvider(
+      Array.from({ length: RETRY_MAX_ATTEMPTS }, () => ({
+        thinkingChunks: [],
+        textChunks: [],
+        finalContent: [thinkingBlock('想了想')],
+        usage: { input_tokens: 10, output_tokens: 155 },
+      })),
+    );
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
+    );
+    const err = events.find((e) => e.type === 'error') as { message: string } | undefined;
+    expect(err).toBeDefined();
+    // 事实照报
+    expect(err!.message).toContain('实测信息');
+    expect(err!.message).toContain('已产出思考内容');
+    // 两条建议都不出现
+    expect(err!.message).not.toContain('重发无用');
+    expect(err!.message).not.toContain('这不是预算问题');
   });
 });

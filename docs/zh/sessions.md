@@ -74,6 +74,9 @@ step sessions rename <id> <名字>   # 重命名（等价于选择器里按 r）
 
 `-p` 模式下：assistant 文本走 stdout，工具调用和错误走 stderr，可以直接进管道。加 `--output-format stream-json` 则每个事件输出一行 JSON，供程序消费（比如接进自己的脚本或 CI）。
 
+事件信封契约、全部事件类型、版本与兼容规则见 [stream-json 事件流](./stream-json.md)。
+
+
 ## 子 agent 会话
 
 子 agent（`spawn_agent` 派生）每次执行都会落盘为独立子会话，存在会话桶的 `subagents/` 子目录下：`<id>.json` 快照 + `<id>.full.jsonl` 全量日志 + 运行期 `<id>.lock` 活跃锁。子会话不进主会话列表，不会污染 `/resume` 与 `--continue`。
