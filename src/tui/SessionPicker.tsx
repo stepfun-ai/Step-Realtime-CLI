@@ -2,6 +2,7 @@ import { Box, Text, useInput } from 'ink';
 import { useMemo, useState } from 'react';
 import type { SessionMeta } from '../session/store.js';
 import { t } from '../i18n.js';
+import { displayWidth } from './liveBudget.js';
 
 /**
  * 相对时间小工具：<60s 刚刚、<60min N 分钟前、<24h N 小时前、<30d N 天前，
@@ -24,10 +25,77 @@ export function relativeTime(iso: string): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-/** 每页展示的会话条数。 */
-const PAGE_SIZE = 10;
+/**
+ * 屏幕可见条数的兜底值：终端行数未知时使用（非 TTY、测试环境的 mock stdout 无 rows）。
+ * 与历史行为一致，保证不感知终端尺寸的调用方拿到与从前相同的渲染结果。
+ */
+const FALLBACK_VISIBLE_ROWS = 10;
+/**
+ * 可见条数下限：再小的终端也至少展示这么多。
+ * 取 3 而不是 1 的理由——列表少于 3 条时已无法浏览，「能用但会越线闪一下」优于「不闪但没法用」。
+ */
+export const MIN_VISIBLE_ROWS = 3;
+/**
+ * 可见条数上限：更大的终端不再增加。
+ * 超过这个量时逐条扫视的成本已高于直接输入搜索词，继续加高只是让一屏更长。
+ */
+export const MAX_VISIBLE_ROWS = 12;
+/**
+ * 选择器自身的固定开销行数（与下方 render 结构一一对应，改结构必须同步改这个数）：
+ * marginTop 1 + 上下边框 2 + 标题 1 + 搜索行 1 + 分页行 1 + 底部块 2（重命名两行为上界）。
+ */
+export const PICKER_CHROME_ROWS = 8;
 /** 子 agent 会话区一次展示的条数（只读下钻入口，不做分页）。 */
 const SUBAGENT_ROWS = 5;
+
+/** 子 agent 会话区占用的行数：有则区头 1 行 + 展示行（每条已截断为单行）。预算与自适应共用此口径。 */
+export function subagentSectionRows(count: number): number {
+  return count > 0 ? 1 + Math.min(count, SUBAGENT_ROWS) : 0;
+}
+
+/**
+ * 按终端可用行数解出屏幕可见条数。
+ *
+ * 存在的理由：条目数若是固定常量，在足够小的终端上帧总高必然越过「终端行数 − 1」这条红线，
+ * 越线会让 Ink 放弃原地重绘、改为全量清屏，表现为每次移动高亮整屏抖动，并连带清掉 scrollback。
+ * 行数预算算得多准都挡不住这种情况——内容量本身必须跟着视口走。
+ *
+ * @param termRows 终端总行数；undefined（非 TTY / 测试）时不做自适应，返回兜底值
+ * @param subagentCount 子 agent 会话数，用于折算该区占用的行数
+ * @param reservedRows 选择器之外必须留出的行数（状态栏 + 动态区最小高度）
+ */
+export function resolveVisibleRows(
+  termRows: number | undefined,
+  subagentCount: number,
+  reservedRows: number,
+): number {
+  if (termRows === undefined) return FALLBACK_VISIBLE_ROWS;
+  const avail = termRows - 1 - PICKER_CHROME_ROWS - subagentSectionRows(subagentCount) - reservedRows;
+  return Math.min(Math.max(avail, MIN_VISIBLE_ROWS), MAX_VISIBLE_ROWS);
+}
+
+/**
+ * 按终端显示宽度截断，超出加省略号（宽字符按 2 列计）。
+ *
+ * 会话标题由对话首句派生，长度不受控（实测最长 101 个显示宽度）。若任其折行，
+ * 单条占几行就成了内容的函数，行数预算不再可算——所以标题一律压成单行。
+ * 渲染侧另有 wrap="truncate" 兜底，两层的分工是：这里负责视觉（省略号、给标题留合理宽度），
+ * 那里负责「即使这里算错也不会折行」。
+ */
+function clampToWidth(text: string, budget: number): string {
+  if (budget <= 0) return '';
+  if (displayWidth(text) <= budget) return text;
+  let width = 0;
+  let out = '';
+  for (const ch of text) {
+    const chWidth = displayWidth(ch);
+    // 留 1 列给省略号
+    if (width + chWidth > budget - 1) break;
+    out += ch;
+    width += chWidth;
+  }
+  return `${out}…`;
+}
 
 /** 搜索键：自定义名 + 标题 + 首条消息预览，小写后做子串匹配。 */
 function searchKey(m: SessionMeta): string {
@@ -42,7 +110,7 @@ export function sessionDisplayName(m: SessionMeta): string {
 
 /**
  * 交互式会话选择器：
- * 输入即增量过滤（标题+预览，空格分词 AND），↑↓ 移动高亮（分页滚动），
+ * 输入即增量过滤（标题+预览，空格分词 AND），↑↓ 移动高亮（滑动窗口跟随，到边界钳制不回绕），
  * 回车恢复选中会话，Esc 放弃开新会话。
  * Delete / Ctrl+D 对高亮会话发起删除，进入 [y/N] 二次确认（不可逆本地文件操作）。
  * r 对高亮会话进入重命名编辑态（模态切换：编辑态下可打印字符进名字草稿而非搜索词，
@@ -50,11 +118,16 @@ export function sessionDisplayName(m: SessionMeta): string {
  * 只读元信息（标题/预览/相对时间/条数），不预载 message 正文——规避读大快照卡死。
  * 注：可打印字符一律进入搜索词（含 d），故删除走 Delete / Ctrl+D 而非裸 d；不支持 k/j 导航。
  * 已知取舍：裸 r 被重命名占用，搜索词无法输入字母 r（与删除避让同一思路：过滤是辅助，操作键优先）。
+ *
+ * 可见条数与标题宽度都由上层传入，不在组件内读终端尺寸——这样行数预算与实际渲染用的是同一组数，
+ * 两侧不会各算一套而漂移。两个入参都省略时退化为固定 10 条、标题不截断的历史行为。
  */
 export function SessionPicker({
   sessions,
   currentId,
   subagents,
+  visibleRows,
+  innerWidth,
   onSelect,
   onDelete,
   onRename,
@@ -67,6 +140,10 @@ export function SessionPicker({
    * 与主会话共用同一条高亮游标（主会话之后继续往下数）。
    */
   subagents?: SessionMeta[];
+  /** 主会话区屏幕可见条数（上层按终端行数解出，见 resolveVisibleRows）；省略用兜底值。 */
+  visibleRows?: number;
+  /** 弹层内容区宽度（列）；省略则标题不按宽度截断，退化为历史行为。 */
+  innerWidth?: number;
   onSelect: (id: string | null) => void;
   /** 删除某会话（落盘删除由上层执行），返回是否删成功。省略时不提供删除能力。 */
   onDelete?: (id: string) => boolean;
@@ -97,11 +174,19 @@ export function SessionPicker({
   }, [subagents, query]);
   const shownSubs = filteredSubs.slice(0, SUBAGENT_ROWS);
 
-  // query 变化后 sel 可能越界，渲染期钳制；页窗口跟随高亮项（只对主会话区分页）
+  // query 变化后 sel 可能越界，渲染期钳制
   const total = filtered.length + shownSubs.length;
   const clampedSel = Math.min(sel, Math.max(total - 1, 0));
-  const pageStart = Math.floor(Math.min(clampedSel, Math.max(filtered.length - 1, 0)) / PAGE_SIZE) * PAGE_SIZE;
-  const page = filtered.slice(pageStart, pageStart + PAGE_SIZE);
+  // 主会话区窗口：居中锚定的滑动窗口——高亮往哪移窗口就往哪滑，高亮始终落在窗口中部。
+  // 不用整页翻页，因为那样游标跨页时整屏条目会一次性换掉、高亮从末行弹回首行；
+  // 居中锚定天然给高亮留出上下余量，也就不需要额外的边缘余量参数。
+  const visible = visibleRows ?? FALLBACK_VISIBLE_ROWS;
+  const mainSel = Math.min(clampedSel, Math.max(filtered.length - 1, 0));
+  const windowStart = Math.max(
+    0,
+    Math.min(mainSel - Math.floor(visible / 2), Math.max(0, filtered.length - visible)),
+  );
+  const page = filtered.slice(windowStart, windowStart + visible);
   const confirmTarget = confirmId !== null ? sessions.find((m) => m.id === confirmId) : undefined;
   const renameTarget = renameId !== null ? sessions.find((m) => m.id === renameId) : undefined;
 
@@ -153,12 +238,14 @@ export function SessionPicker({
       return;
     }
     const n = Math.max(total, 1);
+    // 到边界钳制不回绕：回绕会让「第一条按 ↑」直接跳到末条、窗口整段滑到列表尾，
+    // 视觉上等同于画面突变；且本仓另一个选择器也是钳制，两处行为需一致。
     if (key.upArrow) {
-      setSel((i) => (i - 1 + n) % n);
+      setSel((i) => Math.max(Math.min(i, n - 1) - 1, 0));
       return;
     }
     if (key.downArrow) {
-      setSel((i) => (i + 1) % n);
+      setSel((i) => Math.min(i + 1, n - 1));
       return;
     }
     // Delete / Ctrl+D：对高亮会话发起删除确认（Backspace 仍删搜索词）；子 agent 会话区不提供删除
@@ -198,7 +285,7 @@ export function SessionPicker({
       <Text color="cyan" bold>
         {t('sessionPicker.title')}
       </Text>
-      <Text>
+      <Text wrap="truncate-start">
         {t('sessionPicker.searchPrefix')}
         {query === '' ? (
           <Text dimColor>{t('sessionPicker.searchPlaceholder')}</Text>
@@ -221,18 +308,25 @@ export function SessionPicker({
         <Text color="gray">{t('sessionPicker.empty')}</Text>
       ) : (
         page.map((m, i) => {
-          const active = pageStart + i === clampedSel;
-          const label = sessionDisplayName(m);
+          const active = windowStart + i === clampedSel;
           const isCurrent = m.id === currentId;
+          const currentTag = isCurrent ? ` ${t('sessionPicker.current')}` : '';
+          const metaText = `${relativeTime(m.updatedAt)} · ${t('sessionPicker.count', { count: m.messageCount })}`;
+          // 标题可用宽度 = 内宽 − 指针 2 − 当前标记 − 间隔 2 − 右侧元信息；宽度未知时不截断
+          const label =
+            innerWidth === undefined
+              ? sessionDisplayName(m)
+              : clampToWidth(
+                  sessionDisplayName(m),
+                  Math.max(8, innerWidth - 2 - displayWidth(currentTag) - 2 - displayWidth(metaText)),
+                );
           return (
-            <Text key={m.id} color={active ? 'cyan' : 'white'} inverse={active}>
+            <Text key={m.id} color={active ? 'cyan' : 'white'} inverse={active} wrap="truncate">
               {active ? '› ' : '  '}
               {label}
-              {isCurrent ? <Text color="green">{` ${t('sessionPicker.current')}`}</Text> : null}
+              {isCurrent ? <Text color="green">{currentTag}</Text> : null}
               {'  '}
-              <Text color="gray">
-                {relativeTime(m.updatedAt)} · {t('sessionPicker.count', { count: m.messageCount })}
-              </Text>
+              <Text color="gray">{metaText}</Text>
             </Text>
           );
         })
@@ -242,26 +336,28 @@ export function SessionPicker({
           <Text color="gray">{t('sessionPicker.subagentsHeader')}</Text>
           {shownSubs.map((m, i) => {
             const active = filtered.length + i === clampedSel;
-            const label = sessionDisplayName(m);
+            // 子会话行的元信息比主会话长（多 agentType 与 status），标题预算相应更紧
+            const metaText = `${m.agentType ?? '-'} · ${m.status ?? '-'} · ${relativeTime(m.updatedAt)} · ${t('sessionPicker.count', { count: m.messageCount })}`;
+            const label =
+              innerWidth === undefined
+                ? sessionDisplayName(m)
+                : clampToWidth(sessionDisplayName(m), Math.max(8, innerWidth - 2 - 2 - displayWidth(metaText)));
             return (
-              <Text key={m.id} color={active ? 'cyan' : 'white'} inverse={active}>
+              <Text key={m.id} color={active ? 'cyan' : 'white'} inverse={active} wrap="truncate">
                 {active ? '› ' : '  '}
                 {label}
                 {'  '}
-                <Text color="gray">
-                  {m.agentType ?? '-'} · {m.status ?? '-'} · {relativeTime(m.updatedAt)} ·{' '}
-                  {t('sessionPicker.count', { count: m.messageCount })}
-                </Text>
+                <Text color="gray">{metaText}</Text>
               </Text>
             );
           })}
         </Box>
       )}
-      {filtered.length > PAGE_SIZE && (
-        <Text color="gray">
+      {filtered.length > visible && (
+        <Text color="gray" wrap="truncate">
           {t('sessionPicker.pageInfo', {
-            start: pageStart + 1,
-            end: Math.min(pageStart + PAGE_SIZE, filtered.length),
+            start: windowStart + 1,
+            end: Math.min(windowStart + visible, filtered.length),
             total: filtered.length,
           })}
         </Text>

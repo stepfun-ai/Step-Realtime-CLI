@@ -58,7 +58,7 @@ import { ProviderWizard, type ProviderWizardResult } from './ProviderWizard.js';
 import { ProviderManager, type ProviderManagerRow } from './ProviderManager.js';
 import { resolveProviderTarget } from './providerSwitch.js';
 import { removeProviderConfig } from '../config/tomlAppend.js';
-import { SessionPicker, relativeTime, sessionDisplayName } from './SessionPicker.js';
+import { SessionPicker, resolveVisibleRows, subagentSectionRows } from './SessionPicker.js';
 import { ThinkPicker, type ThinkPickerItem } from './ThinkPicker.js';
 import { HistoryPanel, collectHistoryItems, type HistoryPanelItem } from './HistoryPanel.js';
 import {
@@ -2545,6 +2545,10 @@ export function App({
   let promptRows: number;
   // 弹层内宽（边框 2 + paddingX 2）；列数未知时按结构估算（每逻辑行 1 行）
   const overlayInner = stdout?.columns === undefined ? undefined : stdout.columns - 4;
+  // 会话选择器可见条数：按终端行数解出。固定条数在小终端上会把帧总高顶过「行数 − 1」红线，
+  // 那时 Ink 放弃原地重绘改全量清屏，每次移动高亮都整屏抖动并清掉 scrollback。
+  // 预留 = 状态栏 + 动态区最小 1 行（弹层期间对话区可压到最小，但不能压成 0）。
+  const sessionVisibleRows = resolveVisibleRows(stdout?.rows, sessionPickerSubs.length, STATUS_BAR_ROWS + 1);
   if (pendingQuestion !== null) {
     promptRows = estimateQuestionRows(pendingQuestion, stdout?.columns);
   } else if (pendingPlan !== null) {
@@ -2646,45 +2650,28 @@ export function App({
       Math.max(itemRows, historyPanelItems.length > 0 ? 1 : wrappedRows(t('app.history.empty'), overlayInner)) +
       wrappedRows(t('app.history.hint'), overlayInner);
   } else if (sessionPickerOpen) {
-    // 会话选择器（上界估算，宁多勿少）：margin 1 + 边框 2 + 标题（折行）+ 搜索行 1
-    // + 条目行（每条 = 指针 2 + 标题 + 当前标记 + 间隔 2 + 相对时间/条数，折行后取最宽的 ≤PAGE_SIZE 条）
-    // + 分页行（>PAGE_SIZE 时）+ 底部单行（删除提示/确认/notice，取最长的 deleteConfirm 估上界）。
-    const meta = t('sessionPicker.count', { count: 0 });
-    const itemRows = sessionPickerItems
-      .map((m) => {
-        const label = sessionDisplayName(m);
-        const width =
-          2 +
-          displayWidth(label) +
-          (m.id === sessionRef.current.id ? 1 + displayWidth(t('sessionPicker.current')) : 0) +
-          2 +
-          displayWidth(`${relativeTime(m.updatedAt)} · ${meta}`);
-        return overlayInner === undefined ? 1 : Math.max(1, Math.ceil(width / overlayInner));
-      })
-      .sort((a, b) => b - a)
-      .slice(0, 10)
-      .reduce((n, r) => n + r, 0);
+    // 会话选择器：条目已在组件内按宽度截断成单行（见 SessionPicker 的标题截断 + wrap=truncate），
+    // 所以条目行数直接等于可见条数，不必再按标题长度折算折行——这是本段比其他弹层短得多的原因。
+    // 结构：margin 1 + 边框 2 + 标题（折行）+ 搜索行 1 + 条目 + 子 agent 区 + 分页行 + 底部块。
     // 底部取删除确认与重命名编辑块（提示行 + 键位提示行）的较高者估上界
     const bottomRow = Math.max(
       wrappedRows(t('sessionPicker.deleteConfirm', { title: 'x'.repeat(20) }), overlayInner),
       wrappedRows(t('sessionPicker.renamePrompt', { title: 'x'.repeat(20) }), overlayInner) +
         wrappedRows(t('sessionPicker.renameHint'), overlayInner),
     );
-    // 子 agent 会话区：有则加区头 1 行 + 展示行（最多 5 条，每条按 1 行估上界）
-    const subRows = sessionPickerSubs.length > 0 ? 1 + Math.min(sessionPickerSubs.length, 5) : 0;
+    const itemRows = Math.max(
+      Math.min(sessionVisibleRows, sessionPickerItems.length),
+      sessionPickerItems.length > 0 ? 1 : wrappedRows(t('sessionPicker.empty'), overlayInner),
+    );
     promptRows =
       1 +
       2 +
       wrappedRows(t('sessionPicker.title'), overlayInner) +
       1 +
-      Math.max(itemRows, sessionPickerItems.length > 0 ? 1 : wrappedRows(t('sessionPicker.empty'), overlayInner)) +
-      subRows +
-      (sessionPickerItems.length > 10
-        ? wrappedRows(
-            t('sessionPicker.pageInfo', { start: 1, end: 10, total: sessionPickerItems.length }),
-            overlayInner,
-          )
-        : 0) +
+      itemRows +
+      subagentSectionRows(sessionPickerSubs.length) +
+      // 分页行也已 wrap=truncate，恒 1 行
+      (sessionPickerItems.length > sessionVisibleRows ? 1 : 0) +
       bottomRow;
   } else {
     promptRows = computePromptRows(input, {
@@ -2881,6 +2868,8 @@ export function App({
           sessions={sessionPickerItems}
           subagents={sessionPickerSubs}
           currentId={sessionRef.current.id}
+          visibleRows={sessionVisibleRows}
+          innerWidth={overlayInner}
           onSelect={(id) => {
             setSessionPickerOpen(false);
             if (id === null) return;
