@@ -11,6 +11,7 @@ dist-sea/
 
 # 运行时与本地数据
 .step-code/
+.codegraph/
 mcp-test-server/
 
 # 系统与编辑器

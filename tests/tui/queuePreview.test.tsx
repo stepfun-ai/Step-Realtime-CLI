@@ -57,4 +57,26 @@ describe('QueuePreview 面板', () => {
     expect(out).not.toContain('第三行');
     expect(out).toContain('…');
   });
+
+  it('系统注入条目显示人读占位，不外泄 XML 信封正文', () => {
+    const envelope =
+      '<notification id="task:abc:completed" category="task" type="task.completed">\n状态：已完成\n</notification>';
+    const { lastFrame } = render(
+      React.createElement(QueuePreview, {
+        queue: [envelope, '真人输入'],
+        isSystemInjected: (s: string) => s === envelope,
+      }),
+    );
+    const out = lastFrame() ?? '';
+    expect(out).toContain('系统注入');
+    expect(out).not.toContain('notification');
+    expect(out).not.toContain('task:abc');
+    // 真人条目不受影响，仍显示原文
+    expect(out).toContain('↳ 真人输入');
+  });
+
+  it('不传 isSystemInjected 时行为不变（全部按原文预览）', () => {
+    const { lastFrame } = render(React.createElement(QueuePreview, { queue: ['原文条目'] }));
+    expect(lastFrame() ?? '').toContain('↳ 原文条目');
+  });
 });

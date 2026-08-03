@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import { z } from 'zod';
 import { resolvePath } from './fsutil.js';
 import { fail, ok, type ToolDef } from './types.js';
+import { looksBinaryByHead, scanLinesStreaming, MAX_LINE_BYTES } from './grepScan.js';
 
 const schema = z.object({
   pattern: z.string().describe('要搜索的正则表达式（JavaScript 语法）。'),
@@ -22,17 +23,24 @@ const MAX_FILE_BYTES = 512 * 1024;
  * 「这个符号不存在」。但零命中有两种互斥解释：真的不存在，或者**它在没被搜到的
  * 文件里**。工具描述里写「自动忽略超大文件」不解决问题——模型读到空结果的那一刻
  * 不会回头重读工具描述。盲区必须出现在结果里，才可能被纳入判断。
+ *
+ * 2026-08-03 起**不再有 `oversize` 类别**：大文件改走流式逐行扫描，不再被跳过，
+ * 那个盲区已被消除而不只是被报告。剩下的三类都是无法靠实现方式消掉的。
  */
 interface Blind {
-  /** 因超过 MAX_FILE_BYTES 被跳过的文件（按体积降序取前若干个展示）。 */
-  oversize: { path: string; size: number }[];
   /** 因权限等原因读取失败的文件数。 */
   unreadable: number;
   /** 因撞 MAX_FILES / MAX_MATCHES 上限而提前结束（此时盲区统计本身也不完整）。 */
   stoppedEarly: boolean;
+  /** 含超长单行、该行只有前 MAX_LINE_BYTES 参与匹配的文件（记真实行字节数）。 */
+  longLines: { path: string; bytes: number }[];
 }
 
-function* walk(dir: string, depth: number, blind: Blind): Generator<string> {
+/**
+ * 遍历出所有候选文件**及其体积**——体积决定走全量读还是流式扫描，所以必须一并交出，
+ * 否则调用方要再 stat 一次。
+ */
+function* walk(dir: string, depth: number): Generator<{ path: string; size: number }> {
   if (depth > 20) return;
   let entries: string[];
   try {
@@ -50,13 +58,9 @@ function* walk(dir: string, depth: number, blind: Blind): Generator<string> {
       continue;
     }
     if (st.isDirectory()) {
-      yield* walk(full, depth + 1, blind);
+      yield* walk(full, depth + 1);
     } else if (st.isFile()) {
-      if (st.size <= MAX_FILE_BYTES) {
-        yield full;
-      } else {
-        blind.oversize.push({ path: full, size: st.size });
-      }
+      yield { path: full, size: st.size };
     }
   }
 }
@@ -77,15 +81,17 @@ function humanBytes(n: number): string {
 function renderBlind(blind: Blind, cwd: string): string {
   const parts: string[] = [];
 
-  if (blind.oversize.length > 0) {
-    const top = [...blind.oversize].sort((a, b) => b.size - a.size).slice(0, 5);
+  if (blind.longLines.length > 0) {
+    const top = [...blind.longLines].sort((a, b) => b.bytes - a.bytes).slice(0, 5);
     const list = top
-      .map((f) => `${relative(cwd, f.path).replace(/\\/g, '/')}（${humanBytes(f.size)}）`)
+      .map((f) => `${relative(cwd, f.path).replace(/\\/g, '/')}（单行 ${humanBytes(f.bytes)}）`)
       .join('、');
-    const more = blind.oversize.length > top.length ? `，另有 ${blind.oversize.length - top.length} 个` : '';
+    const more =
+      blind.longLines.length > top.length ? `，另有 ${blind.longLines.length - top.length} 个` : '';
     parts.push(
-      `${blind.oversize.length} 个文件因超过 ${humanBytes(MAX_FILE_BYTES)} 未被搜索：${list}${more}。` +
-        `要覆盖它们：用 read_file 配 offset/limit 分页读，或在 bash 里跑 grep/rg。`,
+      `${blind.longLines.length} 个文件含超长单行，每行只有前 ${humanBytes(MAX_LINE_BYTES)} 参与匹配：` +
+        `${list}${more}。这类文件多是压缩产物或单行 JSON；要完整检查请用 bash 里的 grep/rg，` +
+        `或先格式化再搜。`,
     );
   }
 
@@ -108,8 +114,9 @@ export const grepTool: ToolDef<z.infer<typeof schema>> = {
   name: 'grep',
   description:
     '在目录下按正则搜索文件内容，返回 匹配行（path:line:内容）。自动忽略 node_modules、.git、dist 等目录；' +
-    '超过 512KB 的文件不参与搜索，但会在结果末尾的「搜索盲区」里逐个列出（无匹配时同样列出）——' +
-    '看到盲区说明本次搜索有未覆盖范围，不能据此断定目标不存在。',
+    '文件大小不限（大文件走流式扫描），但**含超长单行的文件每行只有前 1MB 参与匹配**，' +
+    '这类情况会在结果末尾的「搜索盲区」里列出（无匹配时同样列出）——看到盲区说明本次搜索有未覆盖范围，' +
+    '不能据此断定目标不存在。',
   schema,
   access: (input, ctx) => ({ kind: 'read', path: resolvePath(ctx.cwd, input.path ?? '.') }),
   async execute(input, ctx) {
@@ -122,29 +129,51 @@ export const grepTool: ToolDef<z.infer<typeof schema>> = {
     }
 
     const results: string[] = [];
-    const blind: Blind = { oversize: [], unreadable: 0, stoppedEarly: false };
+    const blind: Blind = { unreadable: 0, stoppedEarly: false, longLines: [] };
     let fileCount = 0;
-    for (const file of walk(root, 0, blind)) {
+    for (const { path: file, size } of walk(root, 0)) {
       if (++fileCount > MAX_FILES) {
         blind.stoppedEarly = true;
         break;
       }
-      let text: string;
-      try {
-        text = readFileSync(file, 'utf8');
-      } catch {
-        blind.unreadable += 1;
-        continue;
-      }
-      if (text.includes('\u0000')) continue; // 跳过二进制
-      const lines = text.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        if (re.test(lines[i]!)) {
-          const rel = relative(ctx.cwd, file).replace(/\\/g, '/');
-          results.push(`${rel}:${i + 1}:${lines[i]!.slice(0, 300)}`);
-          if (results.length >= MAX_MATCHES) break;
+      const rel = relative(ctx.cwd, file).replace(/\\/g, '/');
+      /**
+       * 收一条匹配。返回 false = 已达上限、停止扫描。
+       * 两条读取路径共用它，匹配与截断规则因此只有一份，不会分叉。
+       */
+      const take = (line: string, lineNo: number): boolean => {
+        if (re.test(line)) results.push(`${rel}:${lineNo}:${line.slice(0, 300)}`);
+        return results.length < MAX_MATCHES;
+      };
+
+      if (size <= MAX_FILE_BYTES) {
+        // 小文件：一次 syscall 读完更快，且二进制判定能看全文。绝大多数源码在此区间，
+        // 保留这条路径是为了性能不退化。
+        let text: string;
+        try {
+          text = readFileSync(file, 'utf8');
+        } catch {
+          blind.unreadable += 1;
+          continue;
+        }
+        if (text.includes('\u0000')) continue; // 跳过二进制
+        const lines = text.split('\n');
+        for (let i = 0; i < lines.length; i++) if (!take(lines[i]!, i + 1)) break;
+      } else {
+        // 大文件：流式逐行，内存与文件大小解耦。逐行匹配使正则不可能跨行，
+        // 因此按行切分与「全量读入再 split」语义等价（详见 grepScan.ts）。
+        try {
+          if (looksBinaryByHead(file)) continue;
+          const stat = scanLinesStreaming(file, take);
+          if (stat.truncatedLineBytes > 0) {
+            blind.longLines.push({ path: file, bytes: stat.truncatedLineBytes });
+          }
+        } catch {
+          blind.unreadable += 1;
+          continue;
         }
       }
+
       if (results.length >= MAX_MATCHES) {
         blind.stoppedEarly = true;
         break;

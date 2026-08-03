@@ -1,4 +1,23 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import type { ThinkingLevelName } from '../config/config.js';
+
+/**
+ * 运行时思考强度参数（构造默认 / 会话级 `/think` 覆盖 / 单次请求覆盖共用同一形态）。
+ *
+ * 同时携带两种表达，因为两类协议要的东西不同且不可互相推导：
+ * - `level`：阶跃三接口收的档位字符串，原样作为 effort 值发出
+ *   （messages→`output_config.effort`、chat→`reasoning_effort`、responses→`reasoning.effort`）；
+ * - `budgetTokens`：原生 Anthropic 渠道收的数字，作为 `thinking.budget_tokens` 发出。
+ *
+ * 各 provider 只取自己那一份，另一份忽略。曾经只传 budgetTokens 让 provider 反推档位，
+ * 反推阈值硬编码，用户改 `[thinking.levels]` 数字就会静默错档，现已改为档位名直达。
+ */
+export interface ThinkingParam {
+  /** 档位名；阶跃三协议直接用它作 effort 值。 */
+  level?: ThinkingLevelName;
+  /** 预算 token 数；仅原生 Anthropic 渠道会真实发出。 */
+  budgetTokens?: number;
+}
 
 /**
  * 服务商（provider）抽象接口。
@@ -24,8 +43,8 @@ export interface ChatProvider {
     model?: string;
     /**
      * thinking 覆盖（三态）：undefined 用构造默认；对象本次覆盖；null 本次强制不发 thinking 字段。
-     * 仅 anthropic 协议实现消费；其余协议实现忽略此参数。
+     * 所有协议实现都消费此参数（阶跃三接口取 level，原生 Anthropic 取 budgetTokens）。
      */
-    thinking?: { budgetTokens?: number } | null;
+    thinking?: ThinkingParam | null;
   }): ReturnType<Anthropic['messages']['stream']>;
 }

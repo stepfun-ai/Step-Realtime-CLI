@@ -8,7 +8,7 @@ import {
 } from './degrader.js';
 import { projectMessages } from './projector.js';
 import { StepMessagesProvider } from './step/stepMessages.js';
-import type { ChatProvider } from './types.js';
+import type { ChatProvider, ThinkingParam } from './types.js';
 
 /**
  * 统一 provider adapter 接口与第一个落地实现（stepfun 通道）。
@@ -37,8 +37,8 @@ export interface ProviderSendParams {
   signal?: AbortSignal;
   /** 模型覆盖；省略用构造时的默认模型。 */
   model?: string;
-  /** thinking 覆盖（三态），仅 anthropic 协议实现消费。 */
-  thinking?: { budgetTokens?: number } | null;
+  /** thinking 覆盖（三态）。阶跃三接口取 level，原生 Anthropic 取 budgetTokens。 */
+  thinking?: ThinkingParam | null;
 }
 
 /** send() 的返回：最终 assistant 消息（usage 在 message.usage 内）。 */
@@ -75,7 +75,7 @@ export interface StepfunAdapterOptions {
    */
   sendThinking?: boolean;
   /** thinking 构造默认（[thinking] 配置启用时由工厂注入），sendThinking 为 true 才生效。 */
-  thinking?: { budgetTokens?: number };
+  thinking?: ThinkingParam;
   /** 测试注入：替换内部协议 provider（生产缺省用 AnthropicMessagesProvider）。 */
   inner?: ChatProvider;
 }
@@ -97,7 +97,7 @@ export class StepfunAdapter implements StepProvider {
   private readonly overrides?: CapabilityOverride[];
   /** 与工厂口径一致的 thinking 开关与构造默认，透传给内部协议 provider。 */
   private readonly sendThinking: boolean;
-  private readonly thinking?: { budgetTokens?: number };
+  private readonly thinking?: ThinkingParam;
   private readonly inner: ChatProvider;
 
   constructor(options: StepfunAdapterOptions) {

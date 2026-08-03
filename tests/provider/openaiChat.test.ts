@@ -220,6 +220,44 @@ describe('httpErrorToApiError', () => {
     expect((err as { status?: number }).status).toBe(429);
     expect(err.message).toContain('rate limited');
   });
+
+  it('服务端的「模型不支持此接口」提示必须完整保留，不截断不改写', () => {
+    // 2026-08-03 实测的真实响应：把某个只在 Messages API 开放的模型配到 Chat Completions
+    // 上时，阶跃返回 400 并**直接指出该用哪个接口**。这条消息比客户端能做的任何预检提示
+    // 都准确，而且不会过期（官方开放新协议时它自然消失），所以我们的职责只有一个：
+    // 原样传给用户，不要吞、不要截断、不要用自己猜的措辞覆盖它。
+    //
+    // 相关决策：曾计划在 `step doctor config` 里加 (model, protocol) 组合预检，
+    // 后判定不做——预检需要硬编码「哪个模型只在哪个接口开放」的清单，那是服务端行为
+    // 快照，官方一变更就成误报；而服务端这条报错永远是最新的。详见 AGENTS.md 缺口清单。
+    const body = JSON.stringify({
+      error: {
+        message:
+          'this model is not enabled for the Chat Completions API, please use the Messages API (/v1/messages) instead',
+        type: 'request_params_invalid',
+      },
+    });
+    const err = httpErrorToApiError(400, body, new Headers());
+    expect((err as { status?: number }).status).toBe(400);
+    // 关键断言：可执行的那半句（该用哪个接口）不能丢
+    expect(err.message).toContain('please use the Messages API (/v1/messages) instead');
+    // 且不带截断省略号（这条消息 110 字符，低于 200 的截断阈值，但阈值只作用于 fallback 路径，
+    // 有 error.message 时无论多长都应原样保留——这里同时钉住这个语义）
+    expect(err.message).not.toContain('…');
+  });
+
+  it('非对话模型（TTS/ASR）配进 model 时的 404 提示同样完整保留', () => {
+    // 阶跃 /v1/models 里 31 个模型只有少数是对话模型，其余是 ASR/TTS/图像/GUI。
+    // 手滑填错的实际后果是 404，措辞略含糊（说「不存在」，其实是存在但非对话模型），
+    // 但含模型名，足以定位。同样不做客户端预检，理由同上。
+    const body = JSON.stringify({
+      error: { message: 'The model "step-tts-2" does not exist or you do not have access to it.', type: 'model_invalid' },
+    });
+    const err = httpErrorToApiError(404, body, new Headers());
+    expect((err as { status?: number }).status).toBe(404);
+    expect(err.message).toContain('step-tts-2');
+  });
+
   it('body 非 JSON → 用原始 body 作 message', () => {
     const err = httpErrorToApiError(500, 'internal error', new Headers());
     expect((err as { status?: number }).status).toBe(500);

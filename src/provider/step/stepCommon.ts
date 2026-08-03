@@ -46,28 +46,6 @@ export function isStepEffort(value: unknown): value is StepEffort {
   return typeof value === 'string' && (STEP_EFFORTS as readonly string[]).includes(value);
 }
 
-/**
- * 把内部的思考预算表达（budgetTokens）折算成 Step 档位。
- *
- * 我们的配置层历史上只有 token 数一种表达（`[thinking] budget_tokens` / `[thinking.levels]`），
- * 而 Step 三个接口都只认语义档位。此函数是两套表达之间唯一的翻译点。
- *
- * 阈值取自内置默认档位表 `DEFAULT_THINKING_LEVELS`（low=1024 / medium=4096 / high=32000）
- * 的区间中点，保证「用户配 4096 得到 medium」这类直觉映射成立：
- * - `< 2560`（1024 与 4096 的中点）→ low
- * - `< 18048`（4096 与 32000 的中点）→ medium
- * - 其余 → high
- *
- * @param budgetTokens 思考预算 token 数；undefined 表示用户未指定具体预算。
- * @returns 对应档位；budgetTokens 为 undefined 时返回 undefined（调用方据此不发 effort，走服务端默认）。
- */
-export function budgetToEffort(budgetTokens: number | undefined): StepEffort | undefined {
-  if (budgetTokens === undefined || !Number.isFinite(budgetTokens)) return undefined;
-  if (budgetTokens < 2560) return 'low';
-  if (budgetTokens < 18048) return 'medium';
-  return 'high';
-}
-
 /** Step 三个接口的 effort 参数形态。 */
 export type StepChannel = 'messages' | 'chat' | 'responses';
 

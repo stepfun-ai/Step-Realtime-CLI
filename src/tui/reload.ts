@@ -141,7 +141,7 @@ export function diffConfig(oldCfg: StepCodeConfig, newCfg: StepCodeConfig): Conf
   const ot = oldCfg.thinking;
   const nt = newCfg.thinking;
   diffScalar(out, 'thinking.enabled', ot?.enabled, nt?.enabled);
-  diffScalar(out, 'thinking.budget_tokens', ot?.budgetTokens, nt?.budgetTokens);
+  // budget_tokens 已从配置移除（档位名是唯一用户接口），故不再 diff 该键。
   diffScalar(out, 'thinking.default_level', ot?.defaultLevel, nt?.defaultLevel);
   diffNumberTable(out, 'thinking.levels', ot?.levels ?? {}, nt?.levels ?? {});
 

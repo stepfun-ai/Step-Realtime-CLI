@@ -429,11 +429,29 @@ describe('resolveModels（display_name / capabilities）', () => {
     });
   });
 
-  it('capabilities 非数组 / 空数组 / 含非字符串元素 → 忽略该字段', () => {
-    expect(resolveModels({ a: { capabilities: 'thinking' } })).toEqual({ a: {} });
-    expect(resolveModels({ a: { capabilities: [] } })).toEqual({ a: {} });
-    expect(resolveModels({ a: { capabilities: ['thinking', 1] } })).toEqual({ a: {} });
-    expect(resolveModels({ a: { capabilities: [''] } })).toEqual({ a: {} });
+  it('capabilities 非数组 / 空数组 / 含非字符串元素 → 报错，不静默忽略', () => {
+    // 旧行为是静默丢弃该字段，表现为「配了但不生效」且无任何提示，极难排查。
+    expect(() => resolveModels({ a: { capabilities: 'thinking' } })).toThrow(/必须是非空字符串数组/);
+    expect(() => resolveModels({ a: { capabilities: [] } })).toThrow(/必须是非空字符串数组/);
+    expect(() => resolveModels({ a: { capabilities: ['thinking', 1] } })).toThrow(
+      /必须是非空字符串数组/,
+    );
+    expect(() => resolveModels({ a: { capabilities: [''] } })).toThrow(/必须是非空字符串数组/);
+  });
+
+  it('capabilities 含未知能力名 → 报错并列出可用值（拼写错误不再静默失效）', () => {
+    expect(() => resolveModels({ a: { capabilities: ['image-in'] } })).toThrow(
+      /含未知能力名：image-in/,
+    );
+    expect(() => resolveModels({ a: { capabilities: ['image_in', 'vision'] } })).toThrow(
+      /含未知能力名：vision/,
+    );
+  });
+
+  it('capabilities 大小写与空白被归一', () => {
+    expect(resolveModels({ a: { capabilities: ['  IMAGE_IN ', 'Thinking'] } })).toEqual({
+      a: { capabilities: ['image_in', 'thinking'] },
+    });
   });
 
   it('display_name 空串 → 视为未配置', () => {

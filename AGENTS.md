@@ -101,7 +101,9 @@ tests/                    # vitest 单元 + 集成测试
 - **anthropic**（Anthropic Messages，`/v1/messages`）：`base_url` **不带 `/v1`**（SDK 自动拼），鉴权 `x-api-key`，`system` 走顶层参数。**思考控制用 `output_config.effort`**（官方 step-3.7-flash 文档明确），**不是**顶层 `effort`，也**不是** Anthropic 官方的 `thinking.budget_tokens`——后两者阶跃都接受但静默无效（HTTP 200、参数不生效）。2026-08-03 并发配对实测：`output_config.effort` 的 low/high 有 6/6 同向差异（低档思考量降 85%），顶层 `effort` 与 `thinking.budget_tokens` 均为 3/6、2/6 的随机水平，因此本通道走 `StepMessagesProvider`（`src/provider/step/stepMessages.ts`）而非通用的 `AnthropicMessagesProvider`。`max_tokens` 在本协议是**必填**，缺省返回 400。
 - **openai**（Chat Completions，`/v1/chat/completions`）：`base_url` **带 `/v1`**，鉴权 `Authorization: Bearer`，思考走 `reasoning_content`（与 `reasoning` 恒双写，读任一皆可）。思考控制用顶层 `reasoning_effort`。适合 coding。
 - **openai_responses**（Responses，`/v1/responses`）：`base_url` **带 `/v1`**，鉴权 `Authorization: Bearer`，流式，支持工具调用。思考控制用嵌套 `reasoning: { effort }`。工具形状与 Chat 不同——tools 定义平铺（`{type,name,description,parameters}`，不嵌 `function`），工具往返用 `function_call` / `function_call_output` 两类独立 input 项靠 `call_id` 关联，而非 `role:"tool"` 消息。阶跃侧目前仅 `step-3.7-flash` 支持该协议。
-- **三协议的思考控制参数名与嵌套层级各不相同**，统一由 `src/provider/step/stepCommon.ts` 的 `budgetToEffort()` + `stepEffortParam()` 翻译。`[thinking]` 的 token 数只用于选档（low/medium/high），发出去的是档位而非数字。取值域不被服务端校验（传 `xhigh`/`bogus` 也返回 200 并被静默忽略），必须在客户端侧收敛。
+- **三协议的思考控制参数名与嵌套层级各不相同**，统一由 `src/provider/step/stepCommon.ts` 的 `stepEffortParam()` 翻译。用户配的是档位名（`[thinking] default_level` = low|medium|high），档位名**直接作为 effort 值发出**，不经任何数字中转。取值域不被服务端校验（传 `xhigh`/`bogus` 也返回 200 并被静默忽略），必须在客户端侧收敛。
+  运行时的思考参数类型是 `ThinkingParam`（`src/provider/types.ts`），同时带 `level` 与 `budgetTokens` 两个字段：阶跃三协议取 `level`，原生 Anthropic 渠道取 `budgetTokens`（作 `thinking.budget_tokens` 发出）。两者不可互相推导，所以由 `factory.ts` 一次算好两份下发。
+  **注意 TS 结构类型在这里帮不上忙**：`{ budgetTokens?: number }` 与 `ThinkingParam` 结构兼容，改动时漏填 `level` 编译器不报错，但档位会静默失效（退回「不发 effort」= 最高思考量）。改这条链路上的任何一环都要手工确认 `level` 有被填上。
 - **三协议的结束原因是三套词汇表**（`finish_reason` / `status`+`incomplete_details.reason` / `stop_reason`），分别由 `mapStepChatFinishReason()` / `mapStepResponsesStatus()` / `normalizeStepMessagesStopReason()` 归一。未知值一律归 `null`（无信号），不冒充 `end_turn`——否则截断与内容拦截会被伪装成正常收尾。
 - **`usage` 的 `reasoning_tokens` 恒为 0**（三协议实测），思考消耗不可观测。任何「按预算减去思考量算正文余量」的设计都不成立。
 - `base_url` 的 `/v1` 差异按协议区分（anthropic 不带、openai 带），配错会 404。
@@ -226,7 +228,7 @@ git worktree add ../step-code-worktrees/<名字> -b wt/<名字>
 
 ## 已具备能力
 
-工具循环 + 错误回灌、权限系统（manual/auto/yolo + 审批）、计划模式（`/plan`）、Esc 中断、指数退避重试（`Retry-After` 优先 + 并行子 agent 429 重排队）、Anthropic prompt cache 注入、会话持久化（`--continue` / `--session` / `--resume` / `/fork`）、上下文压缩（micro / full 两级 + `/compact`）、斜杠命令、`--output-format stream-json`、内置联网搜索（`web_search` + `web_image_search`）、markdown 终端渲染、发送缓冲队列、斜杠命令补全、输入框按键导航（Home/End、Ctrl+A/E/W/U/K、词移动）、图片粘贴输入（Alt+V）、thinking 推理过程呈现（流式暗色预览 + 完成折叠）、动态区视口化（防长输出滚动跳顶）、子 agent（`spawn_agent`，内置 general/explore + `.step-code/agents/*.md` 自定义）、并行工具执行（资源冲突驱动）+ 子 agent 并发上限、动态工作流（`workflow`）、任务清单（`todo_list`）、自主目标（`create_goal` 等，轮次 + token 双预算、随会话持久化）、后台任务（`bash run_in_background` + `task_*`，step 边界注入通知）、定时任务（`cron_*`，按 cwd 持久化 + 恢复）、技能懒加载（`skill`）、插件（`~/.step-code/plugins/`，skills + mcpServers + hooks + 命令 + `/plugin` 管理）、用户可配置 hooks（`[[hooks]]`，5 事件）、外部工具懒加载（`tool_search`）、MCP 接入（stdio）、多协议 provider（anthropic / openai / openai_responses）与多渠道多模型（`[providers]` + `[models]` + `/model` 选择器）、子 agent 角色模型按别名跨渠道解析、自定义子 agent 角色进入主 agent system prompt、恢复会话时模型别名失效自动回退默认模型、国际化（中 / 英）。
+工具循环 + 错误回灌、权限系统（manual/auto/yolo + 审批）、计划模式（`/plan`）、Esc 中断、指数退避重试（`Retry-After` 优先 + 并行子 agent 429 重排队）、Anthropic prompt cache 注入、会话持久化（`--continue` / `--session` / `--resume` / `/fork`）、上下文压缩（micro / full 两级 + `/compact`）、斜杠命令、`--output-format stream-json`、内置联网搜索（`web_search` + `web_image_search`）、markdown 终端渲染、发送缓冲队列、斜杠命令补全、输入框按键导航（Home/End、Ctrl+A/E/W/U/K、词移动）、图片粘贴输入（Alt+V）、thinking 推理过程呈现（流式暗色预览 + 完成折叠）、动态区视口化（防长输出滚动跳顶）、子 agent（`spawn_agent`，内置 general/explore + `.step-code/agents/*.md` 自定义）、并行工具执行（资源冲突驱动）+ 子 agent 并发上限、动态工作流（`workflow`）、任务清单（`todo_list`）、自主目标（`create_goal` 等，轮次 + token 双预算、随会话持久化）、后台任务（`bash run_in_background` + `task_*`，step 边界注入通知）、定时任务（`cron_*`，按 cwd 持久化 + 恢复）、技能懒加载（`skill`）、插件（`~/.step-code/plugins/`，skills + mcpServers + hooks + 命令 + `/plugin` 管理）、用户可配置 hooks（`[[hooks]]`，5 事件）、外部工具懒加载（`tool_search`）、MCP 接入（stdio）、多协议 provider（anthropic / openai / openai_responses）与多渠道多模型（`[providers]` + `[models]` + `/model` 选择器）、子 agent 角色模型按别名跨渠道解析、自定义子 agent 角色进入主 agent system prompt、恢复会话时模型别名失效自动回退默认模型、工具调用通道退化检测（模型把调用打成纯文本时发 notice，不静默）、国际化（中 / 英）。
 
 ## 尚未实现（后续迭代）
 
@@ -251,21 +253,59 @@ messages 通道档位参数位置写错（发顶层 effort，Step 静默忽略�
 表面一切正常，只有做并发配对统计输出 token 才能发现参数从未生效。
 Step 对未知参数一律静默忽略，因此**「发了不报错」永远不能作为「参数生效」的证据**。
 
+### 推翻一个结论后，必须全库扫用户文案（2026-08-03 补，来自一次实际漏改）
+
+修完根因、改完代码、更新完文档之后，**照着旧结论写的用户文案仍然会漏**。
+这类残留比代码 bug 更有害：代码 bug 让功能不工作，错误文案会主动劝用户放弃正确的做法。
+
+已发生两次，第二次尤其值得记：
+
+- 「降低思考档位无效，各档思考量相近」这句话测于上面那个 bug 之上（参数发错位置、
+  服务端静默忽略，各档当然一样）。参数修好后降档成了压掉 85% 思考量的首选手段，
+  但这句话在 4 条 i18n 文案里活到了 2026-08-03，期间一直劝用户别用唯一有效的手段。
+- **当次 CHANGELOG 明确写了「相关提示与文档已一并改回」，那 4 条就是在这个前提下漏的。**
+  「自认为改完了」是最容易留下残留的状态。
+
+所以推翻结论时按固定清单扫，不靠回忆改过哪几处：
+`src/i18n.ts`（zh + en 两张表）、`docs/zh` + `docs/en`、`CHANGELOG.md`、
+`src/skill/builtin/*.ts` 的内嵌文本、代码注释。
+
+**已推翻的说法要加测试护栏**，见 `tests/i18n.test.ts` 的
+「文案不得复活已被实测推翻的结论」：正则黑名单钉住这类说法，同时正面断言必须给出正确手段
+（只禁错的不够，还要要求说对的）。新增护栏的标准是「该说法被实测推翻**且**出现在面向用户的文案里」；
+只在代码注释里讲历史不算，注释本来就该记录被推翻的过程。
+
+### 工具调用泄漏检测的判据是尖括号标签，别「优化」回裸词（2026-08-03）
+
+`runTurn.ts` 的 `TOOL_CALL_LEAK_PATTERNS` 只匹配 `<` 开启的标签形态（`<invoke name=`、`<function_calls>` 等），不匹配裸词。原设计写的是裸词，实现时刻意收紧，理由是一个具体的误报场景：
+
+**这些裸词字面就写在本仓库与产品设计仓的文档里**（追踪器第 10 条、健壮性设计 P0.5 节都有），而「读文档并复述给用户」正是本项目 agent 最常做的事。用裸词判据，agent 每次讨论这个机制自己都会触发一次误报。
+
+看起来「更宽的匹配能少漏报」，实际上真实泄漏必然带尖括号——收紧不损失召回，只砍掉误报。`tests/agent/runTurnToolCallLeak.test.ts` 有一条用例专门钉这个（把判据退回裸词 `function_calls` 会让它立刻变红），改判据前先看那条用例的注释。
+
+同样别加的两件事：**不做文本兜底解析**（把漏出的 XML 解析回工具调用——ANTML 非严格 XML 且无转义，参数含尖括号时无法可靠还原，五家参考实现无一家做），**不做回灌重试**（触发条件是上下文长度，回灌不改变它，只会继续泄漏并需要额外的防循环计数）。
+
 ### 已知缺口（2026-08-03 三协议实测后登记）
 
-- **档位仍以 token 数暴露给用户**：`[thinking] budget_tokens` / `[thinking.levels]` 填的数字只用于 `budgetToEffort()` 选档，实际发出去的是 low/medium/high。用户填的精确值不产生对应效果，语义上应直接用档位名。四家同类 CLI 均以语义档位为用户接口。
-- **`THINKING_TEXT_MARGIN` 余量校验应当删除**：两条独立依据。一是 `reasoning_tokens` 恒为 0，思考实际消耗不可观测，校验只能比对配置值之间的算术；二是 2026-08-03 实测证明 `thinking.budget_tokens` 在阶跃全通道静默无效（2/6 随机水平），即被校验的那个数字根本不会送达服务端。校验一个不生效的参数，只会给出虚假的安全感。仅原生 Anthropic 渠道（api.anthropic.com）那条路径上该数字真实生效，若保留应限定到该渠道。
+- ~~**档位仍以 token 数暴露给用户**~~ **已修（2026-08-03）**：`[thinking] budget_tokens` 已删除，`default_level`（low|medium|high）成为唯一用户接口，档位名直接作 effort 值发出，`budgetToEffort()` 连同其测试一并移除。同时修掉一个此前未被发现的 bug：该函数的折算阈值（2560 / 18048）是硬编码的，只在默认档位表下无损——用户把 `[thinking.levels]` 的 medium 改成 20000 时，折算结果落到 high，**选中 medium 却发出 high 且无任何提示**。档位名直传后该缺陷消失，`tests/provider/factory.test.ts` 有回归护栏钉住这个场景。
+- ~~**`THINKING_TEXT_MARGIN` 余量校验应当删除**~~ **已处理，但结论与原判断不同（2026-08-03）**：`budget_tokens` 那条校验随字段一起删除；`[thinking.levels]` 的逐档校验**保留**，因为原来的删除依据只成立一半。原依据是「被校验的数字不会送达服务端」——这对阶跃渠道成立，但对原生 Anthropic 渠道不成立（那条路径上该数字确实作为 `thinking.budget_tokens` 发出）。更关键的是运行时切档警告（`thinkBudgetSafety`）的结论仍然正确，只是理由换了：不是因为 budget 数字占预算，而是**high 档本身就会让思考吃满 max_tokens**（空响应根因）。所以那个数字在警告里的角色从「即将发出的参数」降级为「档位思考量的估算刻度」——不精确，但单调性对得上，用于排序风险足够。改动理由写在 `src/tui/thinkCommand.ts` 的函数注释里，**不要按旧依据把它删掉**。
 - **`max_tokens` 截断未升格为独立分型**：当前映射成 `stop_reason='max_tokens'` 交上层判断，与「服务端瞬时故障」在可重试性上的区别靠 `thinkingExhausted` 标记表达。更彻底的做法是升格为独立错误变体，让「输出预算耗尽」与「可重试故障」在类型层面就分开，不依赖调用方记得读标记。
-- **`(model, protocol)` 组合无前置校验**：个别模型只在特定接口开放，配错要到实际请求才由服务端报 400，应在 `step doctor config` 阶段拦住。
+- ~~**`(model, protocol)` 组合无前置校验**~~ **判定不做（2026-08-03 实测后结案）**：原登记写「应在 `step doctor config` 阶段拦住」，实测服务端报错后判定不必做，理由有三条。
+  一是**服务端的报错已经比我们能给的更好**：把只在 Messages 开放的模型配到 Chat Completions 上，返回 400 `this model is not enabled for the Chat Completions API, please use the Messages API (/v1/messages) instead`——直接点出该换哪个接口。填错成非对话模型（TTS/ASR 等）返回 404 并带模型名。两种情况都可自行诊断，不是静默失败。
+  二是**客户端预检必然过期**：预检需要硬编码「哪个模型只在哪个接口开放」，那是服务端行为快照，官方开放新协议时我们就变成误报，而服务端那条消息永远是最新的。与 router 那条「快照写进代码会过期」同一个坑。
+  三是**真实高频配错不是协议不匹配**：阶跃 `/v1/models` 里 31 个模型只有少数是对话模型，其余是 ASR / TTS / 图像 / GUI / 搜索，手滑填错这些比协议配错常见得多，而它们同样由服务端 404 直接拦住。
+  **我们唯一的职责是不吞掉这两条消息**，已由 `tests/provider/openaiChat.test.ts` 的两条护栏测试钉住（断言 400 里「该用哪个接口」那半句与 404 里的模型名完整保留、不截断）。`httpErrorToApiError` 提取 `error.message` 作 summary 且不截断，符合要求。
 - **Step Plan 通道有并发限流（HTTP 429），公开 API 没有**：2026-08-03 对照实测，**同一个模型** `step-3.7-flash`、同一协议、同样 18 并发：走 `step_plan/v1` 成功 10/18（失败 8 个全是 429），走公开 `api.stepfun.com/v1` 成功 18/18。**这是通道特性，不是模型特性**——所以 `router` / `step37-plan` / `step35-plan` 三个别名都受影响，而 `step37` / `step35` / `explore` 不受影响。
   客户端侧无需新增限流：429 已被 `isRetryableError` 覆盖走退避重试，并行子 agent 另有 429 重排队（`runTurn.ts` 第二道防线），且 openai 协议路径的 HTTP 错误会被 `httpErrorToApiError` 包成 `Anthropic.APIError`，因此 `isRateLimitError` / `retryAfterMs` 在 Step Plan 通道同样生效。
   （更正：本条初次登记时写作「router 并发上限约 6，当前代码没有防护」，两处都错——归因错了对象，且没查代码。错因是当次实验把错误信息按 `:` 截断，丢掉了 429 状态码。）
-- **router 是混合模型，只标记特殊性、不做专门适配**（项目方确认）：`step-router-v1` 内部路由到多个不同底层模型，因此它的行为在设计上就是不稳定的，**不是可修的 bug**：
+- **router 是混合模型：特殊性照实记录，但不为它写专门适配**（项目方确认）。**这不等于不支持 router**——它照常可用，走通用路径；只是不会为它加特例分支。`step-router-v1` 内部路由到多个不同底层模型，因此它的行为在设计上就是不稳定的，**不是可修的 bug**：
   - 档位无单调性且加大采样不收敛——每次请求可能落到不同底层模型，而模型间档位效应差 14 倍（2.9×~59.4×）
   - 同档位样本跨度极大（high 档实测 6/6/177/487/288/270），轻模型与重思考模型混在同组
-  - 空响应有两个来源：难题上即使 `low` 档也打满 `max_tokens`（8 次采样 6/8，单请求 111~149s）；以及 `finish_reason=stop` 但只输出 2~30 tok（路由到轻量模型，非截断）
+  - 空响应有两个来源：难题上即使 `low` 档也打满 `max_tokens`（8 次采样 6/8，单请求 111~149s）；以及 `finish_reason=stop` 但只输出 2~30 tok（路由到轻量模型，非截断）。
+    后者曾登记为待办「升格独立错误分型」，2026-08-03 复核**判定不做**：它拆开是两种情况且都已有归属——2~30 tok 是 text 块时属合法短答（界面照常显示），全是 thinking 无 text 时 `isEmptyResponse()` 已判 true 并抛 `EmptyResponseError` 带诊断。做成分型必须引入「输出少于 N tok 即异常」的阈值，而输出少本身不是错误信号（问「1+1」答「2」就是 2 tok），唯一能区分合法短答与偷懒的信息是任务复杂度、客户端拿不到。属「需要判断力的要求不写成阈值」。详见 labs README 1.7.1。
   - 单次请求可能返回多个 completion id（多个子模型各自返回）
 
-  **不写特例代码的理由**：为多峰分布做客户端适配需要先识别每次请求路由到了哪个子模型，而 API 不暴露该信息。通用健壮性处理（429 退避重试、空响应诊断分型、截断判定）本来就覆盖它。**适配工作优先投给行为稳定的模型。**
+  **不写特例代码的理由**：首要一条是 **router 自身变更频率高**（项目方确认）——它的路由策略与后端模型池会持续调整，针对某次观测分布写出的适配逻辑会在下次调整后失效甚至反向生效；即使 API 愿意暴露子模型信息，适配也会过期。其次，为多峰分布做客户端适配需要先识别每次请求路由到了哪个子模型，而 API 不暴露该信息。通用健壮性处理（429 退避重试、空响应诊断分型、截断判定）本来就覆盖它。**适配工作优先投给行为稳定的模型。**
+  上述观测数据的定位是**排查时对号用**，不作为适配依据，且有时效性——router 侧调整后需重新观测。
 - **chat / responses 两通道的 effort 生效性未验证**：写法有官方文档背书，但未做过与 messages 同等强度的并发配对实测。曾据单次采样断言「三协议都支持且单调生效」，重跑即翻转，该断言已撤回。实验方法见 `step-code-labs/api-param-semantics/README.md` 的 1.3 与第二节。
 - **effort 效应只在难任务上可观测**：简单任务（模型自主思考量 200~500tok）下三档无差异，包括已证生效的 `output_config.effort`。任何「档位是否生效」的验证都必须用会引发长推理的任务，否则会得出假阴性结论。

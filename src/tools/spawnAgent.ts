@@ -81,12 +81,21 @@ export const spawnAgentTool: ToolDef<z.infer<typeof schema>> = {
       if (ctx.background === undefined) {
         return fail('当前上下文不支持后台任务。');
       }
+      // 后台派生的语义是「脱离当前回合独立存活」，因此**不能**把 ctx.signal 直接传下去：
+      // 那样父回合一结束或被 Esc 中断，signal abort 会连带杀死后台子 agent，
+      // 「已在后台继续」的承诺当场失效（前台转后台路径靠 unbind() 切断父信号，此处等价处理）。
+      // 独立 AbortController 只由 task_stop / 后台超时经 onStop 触发。
+      // 派生前父信号已 abort 则不必开工——那是回合已经结束，没人会来取结果。
+      if (ctx.signal?.aborted === true) {
+        return fail('当前回合已中断，未派生后台子 agent。');
+      }
+      const bgCtrl = new AbortController();
       const run = ctx
         .runSubagent({
           subagentType,
           prompt,
           depth: ctx.depth ?? 0,
-          signal: ctx.signal,
+          signal: bgCtrl.signal,
           description: input.description,
           resume: input.resume,
         })
@@ -95,10 +104,17 @@ export const spawnAgentTool: ToolDef<z.infer<typeof schema>> = {
           ok: !r.isError,
         }));
       try {
-        const id = ctx.background.startTask(`子agent·${input.description ?? '任务'}`, run, undefined, {
-          kind: 'subagent',
-          agentType: subagentType,
-        });
+        const id = ctx.background.startTask(
+          `子agent·${input.description ?? '任务'}`,
+          run,
+          undefined,
+          {
+            kind: 'subagent',
+            agentType: subagentType,
+          },
+          // async 任务无进程可杀，stop/超时经 onStop 传达中断（否则 task_stop 只改状态、任务照跑）
+          { onStop: () => bgCtrl.abort() },
+        );
         return ok(`已在后台派生子 agent（task_id=${id}）。用 task_output 查询结果。`);
       } catch (e) {
         return fail((e as Error).message);

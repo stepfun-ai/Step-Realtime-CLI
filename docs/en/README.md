@@ -20,6 +20,7 @@ This guide follows the order you are likely to need things in. If you are new, s
 | [Tools](./tools.md) | Parameters and behavioral limits of every built-in tool, parallel execution, result feedback, permission gating |
 | [Sub-agents and automation](./agents.md) | spawn_agent, parallel execution, workflows, goals, cron, background tasks |
 | [Session management](./sessions.md) | Persistence, resuming, forking, compaction, review, non-interactive output |
+| [stream-json event stream](./stream-json.md) | Being driven by external programs: envelope contract, all event types, versioning rules |
 | [Skills, plugins, and MCP](./skills-and-mcp.md) | SKILL.md format, loading precedence, extra_skill_dirs, what plugins can provide, MCP and mcp.json |
 | [Hooks](./hooks.md) | Lifecycle hooks: the five events, execution and blocking conventions, injection |
 | [AGENTS.md](./agents-md.md) | How project conventions are loaded, overridden, and sourced |

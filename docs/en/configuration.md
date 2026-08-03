@@ -136,7 +136,7 @@ provider = "stepfun"                    # references a provider id or a built-in
 model = "step-3.7-flash"
 max_context_size = 262144
 display_name = "Step 3.7 Flash"         # optional, used by the selector and the status bar
-capabilities = ["thinking", "image_in"] # optional, array of strings, passed through as-is
+capabilities = ["thinking", "image_in"] # optional, see capabilities tags below
 ```
 
 | Field | Description |
@@ -148,7 +148,7 @@ capabilities = ["thinking", "image_in"] # optional, array of strings, passed thr
 | `max_context_size` | The context window for this model; when omitted it falls back to the top-level default |
 | `max_tokens` | Maximum output tokens per response; when omitted it falls back to the top level |
 | `display_name` | Display name in the selector and the status bar; defaults to the alias |
-| `capabilities` | Array of capability tags (such as `thinking` or `image_in`), used for capability gating and future feature detection. Must be a non-empty array of plain strings, otherwise the whole field is ignored |
+| `capabilities` | Array of capability tags (such as `thinking` or `image_in`); the single source of truth for tool gating and request shaping. Must be a non-empty array of plain strings with values from the allowed set, otherwise startup fails (see [capabilities tags](#capabilities-tags)) |
 
 - The final model is expanded through the alias table once at startup, so `--model <alias>`, `STEP_CODE_MODEL=<alias>`, and the top-level `model = "<alias>"` in toml all behave identically.
 - At runtime, `/model` opens the interactive selector and `/model <alias>` switches directly. Switching rebuilds the provider from the merged configuration, and the context window follows; see [Interactive use](./interactive.md).
@@ -176,18 +176,29 @@ When several step processes switch models at the same time, the last writer wins
 
 #### capabilities tags
 
-`capabilities` is the capability declaration of an alias. Four values are currently supported, and only `image_in` currently has a gating effect:
+`capabilities` is the capability declaration of an alias, and it is the **single source of truth** for model capabilities — both tool gating and request shaping read it.
 
-| Value | Meaning | Gating |
+| Value | Meaning | Effect |
 |----|------|------|
-| `thinking` | The model emits its reasoning process | Reserved (currently gates nothing; the models.dev catalog import writes it automatically, and the `/provider add` wizard offers it as a multi-select) |
-| `image_in` | The model accepts image input | Mounts the `read_media` tool: when undeclared, the tool is unmounted from the tool table and the model cannot see it |
+| `image_in` | The model accepts image input | Mounts the `read_media` tool; image blocks in the request are not stripped |
+| `thinking` | The model emits its reasoning process | Historical thinking blocks are sent back with the request instead of being stripped |
+| `tool_use` | The model supports tool calling | The tool table is sent normally |
+| `cache_control` | The model accepts prompt cache breakpoints | Allows injecting that field (measured as incompatible on the Step family, so it is not injected by default) |
 | `video_in` | The model accepts video input | Reserved (the v1 video path is not implemented) |
 | `audio_in` | The model accepts audio input | Reserved |
 
-- Neither the display of thinking nor the request wording looks at `capabilities`: the `think:` segment in the status bar comes from the session-level `/think` level, thinking blocks are rendered unconditionally, and whether the thinking request field is sent is decided by the `[thinking]` section.
+**Defaults when undeclared**: `image_in` / `thinking` / `tool_use` are treated as **supported**, and `cache_control` is not injected.
+
+This bias is deliberate. Guess a capability too low and the client silently strips content you actually sent (images replaced by placeholder text, historical thinking deleted) with no error and nothing to see; guess too high and the server returns an explicit error, with automatic reprojection downgrade as a fallback. **Silently losing content is far harder to diagnose than an explicit error**, so the default is to let it through.
+
+The semantics of `capabilities` are **additive only**: listing a value declares support, and dimensions you omit fall back to the defaults above — omitting one never costs you a capability.
+
+- The value domain is validated: an unknown capability name (for example `image_in` misspelled as `image-in`) fails at startup with the list of valid values, instead of silently doing nothing. A wrong field type (not a non-empty string array) also fails.
+- Case and surrounding whitespace are normalized (`IMAGE_IN` equals `image_in`).
 - After changing a declaration, `/reload` applies it immediately (no model switch or restart needed).
-- **Protocol limitation (important)**: image passthrough for `read_media` is currently end-to-end only on `anthropic` protocol providers. On `openai` protocol providers, the tool result collapse keeps text only and images are dropped silently. An openai provider that declares `image_in` therefore still cannot actually read images; this protocol translation gap is logged as a pending fix.
+- The **display** of thinking does not look at `capabilities`: the `think:` segment in the status bar comes from the session-level `/think` level, and thinking blocks are rendered unconditionally. Whether reasoning-control fields are sent is decided by the `[thinking]` section.
+- **Protocol limitation**: image passthrough for `read_media` is currently end-to-end only on `anthropic` protocol providers. On `openai` protocol providers, the tool result collapse keeps text only and images are dropped silently. An openai provider that declares `image_in` therefore still cannot actually read images; this protocol translation gap is logged as a pending fix.
+- **Models and protocols are not freely interchangeable**: some models are only enabled on specific endpoints. Pointing one at the wrong provider surfaces a server-side 400 at request time, and the error message names the endpoint you should use instead.
 
 ### The `/provider` wizard
 
@@ -206,15 +217,14 @@ The `/provider` command is the interactive management entry point for providers:
 
 ### `[thinking]`: the reasoning process
 
-The Step 3.x family always thinks: whether or not the thinking field is sent, the response may include thinking blocks, and the TUI renders them unconditionally (see [Interactive use](./interactive.md)). This section only controls **whether the request side actively sends the thinking field, and its budget**.
+The Step 3.x family always thinks: whether or not reasoning-control fields are sent, the response may include thinking blocks, and the TUI renders them unconditionally (see [Interactive use](./interactive.md)). This section controls **whether the request side actively declares a reasoning depth, and which level it uses**.
 
 ```toml
 [thinking]
-enabled = true         # default false: does not actively send the thinking field, preserving existing request behavior
-budget_tokens = 8192   # optional; the thinking budget, clamped to >= 1024
-default_level = "high" # optional; the default level (a level name from levels), whose budget takes priority over budget_tokens
+enabled = true            # default false: does not declare a reasoning depth, leaving it to the server
+default_level = "medium"  # reasoning level; only low / medium / high are accepted, defaults to medium
 
-[thinking.levels]      # optional; the level table (level name → budget), defaults to low=1024 / medium=4096 / high=32000
+[thinking.levels]         # advanced; rarely needed. Only affects the native Anthropic provider
 low = 1024
 medium = 4096
 high = 32000
@@ -222,18 +232,34 @@ high = 32000
 
 | Field | Default | Description |
 |------|------|------|
-| `enabled` | false | Whether to actively send the `thinking` request field. Off by default, for compatibility with models that reject that field |
-| `budget_tokens` | — | Thinking token budget, clamped to >= 1024 |
-| `levels` | low/medium/high = 1024/4096/32000 | The level table (level name → budget); custom levels are checked level by level for answer headroom |
-| `default_level` | — | The default level name (must exist in the levels table, otherwise loading reports a configuration error); its budget becomes the request default, taking priority over `budget_tokens` |
+| `enabled` | false | Whether to actively declare a reasoning depth. Off by default, in which case the server's default depth applies |
+| `default_level` | `"medium"` | Reasoning level; only `low` / `medium` / `high` are accepted, anything else makes loading report a configuration error |
+| `levels` | low/medium/high = 1024/4096/32000 | **Advanced**: level → budget token count. Only effective on the native Anthropic provider, see below |
 
-When enabled, `max_tokens - budget_tokens >= 2048` is required (leaving minimum headroom for the answer, otherwise thinking consumes the entire quota and the answer is empty); failing that reports a configuration error at load time, and custom levels are checked level by level under the same rule. The default `max_tokens` (65536) leaves ample headroom for the built-in high level (32000), so the out-of-the-box setup does not hit this.
+At runtime, `/think` switches the level for the session (selector / direct / off); see [Interactive use](./interactive.md).
 
-At runtime, `/think` switches the level for the session (selector / direct / off); see [Interactive use](./interactive.md). If the level you switch to leaves insufficient answer headroom under the current `max_tokens` (`max_tokens - level budget < 2048`), a budget warning is shown immediately on switching (without blocking it), suggesting a larger `max_tokens` or a lower thinking level. This avoids sending a request where thinking eats the whole budget, the answer is empty, and an "empty response" error is reported.
+The level name is sent as the reasoning-strength value directly. The three protocols use different parameter names and nesting (`output_config.effort` / top-level `reasoning_effort` / nested `reasoning.effort`); Step Code translates for each, so you do not need to care which provider you are on.
 
-> If you do hit an "empty response / thinking consumed the entire output budget" message: the current thinking level's budget is close to `max_tokens`, leaving no room to generate the answer. Raise `max_tokens`, or lower the thinking level with `/think`.
+**There is no `budget_tokens` key.** There used to be one, and it was removed: all three upstream endpoints accept only a level string, never a token count, so that number was never actually sent — it was only used to derive a level. Because the derivation thresholds were fixed, editing `[thinking.levels]` could make the level you picked differ from the level actually sent. A field that has no effect and can silently pick the wrong level should not be exposed. Setting this key now fails fast and points you at `default_level`.
 
-> The `[thinking]` section applies only to the **anthropic protocol** (`budget_tokens` is an Anthropic field). Under the openai and openai_responses protocols, StepFun always thinks and neither needs nor sends this field, so this section is ignored; the reasoning process is still rendered normally.
+**The numbers under `[thinking.levels]` only take effect on the native Anthropic provider (`api.anthropic.com`)**, where they are sent as `thinking.budget_tokens`. On upstream Step providers, editing them changes nothing; you normally do not need this section at all.
+
+**Leaving `default_level` unset means `medium`, not "declare no level".** This is not mere caution: measurements show that declaring no level is not neutral — on all three channels the reasoning volume then lands near the highest level, which on hard tasks fills the output budget and yields an empty answer. In other words, "not choosing for the user" effectively means "quietly picking the highest level", so the fallback has to name the middle level explicitly.
+
+#### When thinking eats the whole output budget
+
+Thinking and the answer share a single output budget (`max_tokens`), and thinking comes first. When the budget is too small, thinking uses it all up and the answer cannot emit a single character — you see an empty answer whose stop reason is "reached the output limit".
+
+Two fixes, both effective:
+
+1. **Lower the thinking level.** Measured against not declaring a level at all, the low level cuts reasoning by roughly 85% (on the same hard problem, from ~12000 tokens down to ~1900). Use `/think low` at runtime, or set a lower `default_level` in the config.
+2. **Raise `max_tokens`.** The default (65536) is enough for the vast majority of coding tasks; if you have manually lowered it, raise it back first when you hit empty answers.
+
+Note what a level actually controls: it nudges *how deeply the model tends to think* — a trained behavioural tendency, not a hard cap. That is why levels make almost no visible difference on **simple** tasks (the model only spends a few hundred tokens thinking anyway, so every level is sufficient); the difference only shows up on tasks that require long reasoning.
+
+Complex tasks (long-document analysis, strict JSON structured output, multimodal input) need more thinking, so leave a correspondingly larger budget.
+
+> **A historical correction**: this section previously stated that lowering the thinking level does not help, citing measurements that showed near-identical thinking length across levels. That conclusion came from a bug on our side — the level parameter was being sent in the wrong field, the server silently ignored it, and every level therefore ran at the server's default depth. Once the field was corrected, levels take real effect.
 
 ### `[subagent]`: sub-agent limits
 
@@ -293,6 +319,23 @@ A summary is not used just because it came back. After generation it must pass t
 On failure, the oldest message is dropped, the input is shrunk, and the summary is regenerated, for at most 3 attempts. If all three fail, **this compaction is abandoned and the history is preserved in full**: better not to compact than to replace an entire stretch of history with an invalid summary. An empty summary, or a network or API error on the summary request, follows the same "shrink the input and retry" path.
 
 These three checks are built-in behavior today and are not configurable.
+
+#### When compaction is evaluated
+
+Compaction is evaluated **before every request sent to the model**, regardless of how the previous turn ended — whether the model called tools, answered directly, you pressed Esc to interrupt, or you started a new turn with a new prompt.
+
+This matters for two reasons:
+
+- When you **send a new prompt**, if usage was already over the line when the previous turn ended, compaction completes before the first request goes out, rather than waiting for some later tool-calling turn.
+- Long conversations that rarely call tools are covered too.
+
+There is also a fallback: if a request has already gone out and the endpoint reports a context overflow, a more aggressive rescue compaction runs and the turn is retried. Both paths refresh the status bar usage figure immediately after compacting.
+
+#### When it cannot compact further
+
+When the recent messages that must be kept already exceed the budget, compaction "runs but does not get below the threshold". In that case it does **not** retry summarization every turn (that would keep costing money with no effect). Instead it stops automatic compaction for the current run and prompts you to use `/compact` or `/new`.
+
+One case does not count as "cannot compact further": when history is still short and there is nothing outside the keep window to summarize, compaction has nothing to work with — this does not trigger the stop above, and normal compaction resumes as the conversation grows.
 
 ### `[background]`: background tasks
 

@@ -39,6 +39,14 @@ export interface TurnOutcome {
    * loop 据此给出「调大 max_tokens / 降 thinking 档位」的确定性提示，而非「回复继续」。
    */
   thinkingExhausted?: boolean;
+  /**
+   * 工具调用通道退化标记：本回合零 tool_use，但正文里出现了工具调用标签的特征形态。
+   * 语义是「模型把工具调用打成了纯文本，工具从未执行」——这是模型侧退化（实证只在长上下文下
+   * 间歇发生），若不检测则回合以 end_turn 正常收尾，界面刷出一屏看似正常的 XML 而毫无信号，
+   * 且那段文本作为 assistant 消息进历史，下一轮模型可能基于「我已经改了文件」的错误前提继续推进。
+   * loop 据此给出用户可见 notice。只提示不修复——不做文本兜底解析，理由见工具调用健壮性设计 P0.5。
+   */
+  toolCallLeak?: boolean;
 }
 
 export interface RunTurnOptions {
@@ -101,10 +109,20 @@ function errorMessageWithAdvice(err: unknown): string {
 }
 
 /**
- * 把空响应诊断上下文渲染成一行事实陈述。
+ * 把空响应诊断上下文渲染成一行事实陈述，并按**预算是否真被烧光**给出对应建议。
  *
- * 只陈述观测到的量，不做归因；`hadReasoning=true` 且 `outputTokens` 可观时
- * 追加一句「预算已用于思考」的判断依据，因为这一组合足以排除「模型没响应」。
+ * 两类空响应的建议是相反的，选错就是把用户推向无效动作：
+ * - **预算真耗尽**（服务端报 max_tokens，或输出确实逼近上限）：降档 / 调大预算有效，重发无用。
+ * - **正常结束但无正文**（服务端报 end_turn，输出只占预算零头）：预算根本没参与，降档与调大
+ *   都不会改变它；这类是模型侧偶发行为，**重试往往有效**——恰好与上一类相反。
+ *
+ * 判据必须同时看 stopReason 与「outputTokens / maxTokens 的比值」。早期实现只判
+ * `hadReasoning && outputTokens > 0`，把 155 tok / 64K 预算（0.24%）+ end_turn 的实例
+ * 误诊为耗尽，并明确劝用户「重发无用」，而重发正是那一类唯一可能有效的动作。
+ *
+ * 注意这里用的是**占用率**，不是「输出少于 N tok 即异常」的绝对阈值——后者会误伤合法短答
+ * （问「1+1」答「2」是 2 tok），已在实验记录 1.7.1 判定不做。占用率回答的是另一个问题：
+ * 这次输出有没有把预算用完。且此处已在空响应路径上，不存在误伤正常回答的可能。
  */
 function emptyResponseDiagnostics(ctx: EmptyResponseContext): string | undefined {
   const parts: string[] = [];
@@ -116,19 +134,72 @@ function emptyResponseDiagnostics(ctx: EmptyResponseContext): string | undefined
     parts.push(t('error.emptyStream.stopReason', { reason: ctx.stopReason ?? t('error.emptyStream.noSignal') }));
   }
   if (ctx.outputTokens !== undefined) {
-    parts.push(t('error.emptyStream.outputTokens', { tokens: String(ctx.outputTokens) }));
+    parts.push(
+      ctx.maxTokens !== undefined && ctx.maxTokens > 0
+        ? t('error.emptyStream.outputTokensOfLimit', {
+            tokens: String(ctx.outputTokens),
+            limit: String(ctx.maxTokens),
+          })
+        : t('error.emptyStream.outputTokens', { tokens: String(ctx.outputTokens) }),
+    );
   }
   if (parts.length === 0) return undefined;
   const line = t('error.emptyStream.diagnostics', { details: parts.join(' · ') });
-  // 思考存在且烧了 token：可判定为预算耗尽，重发无用，直接给可执行动作。
-  return ctx.hadReasoning === true && (ctx.outputTokens ?? 0) > 0
-    ? `${line}\n${t('error.emptyStream.budgetHint')}`
-    : line;
+  const hint = emptyResponseHint(ctx);
+  return hint === undefined ? line : `${line}\n${hint}`;
+}
+
+/** 输出占预算的比例达到此值即认定预算被烧光（留余量：思考+正文的计数未必精确等于上限）。 */
+const BUDGET_EXHAUSTED_RATIO = 0.9;
+
+/**
+ * 选出与实测事实相符的那条建议。返回 undefined 表示信息不足，不给建议——
+ * **宁可不给，也不给相反的建议**：拿不到 maxTokens 时无法判断预算是否耗尽，
+ * 此时任何一条建议都有一半概率把用户推向无效动作。
+ */
+function emptyResponseHint(ctx: EmptyResponseContext): string | undefined {
+  if (ctx.hadReasoning !== true || (ctx.outputTokens ?? 0) <= 0) return undefined;
+  // 服务端明确报截断：预算耗尽已被确认，无需比值。
+  if (ctx.stopReason === 'max_tokens') return t('error.emptyStream.budgetHint');
+  if (ctx.maxTokens === undefined || ctx.maxTokens <= 0) return undefined;
+  const used = ctx.outputTokens ?? 0;
+  return used / ctx.maxTokens >= BUDGET_EXHAUSTED_RATIO
+    ? t('error.emptyStream.budgetHint')
+    : t('error.emptyStream.notBudgetHint', { used: String(used), limit: String(ctx.maxTokens) });
 }
 
 /** 空响应判定：content 里既没有 text 块也没有 tool_use 块（thinking-only 视为空——思考不构成正文）。 */
 function isEmptyResponse(msg: Anthropic.Message): boolean {
   return !msg.content.some((b) => b.type === 'text' || b.type === 'tool_use');
+}
+
+/**
+ * 工具调用标签的特征形态。判据刻意要求**尖括号开启的标签**，不匹配裸词。
+ *
+ * 原因是一个具体的误报场景：本项目自己的文档（设计稿、已知问题清单）里就写着
+ * `invoke name=`、`function_calls` 这些裸词字面，在本仓库工作的 agent 复述文档时会必然误触发。
+ * 真实泄漏一定以 `<` 开启标签，而文档讨论写的是正则字面或反引号包裹的词——尖括号把两者分开，
+ * 收紧成本为零。带 `antml:` 前缀与不带的两种形态都收（不同模型退化时吐出的形态不一）。
+ */
+const TOOL_CALL_LEAK_PATTERNS: readonly RegExp[] = [
+  /<\s*antml:invoke\s+name\s*=/i,
+  /<\s*antml:parameter\s+name\s*=/i,
+  /<\s*antml:function_calls\s*>/i,
+  /<\s*invoke\s+name\s*=/i,
+  /<\s*function_calls\s*>/i,
+];
+
+/**
+ * 工具调用通道退化检测：正文里是否出现了本该走结构化 tool_use 的调用标签。
+ *
+ * 只在「本回合零 tool_use」时调用（调用点已收窄），因此不会影响正常的工具执行路径。
+ * 已知不覆盖：部分泄漏（一部分调用走了结构化通道、另一部分漏成文本）——此时 toolUses 非空，
+ * 检测不运行。实证样本均为整回合全泄漏，故先不处理。
+ */
+export function detectToolCallLeak(msg: Anthropic.Message): boolean {
+  return msg.content.some(
+    (b) => b.type === 'text' && TOOL_CALL_LEAK_PATTERNS.some((re) => re.test(b.text)),
+  );
 }
 
 /** 准备阶段产出的一个待执行工具调用。 */
@@ -161,6 +232,15 @@ export async function* runTurn(
   // --- 流式请求（边流边 yield 的手动重试：仅在尚未吐字时才重试） ---
   let final: Anthropic.Message | undefined;
   for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
+    /**
+     * 本次尝试是否已流出**正文**（text_delta）。它是重试禁令的唯一判据：
+     * 正文已经进了用户屏幕，重试会让同一段话出现两遍。
+     *
+     * 刻意**不含**思考增量。曾经思考也置这个标记，后果是 step-router-v1 这类
+     * 「每轮先吐思考」的模型永远走不进重试分支：服务端返回 thinking-only 空响应时，
+     * 诊断文案说「重试往往有效」，代码却直接报错退出，把动作推回给用户（实测复现）。
+     * 思考重复展示的代价远小于让用户手动重发，故两个口径分开。
+     */
     let emittedText = false;
     try {
       const wireOpts = ctx.attachments !== undefined ? { attachments: ctx.attachments, cwd: ctx.cwd } : undefined;
@@ -174,8 +254,8 @@ export async function* runTurn(
           emittedText = true;
           yield { type: 'text', text: event.delta.text };
         } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
-          // 思考增量上抛给 UI（流式预览）；同样标记已吐字——已流出的思考重试会重复展示
-          emittedText = true;
+          // 思考增量上抛给 UI（流式预览）。**不置 emittedText**：思考不是正文，
+          // 重试只会让思考重复展示一次，而阻断重试会把偶发空响应变成用户必须手动重发的硬错误。
           yield { type: 'thinking_delta', text: event.delta.thinking };
         } else if (
           event.type === 'content_block_start' &&
@@ -206,12 +286,13 @@ export async function* runTurn(
           break;
         }
         // 带诊断上下文：空响应的成因决定可重试性，只报事实不猜原因。
-        // hadReasoning=true + outputTokens 很大 → 预算烧在思考上，重发无用；
-        // 两者都空 → 更像服务端瞬时故障，重试有意义。
+        // maxTokens 必须一起带上——outputTokens 的绝对值无法区分两类成因，
+        // 只有它与上限的比值能分开「预算烧光」（重发无用）与「正常结束但没写正文」（重试有效）。
         throw new EmptyResponseError('empty response (no text, no tool_use)', {
           hadReasoning: msg.content.some((b: Anthropic.ContentBlock) => b.type === 'thinking'),
           stopReason: msg.stop_reason,
           outputTokens: msg.usage?.output_tokens ?? 0,
+          maxTokens: provider.maxTokens,
           model: msg.model,
         });
       }
@@ -265,6 +346,11 @@ export async function* runTurn(
     (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
   );
   if (toolUses.length === 0) {
+    // 工具调用通道退化：零 tool_use，但正文里有调用标签——模型把调用打成了纯文本，工具从未执行。
+    // 回合判定仍是 end_turn（确实没有工具要执行，控制流不变），只加标记让 loop 发 notice 消除静默。
+    if (detectToolCallLeak(final)) {
+      return { stopReason: 'end_turn', usage, toolCallLeak: true };
+    }
     return { stopReason: 'end_turn', usage };
   }
 

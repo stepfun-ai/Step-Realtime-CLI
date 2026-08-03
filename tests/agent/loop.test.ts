@@ -224,10 +224,12 @@ describe('runAgent', () => {
     expect(err?.message).toContain('上下文超出模型窗口');
   });
 
-  it('循环内压缩透传 compactionModel：摘要调用带 model 覆盖', async () => {
+  it('压缩透传 compactionModel：摘要调用带 model 覆盖，主会话调用不带', async () => {
+    // 序列说明：历史一开始就超阈值，故**发请求前的预检**先压一次，摘要调用排在最前，
+    // 主会话的第 1 次请求排在它之后。这个顺序本身就是预检生效的证据。
     const { provider, streamCalls, streamParams } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock('早期摘要')] }, // 预检压缩的 fullCompact 摘要调用
       { textChunks: [], finalContent: [toolUseBlock('c1', 'nonexistent_tool', {})] }, // 第1轮 tool_use
-      { textChunks: [], finalContent: [textBlock('早期摘要')] }, // fullCompact 摘要调用
       { textChunks: ['完成'], finalContent: [textBlock('完成')] }, // 第2轮 end_turn
     ]);
     const big: StoredMessage[] = Array.from({ length: 8 }, (_, i) =>
@@ -245,9 +247,9 @@ describe('runAgent', () => {
     expect(events.some((e) => e.type === 'notice')).toBe(true);
     expect(events.at(-1)!.type).toBe('turn_done');
     expect(streamCalls()).toBe(3);
-    // 摘要调用（第 2 次 stream）带压缩模型；主会话调用不带 model 覆盖
-    expect(streamParams()[1]!['model']).toBe('step-flash');
-    expect(streamParams()[0]!['model']).toBeUndefined();
+    // 摘要调用带压缩模型；主会话调用不带 model 覆盖
+    expect(streamParams()[0]!['model']).toBe('step-flash');
+    expect(streamParams()[1]!['model']).toBeUndefined();
   });
 
   it('溢出兜底压缩同样透传 compactionModel', async () => {
