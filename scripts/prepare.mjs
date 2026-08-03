@@ -50,4 +50,12 @@ if (res.status !== 0) {
   console.error('[prepare] 构建失败，dist/ 未生成，`step` 命令不可用');
   process.exit(res.status ?? 1);
 }
+
+// 构建标识：让装出来的这份产物能自证是哪次构建（从 git 源安装时通常拿不到 commit，会记为 unknown）
+const info = spawnSync(process.execPath, [join(root, 'scripts/gen-build-info.mjs')], {
+  cwd: root,
+  stdio: 'inherit',
+});
+if (info.status !== 0) console.error('[prepare] 构建标识写入失败，不影响运行，版本号将只报 version');
+
 console.log('[prepare] 构建完成: dist/main.js');
