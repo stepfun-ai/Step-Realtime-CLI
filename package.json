@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "licenses",
+    "scripts/prepare.mjs",
     "README.md",
     "README_CN.md"
   ],
@@ -28,13 +29,14 @@
   },
   "scripts": {
     "dev": "tsx src/main.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/gen-build-info.mjs",
     "build:bundle": "npm run build && node scripts/build-bundle.mjs",
     "build:sea": "npm run build:bundle && node scripts/build-sea.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node dist/main.js",
+    "prepare": "node scripts/prepare.mjs",
     "prepublishOnly": "npm run build",
     "prepack": "npm run build"
   },

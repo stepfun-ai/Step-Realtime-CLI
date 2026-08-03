@@ -34,7 +34,7 @@ const buf = (s: string): Buffer => Buffer.from(s, 'utf8');
 
 describe('两条流分别记账', () => {
   it('stdout 刷爆预算后，stderr 仍然能进内存（原 bug 的直接回归）', () => {
-    const c = createOutputCollector({ stdoutBudget: 8, stderrBudget: 8, cwd: null });
+    const c = createOutputCollector({ stdoutReserve: 8, stderrReserve: 8, sharedBudget: 0, cwd: null });
     c.append(buf('AAAAAAAAAAAA'), 'stdout'); // 12 > 8：第一块就进内存，用量记 12
     c.append(buf('BBBB'), 'stdout'); // 已超预算 → 丢弃
     c.append(buf('BOOM'), 'stderr'); // stderr 有独立预算 → 必须留下
@@ -46,7 +46,7 @@ describe('两条流分别记账', () => {
   });
 
   it('stderr 刷爆也不占用 stdout 的额度（反向对称）', () => {
-    const c = createOutputCollector({ stdoutBudget: 8, stderrBudget: 4, cwd: null });
+    const c = createOutputCollector({ stdoutReserve: 8, stderrReserve: 4, sharedBudget: 0, cwd: null });
     c.append(buf('EEEEEE'), 'stderr'); // 6 > 4：进内存后 stderr 用满
     c.append(buf('EEEE'), 'stderr'); // 丢弃
     c.append(buf('KEEP'), 'stdout');
@@ -58,7 +58,7 @@ describe('两条流分别记账', () => {
   });
 
   it('丢弃量按字节真实累加，不受内存封顶影响（不低报）', () => {
-    const c = createOutputCollector({ stdoutBudget: 4, stderrBudget: 4, cwd: null });
+    const c = createOutputCollector({ stdoutReserve: 4, stderrReserve: 4, sharedBudget: 0, cwd: null });
     c.append(buf('AAAA'), 'stdout');
     for (let i = 0; i < 10; i++) c.append(buf('0123456789'), 'stdout'); // 100 字节全丢
 
@@ -68,7 +68,7 @@ describe('两条流分别记账', () => {
   });
 
   it('合并顺序按到达顺序，不因分流而重排', () => {
-    const c = createOutputCollector({ stdoutBudget: 100, stderrBudget: 100, cwd: null });
+    const c = createOutputCollector({ stdoutReserve: 100, stderrReserve: 100, sharedBudget: 0, cwd: null });
     c.append(buf('1'), 'stdout');
     c.append(buf('2'), 'stderr');
     c.append(buf('3'), 'stdout');
@@ -78,7 +78,7 @@ describe('两条流分别记账', () => {
 
 describe('触顶溢出落盘', () => {
   it('文件是完整输出，不是「触顶之后的尾巴」', () => {
-    const c = createOutputCollector({ stdoutBudget: 5, stderrBudget: 5, cwd: dir });
+    const c = createOutputCollector({ stdoutReserve: 5, stderrReserve: 5, sharedBudget: 0, cwd: dir });
     c.append(buf('AAAAA'), 'stdout'); // 进内存，用满
     c.append(buf('BBBBB'), 'stdout'); // 触顶 → 开文件，先冲已有内容再写本块
     c.close();
@@ -91,7 +91,7 @@ describe('触顶溢出落盘', () => {
   });
 
   it('触顶后另一条流仍在预算内的块也写进文件（文件保持全量）', () => {
-    const c = createOutputCollector({ stdoutBudget: 3, stderrBudget: 50, cwd: dir });
+    const c = createOutputCollector({ stdoutReserve: 3, stderrReserve: 50, sharedBudget: 0, cwd: dir });
     c.append(buf('ooo'), 'stdout');
     c.append(buf('XXX'), 'stdout'); // 触顶落盘
     c.append(buf('err'), 'stderr'); // 仍进内存，且也要落盘
@@ -103,7 +103,7 @@ describe('触顶溢出落盘', () => {
   });
 
   it('多字节字符按原始字节落盘，不在 chunk 边界产生替换字符', () => {
-    const c = createOutputCollector({ stdoutBudget: 1, stderrBudget: 1, cwd: dir });
+    const c = createOutputCollector({ stdoutReserve: 1, stderrReserve: 1, sharedBudget: 0, cwd: dir });
     const zh = Buffer.from('中文内容', 'utf8');
     c.append(zh.subarray(0, 5), 'stdout'); // 在「文」中间切断
     c.append(zh.subarray(5), 'stdout');
@@ -115,7 +115,7 @@ describe('触顶溢出落盘', () => {
   });
 
   it('未触顶时不产生任何文件（不污染正常路径）', () => {
-    const c = createOutputCollector({ stdoutBudget: 100, stderrBudget: 100, cwd: dir });
+    const c = createOutputCollector({ stdoutReserve: 100, stderrReserve: 100, sharedBudget: 0, cwd: dir });
     c.append(buf('small'), 'stdout');
     c.close();
 
@@ -124,7 +124,7 @@ describe('触顶溢出落盘', () => {
   });
 
   it('cwd=null 时完全不碰磁盘，但仍如实计数', () => {
-    const c = createOutputCollector({ stdoutBudget: 2, stderrBudget: 2, cwd: null });
+    const c = createOutputCollector({ stdoutReserve: 2, stderrReserve: 2, sharedBudget: 0, cwd: null });
     c.append(buf('AA'), 'stdout');
     c.append(buf('BBBB'), 'stdout');
     c.close();
@@ -138,7 +138,7 @@ describe('触顶溢出落盘', () => {
     // 把一个**文件**当作 cwd：mkdirSync 必然失败
     const notADir = join(dir, 'blocker');
     writeFileSync(notADir, 'x');
-    const c = createOutputCollector({ stdoutBudget: 2, stderrBudget: 2, cwd: notADir });
+    const c = createOutputCollector({ stdoutReserve: 2, stderrReserve: 2, sharedBudget: 0, cwd: notADir });
 
     expect(() => {
       c.append(buf('AA'), 'stdout');
@@ -164,7 +164,7 @@ describe('触顶溢出落盘', () => {
     // 无关文件不该被动
     writeFileSync(join(outDir, 'keep-me.txt'), 'keep');
 
-    const c = createOutputCollector({ stdoutBudget: 1, stderrBudget: 1, cwd: dir });
+    const c = createOutputCollector({ stdoutReserve: 1, stderrReserve: 1, sharedBudget: 0, cwd: dir });
     c.append(buf('A'), 'stdout');
     c.append(buf('B'), 'stdout'); // 触顶 → 清理 + 新建
     c.close();
