@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { z } from 'zod';
 import { fail, ok, type ToolContext, type ToolDef, type ToolResult } from './types.js';
 import { resolveShell, winPathToWsl, rewriteNulRedirect, type ResolvedShell } from './shellResolve.js';
+import { createOutputCollector, renderOutputNotes, type OutputSnapshot } from './bashOutput.js';
+import { truncateMiddle } from '../agent/toolResultLimit.js';
 
 const schema = z.object({
   command: z.string().describe('要执行的 shell 命令。'),
@@ -21,8 +23,6 @@ const DEFAULT_TIMEOUT = 60;
 /** 前台命令的绝对超时上限（秒）。schema 已声明此上限；超过会按此值执行并在结果中告知模型。 */
 const MAX_TIMEOUT = 300;
 const MAX_OUTPUT = 30_000;
-/** 前台运行期间收集的部分输出上限（对齐原 spawnSync maxBuffer）。 */
-const MAX_COLLECT = 10 * 1024 * 1024;
 
 /**
  * 按 shell family 预处理命令与工作目录。
@@ -51,26 +51,35 @@ export function prepareCommand(
 }
 
 /**
- * 截断超长输出（保留头部，与原 spawnSync 路径一致）。
+ * 截断超长输出并附上收集阶段的损失说明。
  *
- * `droppedBytes` 是**收集阶段**就被丢弃的量（输出超过 MAX_COLLECT 后不再累积）。
- * 它必须单独报告：`out.length` 只是「收集到的长度」，一旦触顶就不再增长，
- * 于是「共 N 字符」会把 50MB 的输出说成 10MB，让调用方以为只丢了一点点。
- * 收集阶段丢掉的内容无法事后找回，所以提示里要给出重定向到文件的替代路径。
+ * 两层截断必须分别交代，因为它们的可恢复性完全不同：
+ *
+ * - **展示截断**（超过 MAX_OUTPUT）：内容还在内存里，只是没全给模型看，所以只需报长度；
+ * - **收集丢弃**（超过内存预算）：内容已经不在内存里。有溢出文件时可从文件恢复，
+ *   没有时彻底丢失。
+ *
+ * 「共 N 字符」的 N 只是**内存收集到的长度**，触顶后不再增长。单独看它会把 50MB 说成
+ * 10MB；所以它后面必须紧跟丢弃说明，两段并存才不误导。
+ *
+ * ## 展示截断为什么必须保尾部
+ *
+ * 原实现是 `out.slice(0, MAX_OUTPUT)`——**只保头**。对失败的命令这恰好切掉了唯一有用的
+ * 部分：报错几乎总在输出末尾。这一层与收集层的 stdout/stderr 分流是**同一个问题的两半**，
+ * 只修收集层拿不到收益——错误信息刚被保进内存，转头又被展示截断切掉。
+ *
+ * 因此改用与工具结果兜底同一个中间截断（头 60% + 尾 40%，中间标注省略量），
+ * 复用 `truncateMiddle` 而不另写一份，避免两处截断行为漂移。
  */
-function truncateOutput(out: string, droppedBytes = 0): string {
+function truncateOutput(snap: OutputSnapshot, canDelegate: boolean): string {
   const notes: string[] = [];
+  const out = snap.text;
   let body = out;
   if (out.length > MAX_OUTPUT) {
-    body = out.slice(0, MAX_OUTPUT);
+    body = truncateMiddle(out, MAX_OUTPUT);
     notes.push(`输出已截断，共 ${out.length} 字符`);
   }
-  if (droppedBytes > 0) {
-    notes.push(
-      `另有约 ${Math.round(droppedBytes / 1024)} KB 输出因超过 ${MAX_COLLECT / (1024 * 1024)}MB 收集上限被丢弃，` +
-        `不可恢复——需要完整输出请把命令的 stdout 重定向到文件，再用 read_file 分页读`,
-    );
-  }
+  notes.push(...renderOutputNotes(snap, { canDelegate }));
   if (notes.length === 0) return out;
   return `${body}\n\n[${notes.join('；')}]`;
 }
@@ -102,19 +111,24 @@ function runForeground(
       return;
     }
 
-    let out = '';
     let settled = false;
     /**
-     * 收集触顶后被丢弃的字节数。不记录的话，触顶后所有后续输出会**无声消失**，
-     * 而 `out.length` 停在上限值，让「共 N 字符」这个数字变成低报。
+     * 输出收集：两条流**分别记账**，触顶后溢出落盘（细节与理由见 bashOutput.ts 顶部）。
+     *
+     * 这里最关键的一点是分流本身：合用一个预算时，一条刷满 10MB stdout 的失败命令会把
+     * 尾部 stderr 里的错误信息整段挤掉，而那几行恰恰是模型唯一需要的内容。
      */
-    let droppedBytes = 0;
-    const append = (chunk: Buffer): void => {
-      if (out.length < MAX_COLLECT) out += chunk.toString('utf8');
-      else droppedBytes += chunk.length;
+    const collector = createOutputCollector({ cwd: ctx.cwd });
+    const onStdout = (chunk: Buffer): void => {
+      collector.append(chunk, 'stdout');
     };
-    proc.stdout?.on('data', append);
-    proc.stderr?.on('data', append);
+    const onStderr = (chunk: Buffer): void => {
+      collector.append(chunk, 'stderr');
+    };
+    proc.stdout?.on('data', onStdout);
+    proc.stderr?.on('data', onStderr);
+    /** 有子 agent 可用时，溢出文件的恢复指引优先建议委派（避免把整份日志拉进当前上下文）。 */
+    const canDelegate = ctx.runSubagent !== undefined;
 
     // 启动即登记前台任务（detached=false）：前台期间输出收集与计时归这里，
     // 转后台时 manager 以 getPartialOutput 当前值为起点接管。登记失败（并发上限等）
@@ -122,7 +136,7 @@ function runForeground(
     let taskId: string | undefined;
     if (ctx.bashAutoBackgroundOnTimeout !== false && ctx.background !== undefined) {
       try {
-        taskId = ctx.background.registerForeground(command, proc, () => out);
+        taskId = ctx.background.registerForeground(command, proc, () => collector.snapshot().text);
       } catch {
         taskId = undefined;
       }
@@ -134,8 +148,9 @@ function runForeground(
       ctx.signal?.removeEventListener('abort', onAbort);
       proc.removeListener('close', onClose);
       proc.removeListener('error', onError);
-      proc.stdout?.removeListener('data', append);
-      proc.stderr?.removeListener('data', append);
+      proc.stdout?.removeListener('data', onStdout);
+      proc.stderr?.removeListener('data', onStderr);
+      collector.close();
     };
     const finish = (r: ToolResult): void => {
       if (settled) return;
@@ -164,7 +179,7 @@ function runForeground(
         finish(fail('用户中断，命令已终止。'));
         return;
       }
-      const text = truncateOutput(out, droppedBytes);
+      const text = truncateOutput(collector.snapshot(), canDelegate);
       const exitCode = code ?? 0;
       if (exitCode !== 0) {
         finish(fail(`${text}\n\n[退出码：${exitCode}]`));
@@ -182,7 +197,8 @@ function runForeground(
       const id = taskId;
       void background.waitForegroundRelease(id).then((reason) => {
         if (settled || reason === 'terminal') return;
-        const partial = out === '' ? '（暂无输出）' : truncateOutput(out, droppedBytes);
+        const snap = collector.snapshot();
+        const partial = snap.text === '' ? '（暂无输出）' : truncateOutput(snap, canDelegate);
         const lead =
           reason === 'detached'
             ? `命令已转为后台任务 ${id} 继续运行，不再阻塞当前回合。`
