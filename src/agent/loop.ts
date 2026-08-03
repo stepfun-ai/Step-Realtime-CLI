@@ -274,6 +274,19 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
   const frameworkTokens =
     estimateTextTokens(system) + estimateTextTokens(JSON.stringify(toAnthropicTools(allowedTools)));
   /**
+   * 纯估算口径下的「当前总占用」：历史估算 + 框架固定开销。
+   *
+   * 存在的理由是**口径一致**。窗口上限装的是 system + tools + messages 三样，
+   * 任何要跟 `maxContextSize` 比较、或要显示给用户当占用的数字，都必须是同一口径。
+   * 此前压缩后刷新状态栏与饱和判定都用裸 `estimateTokens(messages)`，比预检口径少了
+   * 框架开销（实测约 27k / 147k，约 18%），两个后果都真实存在：
+   * 状态栏在压缩后先掉到偏低值、下一轮真实 usage 回来又跳上去（用户看到数字忽高忽低）；
+   * 饱和判定被低估后判成「没超线」，于是下一轮又压一次（多烧一次摘要请求且几乎无收益）。
+   *
+   * 有真实 usage 时不要用这个函数——真实值本身已含框架部分，叠加即双算。
+   */
+  const estimatedUsedWithFramework = (): number => estimateTokens(messages) + frameworkTokens;
+  /**
    * 压缩饱和标记：一次压缩做完后**仍然**超阈值，说明剩下的历史压不动了
    * （保留窗口内的消息本身就超预算，或摘要请求反复失败）。
    *
@@ -315,7 +328,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
       const preflightUsed =
         lastUsage !== undefined
           ? lastUsage.total + estimateTokens(messages.slice(lastUsage.measuredLength))
-          : estimateTokens(messages) + frameworkTokens;
+          : estimatedUsedWithFramework();
       if (
         await maybeCompact(
           provider,
@@ -333,14 +346,14 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         lastUsage = undefined; // 历史已就地重写，旧快照的 measuredLength 不再对应任何下标
         yield { type: 'notice', message: t('loop.autoCompacted') };
         // 与循环内压缩同一口径：立刻用字符估算刷新状态栏，不等下一次真实 usage
-        yield { type: 'usage', totalTokens: estimateTokens(messages), measuredLength: messages.length };
+        yield { type: 'usage', totalTokens: estimatedUsedWithFramework(), measuredLength: messages.length };
         // 确实压过了，但仍超阈值 → 剩下的历史压不动，置饱和，本 run 内不再自动压缩。
         // 用字符估算而非 preflightUsed——后者是压缩前的口径，压缩后已失效。
         //
         // 只在「压过了仍超限」时置位。压不动（maybeCompact 返回 false，例如历史还太短、
         // 保留窗口外没内容可摘要）**不算饱和**：历史继续增长后往往就能压了，此时置位会
         // 让本 run 后续再也不压缩。这个区别是实测踩出来的。
-        if (shouldCompact(estimateTokens(messages), compaction)) {
+        if (shouldCompact(estimatedUsedWithFramework(), compaction)) {
           compactionSaturated = true;
           yield { type: 'notice', message: t('loop.overflow.noCompact') };
         }
@@ -362,6 +375,33 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
     // 真实 usage 覆盖到 lenBefore，其后的新增消息用字符估算叠加。
     if (outcome.usage !== undefined) {
       lastUsage = { total: usageTotalTokens(outcome.usage), measuredLength: lenBefore };
+    }
+    // usage 落盘：每轮一条，是上下文占用类问题唯一的事后审计凭据（详见 WireEvent['model.usage'] 注释）。
+    // 放在 switch **之前**的公共位置：三个停止原因分支各有一处 usage yield，在分支里落盘会漏掉
+    // 未来新增的分支，而这里只要服务端给了 usage 就必然记上一条。
+    // estimatedTokens 与 totalTokens 同时记：前者是预检实际使用的口径，后者是真实值，
+    // 两者比值就是预检的可信度，没有它就无法判断「预检为什么没触发」。
+    if (outcome.usage !== undefined) {
+      const u = outcome.usage;
+      opts.onWireEvent?.({
+        type: 'model.usage',
+        ts: new Date().toISOString(),
+        ...(model !== undefined ? { model } : {}),
+        totalTokens: usageTotalTokens(u),
+        billedTokens: billedTokens(u),
+        ...(u.input_tokens !== undefined && u.input_tokens !== null ? { inputTokens: u.input_tokens } : {}),
+        ...(u.output_tokens !== undefined && u.output_tokens !== null ? { outputTokens: u.output_tokens } : {}),
+        ...(u.cache_read_input_tokens !== undefined && u.cache_read_input_tokens !== null
+          ? { cacheReadTokens: u.cache_read_input_tokens }
+          : {}),
+        ...(u.cache_creation_input_tokens !== undefined && u.cache_creation_input_tokens !== null
+          ? { cacheCreationTokens: u.cache_creation_input_tokens }
+          : {}),
+        estimatedTokens: estimateTokens(messages),
+        frameworkTokens,
+        measuredLength: lenBefore,
+        stopReason: outcome.stopReason,
+      });
     }
     // goal token 计量：每回合拿到真实 usage 即按计费口径累计（仅 active 累计，见 GoalMode.addTokens）
     if (outcome.usage !== undefined) ctx.goal?.addTokens(outcome.usage);
@@ -444,14 +484,14 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         // 保命压缩已是最激进的一档（keepRecent 与用户原话预算都按 ratio 收紧过）。它做完仍
         // 超阈值，说明真的压不动了——此时置饱和，避免 `iter--` 重试后回到循环顶部又立刻压
         // 一次（保命压缩这条路径原本绕过了饱和守卫，会连发两次摘要请求）。
-        if (shouldCompact(estimateTokens(messages), compaction)) {
+        if (shouldCompact(estimatedUsedWithFramework(), compaction)) {
           compactionSaturated = true;
         }
         yield { type: 'notice', message: t('loop.overflow.retried') };
         // 状态栏刷新：本分支此前**漏了**这一条，导致保命压缩后占用数字仍停在压缩前的
         // 旧值，用户看到「提示压缩了、数字没动」，进而怀疑压缩没生效。循环内压缩分支
         // 早已这么做并写了注释说明理由，两条压缩路径的显示口径必须一致。
-        yield { type: 'usage', totalTokens: estimateTokens(messages), measuredLength: messages.length };
+        yield { type: 'usage', totalTokens: estimatedUsedWithFramework(), measuredLength: messages.length };
         iter--; // 抵消本轮自增，重试当前回合
         continue;
       }
