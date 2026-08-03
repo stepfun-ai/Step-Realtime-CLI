@@ -7,11 +7,21 @@ describe('resumeHint', () => {
     expect(resumeCommand('abc123')).toBe('step -r abc123');
   });
 
-  it('文本提示随界面语言本地化', () => {
+  it('文本提示随界面语言本地化，命令独占一行', () => {
     setLocale('zh');
-    expect(resumeHintText('abc123')).toBe('恢复本会话：step -r abc123');
+    expect(resumeHintText('abc123')).toBe('恢复本会话：\nstep -r abc123');
     setLocale('en');
-    expect(resumeHintText('abc123')).toBe('To resume this session: step -r abc123');
+    expect(resumeHintText('abc123')).toBe('To resume this session:\nstep -r abc123');
+    setLocale('zh');
+  });
+
+  it('提示末行只有命令本身（便于终端整行选中复制）', () => {
+    for (const locale of ['zh', 'en'] as const) {
+      setLocale(locale);
+      const lines = resumeHintText('abc123').split('\n');
+      expect(lines).toHaveLength(2);
+      expect(lines[1]).toBe('step -r abc123');
+    }
     setLocale('zh');
   });
 
