@@ -23,6 +23,18 @@ await build({
   banner: {
     js: "import { createRequire as __bannerCreateRequire } from 'node:module'; const require = __bannerCreateRequire(import.meta.url);",
   },
+  // 纵深防御（不替代 dist/main.js 的运行时引导）：react 与 react-reconciler 的 CJS 入口按
+  // process.env.NODE_ENV 分流成 production / development 两套构建，两者错配时 reconciler 调度
+  // 静默失效（render() 返回、根组件不被调用、零输出、无异常——2026-08-03 实测的空白屏事故）。
+  // bundle 场景把该表达式静态折叠成 "production"，两个包的分流在打包期即被定死，运行时 env
+  // 再怎么变都不可能错配。
+  //
+  // 为什么这不能替代运行时引导：define 只在「经过 esbuild」这条路径上生效，而 tsc 直出的
+  // dist/（默认分发形态）与 tsx 直跑的开发模式都不经打包器。三种形态里它只覆盖一种，
+  // 因此定位是加固而非防线。
+  define: {
+    'process.env.NODE_ENV': '"production"',
+  },
   // react-devtools-core 是 ink 的可选 devtools 依赖（本仓库未安装）：
   // ink 的 devtools.js 里有对它的静态 import，直接 external 会让单文件 ESM 在启动时 eagerly 求值而崩溃。
   // ink 仅在 DEV=true 且 import.meta.resolve 成功时才动态 import devtools.js，

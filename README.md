@@ -59,7 +59,7 @@ English documentation lives under [`docs/en/`](./docs/en/); the Chinese original
 
 ## Development
 
-Source layers: `config` → `provider` → `tools` → `agent` (the loop) → `tui` (Ink) → `main.tsx` (entry).
+Source layers: `config` → `provider` → `tools` → `agent` (the loop) → `tui` (Ink) → `cli.tsx` (entry); `main.ts` is only the bin bootstrap (sets NODE_ENV, then loads cli.js).
 
 ```bash
 pnpm dev          # run directly with tsx, for interactive development

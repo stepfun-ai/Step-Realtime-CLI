@@ -71,7 +71,7 @@
   description: src/tui
 - name: area/cli
   color: "bfd4f2"
-  description: src/main.tsx, src/i18n.ts, src/version.ts, src/utils
+  description: src/main.ts, src/cli.tsx, src/i18n.ts, src/version.ts, src/utils
 - name: area/test
   color: "bfd4f2"
   description: tests

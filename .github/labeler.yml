@@ -41,7 +41,9 @@
 "area/cli":
   - changed-files:
       - any-glob-to-any-file:
-          - "src/main.tsx"
+          - "src/main.ts"
+          - "src/cli.tsx"
+          - "src/env.ts"
           - "src/i18n.ts"
           - "src/version.ts"
           - "src/utils/**"
