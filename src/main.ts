@@ -29,7 +29,18 @@
  * esbuild `define` 静态折叠；直跑 cli.tsx（仅开发调试）→ 不设即两包一致走 dev，可用。
  */
 
-// 不覆盖显式设置：NODE_ENV=development 运行（含 pnpm dev）仍然生效
+// 不覆盖显式设置：NODE_ENV=development 运行（含 pnpm dev）仍然生效。
+//
+// 这行与 bundle 脚本的 esbuild `define` 是**两条分发路径各自的手段**，不是重复：
+//   - 经 esbuild 的 bundle / SEA：define 在打包期把读取点折叠为常量
+//   - tsc 直出 dist/ 与 tsx 直跑开发：不经打包器，只有这行运行时赋值能保证分流正确
+//
+// esbuild 会为此报 assign-to-define 警告（它看到被 define 的表达式出现在赋值左侧）。
+// 该警告在 `scripts/build-bundle.mjs` 里被显式静音，那里记录了完整理由与实测结论。
+// **不要为消除警告改写这行的语法**：2026-08-03 实测 `process.env['NODE_ENV']`（方括号）
+// 同样被 define 匹配、警告照旧；改用 `const e = process.env; e['NODE_ENV'] ??= ...`
+// 虽能消警告，但会让 `tests/env.test.ts` 里防「cli.tsx 设置 NODE_ENV」的静态断言失效
+// （别名赋值无法可靠地静态识别），等于用一个真实的回归缺口换一条日志的干净。
 process.env.NODE_ENV ??= 'production';
 
 await import('./cli.js');
