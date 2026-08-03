@@ -1,62 +1,94 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { bashTool } from '../../src/tools/bash.js';
 
 /**
- * bash 输出**收集上限**触顶后的如实报告。
+ * bash 输出上限的**端到端**接线验证（真起进程、真写盘）。
  *
- * 原实现：`if (out.length < MAX_COLLECT) out += chunk`，触顶后所有后续输出
- * 被静默丢弃，没有任何记录。危害有两层：
+ * 收集器本身的判定逻辑在 `bashOutput.test.ts` 里用纯逻辑覆盖（快）；这里只守
+ * 「装配是否接对」——预算是否真按流分开、溢出文件是否真落盘、展示截断是否真保尾。
+ * 这几条只有跑真命令才能证伪，所以慢，但每条都不可替代。
  *
- * 1. 输出尾部无声消失，调用方不知道自己看到的是残缺内容；
- * 2. 更隐蔽——随后的「输出已截断，共 N 字符」里的 N 是**已收集长度**，触顶后
- *    不再增长。50MB 的输出会被报成 10MB，让调用方以为只丢了一点点。
- *
- * 收集阶段丢掉的内容无法事后找回（进程已退出），所以提示必须给出替代路径：
- * 重定向到文件后分页读。
+ * 三层上限彼此独立，别混：
+ * - 展示上限 MAX_OUTPUT(30k 字符)：内容还在内存，只是不全给模型看 → 中间截断保头尾；
+ * - stdout 内存预算(9MB) / stderr 内存预算(1MB)：超出的部分离开内存 → 溢出落盘；
+ * - 两者可同时发生。
  */
 
 /** 产出约 N MB stdout 的跨平台命令（测试环境必然有 node）。 */
 function bigOutputCmd(mb: number): string {
-  return `node -e "const c='x'.repeat(1024*1024);for(let i=0;i<${mb};i++)process.stdout.write(c);"`;
+  return `node -e "const c='x'.repeat(1024*1024);for(let i=0;i<${String(mb)};i++)process.stdout.write(c);"`;
+}
+
+let cwd: string;
+
+beforeEach(() => {
+  // 用临时目录当 cwd：溢出文件落在 <cwd>/.step-code/tool-output/，不能污染项目仓库
+  cwd = mkdtempSync(join(tmpdir(), 'sc-bashcap-'));
+});
+afterEach(() => {
+  rmSync(cwd, { recursive: true, force: true });
+});
+
+function overflowFiles(root: string): string[] {
+  const dir = join(root, '.step-code', 'tool-output');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((n) => n.startsWith('bash-') && n.endsWith('.log'));
 }
 
 describe('bash 输出收集上限', () => {
-  it('输出超过 10MB 收集上限时，如实报告被丢弃的量并给出替代路径', async () => {
-    // 12MB > MAX_COLLECT(10MB)，触顶后约 2MB 被丢弃
-    const r = await bashTool.execute(
-      { command: bigOutputCmd(12), timeout: 120 },
-      { cwd: process.cwd() },
-    );
+  it('超过内存收集上限时落盘，并给出可执行的取用路径', async () => {
+    // 12MB > stdout 预算(9MB)，超出部分离开内存但要能从文件恢复
+    const r = await bashTool.execute({ command: bigOutputCmd(12), timeout: 120 }, { cwd });
 
     expect(r.isError ?? false).toBe(false);
-    // 头部内容仍然给出
-    expect(r.content.startsWith('xxxx')).toBe(true);
-    // 两段提示都要在：显示截断 + 收集丢弃
-    expect(r.content).toContain('输出已截断');
-    expect(r.content).toContain('被丢弃');
-    expect(r.content).toContain('不可恢复');
-    // 必须给出可执行的替代路径，而不是只报告损失
-    expect(r.content).toContain('read_file');
-    // 丢弃量应是 MB 量级（约 2MB → 约 2000 KB 上下，放宽到 >500KB 以容忍 chunk 边界）
-    const m = r.content.match(/另有约 (\d+) KB/);
-    expect(m).not.toBeNull();
-    expect(Number(m![1])).toBeGreaterThan(500);
+    expect(r.content).toContain('输出已截断'); // 展示层
+    expect(r.content).toContain('完整输出已存到'); // 收集层：不是「不可恢复」
+    expect(r.content).toContain('read_file'); // 必须给下一步
+
+    // 文件真的存在，且体积接近命令的真实产出（≈12MB），不是内存里那 9MB
+    const files = overflowFiles(cwd);
+    expect(files.length).toBe(1);
+    const bytes = statSync(join(cwd, '.step-code', 'tool-output', files[0]!)).size;
+    expect(bytes).toBeGreaterThan(11 * 1024 * 1024);
   }, 180000);
 
-  it('输出未触顶时不出现丢弃提示（不污染正常结果）', async () => {
-    const r = await bashTool.execute({ command: 'echo hello-small' }, { cwd: process.cwd() });
-    expect(r.content).toContain('hello-small');
-    expect(r.content).not.toContain('被丢弃');
-    expect(r.content).not.toContain('输出已截断');
-  });
+  it('stdout 刷爆预算后，命令失败时的 stderr 错误信息仍然可见（回归）', async () => {
+    // 这条是整组改动的存在理由：
+    // 旧实现两条流共用一个上限、且展示截断只保头，于是「大量 stdout + 尾部报错」
+    // 这个极常见形状会让错误信息经历两次丢失（先被挤出内存，再被展示截断切掉）。
+    const cmd =
+      `node -e "const c='x'.repeat(1024*1024);for(let i=0;i<10;i++)process.stdout.write(c);` +
+      `process.stderr.write('BOOM-MARKER-42');process.exitCode=3;"`;
+    const r = await bashTool.execute({ command: cmd, timeout: 120 }, { cwd });
 
-  it('输出超过展示上限但未触顶收集上限时，只报截断不报丢弃', async () => {
-    // 1MB > MAX_OUTPUT(30k 字符) 但 << MAX_COLLECT(10MB)
-    const r = await bashTool.execute(
-      { command: bigOutputCmd(1), timeout: 60 },
-      { cwd: process.cwd() },
-    );
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('[退出码：3]');
+    // 核心断言：错误标记必须活着到达模型
+    expect(r.content).toContain('BOOM-MARKER-42');
+  }, 180000);
+
+  it('展示截断保留尾部（失败命令的报错几乎总在末尾）', async () => {
+    // 1MB 远超展示上限(30k)但未超收集预算(9MB)：只应发生展示截断，不应落盘
+    const cmd =
+      `node -e "process.stdout.write('HEAD-MARK');const c='y'.repeat(1024*1024);` +
+      `process.stdout.write(c);process.stdout.write('TAIL-MARK');"`;
+    const r = await bashTool.execute({ command: cmd, timeout: 60 }, { cwd });
+
     expect(r.content).toContain('输出已截断');
-    expect(r.content).not.toContain('被丢弃');
+    expect(r.content).toContain('HEAD-MARK'); // 头
+    expect(r.content).toContain('TAIL-MARK'); // 尾——旧的 slice(0, N) 实现看不到这个
+    expect(r.content).not.toContain('完整输出已存到'); // 没触顶收集上限
+    expect(overflowFiles(cwd)).toEqual([]); // 不该产生溢出文件
   }, 60000);
+
+  it('输出未触顶时既不提截断也不落盘（不污染正常结果）', async () => {
+    const r = await bashTool.execute({ command: 'echo hello-small' }, { cwd });
+    expect(r.content).toContain('hello-small');
+    expect(r.content).not.toContain('输出已截断');
+    expect(r.content).not.toContain('完整输出已存到');
+    expect(overflowFiles(cwd)).toEqual([]);
+  });
 });
