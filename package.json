@@ -27,7 +27,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx src/main.tsx",
+    "dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.json",
     "build:bundle": "npm run build && node scripts/build-bundle.mjs",
     "build:sea": "npm run build:bundle && node scripts/build-sea.mjs",

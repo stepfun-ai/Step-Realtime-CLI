@@ -57,7 +57,7 @@ step
 
 ## 开发
 
-源码分层：`config` → `provider` → `tools` → `agent`（循环）→ `tui`（Ink）→ `main.tsx`（入口）。
+源码分层：`config` → `provider` → `tools` → `agent`（循环）→ `tui`（Ink）→ `cli.tsx`（入口）；`main.ts` 只是 bin 引导（先设 NODE_ENV 再加载 cli.js）。
 
 ```bash
 pnpm dev          # tsx 直接跑，交互式开发
