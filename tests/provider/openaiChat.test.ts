@@ -1,8 +1,8 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { mapStepChatFinishReason } from '../../src/provider/step/stepCommon.js';
 import { describe, expect, it } from 'vitest';
 import {
   httpErrorToApiError,
-  mapStopReason,
   mapUsage,
   messagesToOpenAi,
   type OpenAiMessage,
@@ -156,22 +156,30 @@ describe('toolsToOpenAi 工具定义翻译', () => {
   });
 });
 
-describe('mapStopReason', () => {
+describe('mapStepChatFinishReason', () => {
   it('tool_calls → tool_use', () => {
-    expect(mapStopReason('tool_calls', false)).toBe('tool_use');
+    expect(mapStepChatFinishReason('tool_calls', false)).toBe('tool_use');
+  });
+  it('function_call（OpenAI 旧字段）→ tool_use', () => {
+    expect(mapStepChatFinishReason('function_call', false)).toBe('tool_use');
   });
   it('有 tool_calls 累积但 finish_reason=stop → 仍判 tool_use', () => {
-    expect(mapStopReason('stop', true)).toBe('tool_use');
+    expect(mapStepChatFinishReason('stop', true)).toBe('tool_use');
   });
   it('stop → end_turn', () => {
-    expect(mapStopReason('stop', false)).toBe('end_turn');
+    expect(mapStepChatFinishReason('stop', false)).toBe('end_turn');
   });
   it('length → max_tokens', () => {
-    expect(mapStopReason('length', false)).toBe('max_tokens');
+    expect(mapStepChatFinishReason('length', false)).toBe('max_tokens');
   });
-  it('null 或未知 → end_turn', () => {
-    expect(mapStopReason(null, false)).toBe('end_turn');
-    expect(mapStopReason('weird', false)).toBe('end_turn');
+  it('content_filter → refusal（旧实现把它当成 end_turn，内容拦截被伪装成正常结束）', () => {
+    expect(mapStepChatFinishReason('content_filter', false)).toBe('refusal');
+  });
+  it('null / 空串 / 未知值 → null（无信号，不冒充 end_turn）', () => {
+    expect(mapStepChatFinishReason(null, false)).toBeNull();
+    expect(mapStepChatFinishReason('', false)).toBeNull();
+    expect(mapStepChatFinishReason(undefined, false)).toBeNull();
+    expect(mapStepChatFinishReason('weird', false)).toBeNull();
   });
 });
 
@@ -410,5 +418,104 @@ describe('OpenAiChatProvider 流式响应翻译', () => {
     await expect((async () => {
       for await (const _ of stream) { /* consume */ }
     })()).rejects.toMatchObject({ status: 400 });
+  });
+
+  // 多 completion 分段：部分上游模型在一条流里返回多个 chunk.id，互为前缀关系
+  // `inner === outer + "." + <后缀>`。外层段是模型内部工作痕迹，内层段才是真答案。
+  describe('多 completion 分段', () => {
+    const OUTER = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const INNER = `${OUTER}.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`;
+
+    it('外层段内容归 thinking、不进正文、不产出 text_delta', async () => {
+      const provider = makeProvider(
+        sseResponse([
+          JSON.stringify({ id: OUTER, choices: [{ delta: { content: '内部痕迹' }, finish_reason: null }] }),
+          JSON.stringify({ id: INNER, choices: [{ delta: { content: '真答案' } }] }),
+          JSON.stringify({ id: INNER, choices: [{ delta: {}, finish_reason: 'stop' }] }),
+        ]),
+      );
+      const { events, final } = await drive(provider, { messages: [{ role: 'user', content: 'hi' }] });
+
+      const textEvents = events.filter(
+        (e) => e.type === 'content_block_delta' && (e.delta as { type: string }).type === 'text_delta',
+      );
+      // 关键：外层内容不能 yield，否则用户会实时看到它滚过去
+      expect(textEvents).toHaveLength(1);
+      expect((textEvents[0]?.delta as { text: string }).text).toBe('真答案');
+
+      const text = final.content.find((b) => b.type === 'text');
+      expect(text).toMatchObject({ type: 'text', text: '真答案' });
+      const thinking = final.content.find((b) => b.type === 'thinking');
+      expect(thinking).toMatchObject({ type: 'thinking', thinking: '内部痕迹' });
+      // 外层的 finish_reason=null 不得覆盖主段的真实结束标志
+      expect(final.stop_reason).toBe('end_turn');
+    });
+
+    it('单 completion 流行为完全不变（首帧照常进正文）', async () => {
+      const provider = makeProvider(
+        sseResponse([
+          JSON.stringify({ id: OUTER, choices: [{ delta: { content: '第一句' } }] }),
+          JSON.stringify({ id: OUTER, choices: [{ delta: { content: '第二句' } }] }),
+          JSON.stringify({ id: OUTER, choices: [{ delta: {}, finish_reason: 'stop' }] }),
+        ]),
+      );
+      const { events, final } = await drive(provider, { messages: [{ role: 'user', content: 'hi' }] });
+      const textEvents = events.filter(
+        (e) => e.type === 'content_block_delta' && (e.delta as { type: string }).type === 'text_delta',
+      );
+      expect(textEvents).toHaveLength(2);
+      expect(final.content).toEqual([{ type: 'text', text: '第一句第二句', citations: null }]);
+    });
+
+    it('两个 id 无前缀关系时不分段，首帧仍进正文（保守兜底）', async () => {
+      const provider = makeProvider(
+        sseResponse([
+          JSON.stringify({ id: 'id-one', choices: [{ delta: { content: '甲' } }] }),
+          JSON.stringify({ id: 'id-two', choices: [{ delta: { content: '乙' } }] }),
+          JSON.stringify({ id: 'id-two', choices: [{ delta: {}, finish_reason: 'stop' }] }),
+        ]),
+      );
+      const { final } = await drive(provider, { messages: [{ role: 'user', content: 'hi' }] });
+      const text = final.content.find((b) => b.type === 'text');
+      expect(text).toMatchObject({ text: '甲乙' });
+      expect(final.content.some((b) => b.type === 'thinking')).toBe(false);
+    });
+
+    it('只有一帧的流按主段处理（无后续帧可比对）', async () => {
+      const provider = makeProvider(
+        sseResponse([
+          JSON.stringify({ id: OUTER, choices: [{ delta: { content: '独此一帧' }, finish_reason: 'stop' }] }),
+        ]),
+      );
+      const { final } = await drive(provider, { messages: [{ role: 'user', content: 'hi' }] });
+      expect(final.content).toEqual([{ type: 'text', text: '独此一帧', citations: null }]);
+    });
+
+    it('外层段被剥离后主段正文为空 → 判空可见（不被外层内容掩盖）', async () => {
+      // 真实形态：思考吃满预算，正文零输出，但外层顾问块把总长撑到非零
+      const provider = makeProvider(
+        sseResponse([
+          JSON.stringify({ id: OUTER, choices: [{ delta: { content: '内部痕迹填充' }, finish_reason: null }] }),
+          JSON.stringify({ id: INNER, choices: [{ delta: { reasoning_content: '想很久' } }] }),
+          JSON.stringify({ id: INNER, choices: [{ delta: {}, finish_reason: 'length' }] }),
+        ]),
+      );
+      const { final } = await drive(provider, { messages: [{ role: 'user', content: 'hi' }] });
+      // 正文块必须不存在——否则上层判空逻辑会把内部痕迹当成有效回答
+      expect(final.content.some((b) => b.type === 'text')).toBe(false);
+      expect(final.stop_reason).toBe('max_tokens');
+    });
+
+    it('无 id 字段的流（常规 OpenAI 端点）行为不变', async () => {
+      const provider = makeProvider(
+        sseResponse([
+          JSON.stringify({ choices: [{ delta: { content: 'A' } }] }),
+          JSON.stringify({ choices: [{ delta: { content: 'B' } }] }),
+          JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }),
+        ]),
+      );
+      const { final } = await drive(provider, { messages: [{ role: 'user', content: 'hi' }] });
+      expect(final.content).toEqual([{ type: 'text', text: 'AB', citations: null }]);
+    });
   });
 });

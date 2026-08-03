@@ -6,6 +6,7 @@ import {
   parseSseStream,
   parseToolArguments,
 } from './openaiCommon.js';
+import { budgetToEffort, mapStepResponsesStatus, stepEffortParam } from './step/stepCommon.js';
 import type { ChatProvider } from './types.js';
 
 /** {@link OpenAiResponsesProvider} 构造参数。 */
@@ -17,6 +18,13 @@ export interface OpenAiResponsesProviderOptions {
   maxTokens: number;
   /** 注入的 fetch 实现（测试用 mock）；缺省用全局 fetch。 */
   fetchImpl?: typeof fetch;
+  /**
+   * 是否允许下发思考控制字段（`reasoning.effort`）。默认 false。
+   * 为 true 时也仅是开关打开：实际发不发还看 thinking 是否给出具体预算。
+   */
+  sendThinking?: boolean;
+  /** 思考预算（token 数），由工厂从 [thinking] 配置注入；内部折算成 Step 档位。 */
+  thinking?: { budgetTokens?: number };
 }
 
 /** Responses API 的一条对话 input 项（role + 纯文本内容）。 */
@@ -163,6 +171,8 @@ export class OpenAiResponsesProvider implements ChatProvider {
   private readonly model: string;
   readonly maxTokens: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly sendThinking: boolean;
+  private readonly thinking?: { budgetTokens?: number };
 
   constructor(options: OpenAiResponsesProviderOptions) {
     this.apiKey = options.apiKey;
@@ -170,6 +180,8 @@ export class OpenAiResponsesProvider implements ChatProvider {
     this.model = options.model;
     this.maxTokens = options.maxTokens;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.sendThinking = options.sendThinking ?? false;
+    this.thinking = options.thinking;
   }
 
   stream(params: {
@@ -178,7 +190,14 @@ export class OpenAiResponsesProvider implements ChatProvider {
     messages: Anthropic.MessageParam[];
     signal?: AbortSignal;
     model?: string;
-    /** thinking 覆盖：openai_responses 协议无 thinking 请求字段，忽略此参数（仅为对齐 ChatProvider 签名）。 */
+    /**
+     * thinking 覆盖（三态）：undefined 用构造默认；对象本次覆盖；null 本次强制不发。
+     *
+     * Responses 协议**有**思考控制字段：`reasoning: { effort }`。此前这里的注释写着
+     * 「协议无 thinking 请求字段，忽略此参数」并真的忽略了，导致用户配的档位在本通道
+     * 完全不生效、思考深度只由服务端默认值决定。2026-08-02 实测 effort 单调生效
+     * （low/medium/high 思考量递增），故改为按档位下发。
+     */
     thinking?: { budgetTokens?: number } | null;
   }): ReturnType<Anthropic['messages']['stream']> {
     const model = params.model ?? this.model;
@@ -190,6 +209,12 @@ export class OpenAiResponsesProvider implements ChatProvider {
     };
     const tools = toolsToResponses(params.tools);
     if (tools.length > 0) body['tools'] = tools;
+
+    // reasoning.effort：预算未指定时不发字段，走服务端默认（不替用户猜档位）。
+    const thinking = params.thinking === undefined ? this.thinking : params.thinking;
+    if (this.sendThinking && thinking !== null && thinking !== undefined) {
+      Object.assign(body, stepEffortParam('responses', budgetToEffort(thinking.budgetTokens)));
+    }
 
     const fetchImpl = this.fetchImpl;
     const url = `${this.baseUrl}/responses`;
@@ -286,6 +311,18 @@ export class OpenAiResponsesProvider implements ChatProvider {
 interface ResponsesResponse {
   output?: ResponsesOutputItem[];
   usage?: OpenAiResponsesUsage | null;
+  /**
+   * 响应级状态：`completed` / `incomplete` / `failed`（另有 in_progress 等中间态）。
+   * 此前本接口未声明该字段，因此代码读不到、`incomplete` 被当成正常结束。
+   */
+  status?: string;
+  /**
+   * 未完成详情，仅在 `status=incomplete` 时非空。Step 文档称常见
+   * `{ reason: 'max_output_tokens' }`，官方另有 `content_filter`。
+   */
+  incomplete_details?: { reason?: string } | null;
+  /** 错误信息，仅在 `status=failed` 时非空。 */
+  error?: { message?: string; type?: string; code?: string } | null;
 }
 
 /** output 数组里的一项：reasoning / message / function_call 三类共用宽松形状。 */
@@ -320,7 +357,7 @@ interface OpenAiResponsesUsage {
  * tool_use.id 取 call_id 而非 item 的 id：只有 call_id 能在下一轮 function_call_output 里关联上。
  */
 export function buildResponsesMessage(
-  json: { output?: ResponsesResponse['output']; usage?: OpenAiResponsesUsage | null },
+  json: ResponsesResponse,
   model: string,
   _maxTokens: number,
 ): Anthropic.Message {
@@ -359,7 +396,11 @@ export function buildResponsesMessage(
     role: 'assistant',
     model,
     content,
-    stop_reason: toolUses.length > 0 ? 'tool_use' : 'end_turn',
+    // status + incomplete_details.reason → stop_reason。此前写死 tool_use / end_turn 二选一，
+    // 完全不读 status：`incomplete`（预算耗尽被切断，output 常为空）被当成正常收尾，
+    // 空响应就此被无声吞掉。Responses 的 status 是响应级状态，真正对应停止原因的是
+    // incomplete_details.reason。
+    stop_reason: mapStepResponsesStatus(json.status, json.incomplete_details?.reason, toolUses.length > 0),
     stop_sequence: null,
     usage: json.usage != null ? mapResponsesUsage(json.usage) : emptyUsage(),
   } as unknown as Anthropic.Message;

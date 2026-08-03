@@ -118,3 +118,65 @@ describe('runAgent 空流/空响应重试', () => {
     expect(events.at(-1)!.type).toBe('turn_done');
   });
 });
+
+describe('空响应诊断上下文（替代无证据的「瞬时故障」归因）', () => {
+  it('EmptyResponseError 可携带诊断上下文，且旧调用点只传 message 仍可用', () => {
+    const withCtx = new EmptyResponseError('x', {
+      hadReasoning: true,
+      stopReason: 'end_turn',
+      outputTokens: 4096,
+      model: 'step-3.7-flash',
+    });
+    expect(withCtx.context).toEqual({
+      hadReasoning: true,
+      stopReason: 'end_turn',
+      outputTokens: 4096,
+      model: 'step-3.7-flash',
+    });
+    expect(new EmptyResponseError('x').context).toBeUndefined();
+  });
+
+  it('错误文案不再断言「瞬时故障」——该归因无证据且实测被证伪', async () => {
+    const { provider } = makeFakeProvider(
+      Array.from({ length: RETRY_MAX_ATTEMPTS }, () => ({
+        // 流正常结束但内容为空：走 EmptyResponseError 路径
+        thinkingChunks: [],
+        textChunks: [],
+        finalContent: [],
+      })),
+    );
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
+    );
+    const err = events.find((e) => e.type === 'error') as { message: string } | undefined;
+    expect(err).toBeDefined();
+    expect(err!.message).toContain('空响应');
+    // 旧文案的错误归因必须消失
+    expect(err!.message).not.toContain('瞬时故障');
+    expect(err!.message).not.toContain('请重新发送');
+    // 取而代之的是可观测事实
+    expect(err!.message).toContain('实测信息');
+    expect(err!.message).toContain('结束原因');
+  });
+
+  it('产出过思考且烧了 token → 附「调大 max_tokens」的可执行提示，并说明重发无效', async () => {
+    // 思考存在但正文为空、且未流出思考文本（finalContent 有 thinking 但 thinkingChunks 为空），
+    // 走 EmptyResponseError 分支并带 hadReasoning=true
+    const { provider } = makeFakeProvider(
+      Array.from({ length: RETRY_MAX_ATTEMPTS }, () => ({
+        thinkingChunks: [],
+        textChunks: [],
+        finalContent: [thinkingBlock('想了很久')],
+        usage: { input_tokens: 10, output_tokens: 4096 },
+      })),
+    );
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
+    );
+    const err = events.find((e) => e.type === 'error') as { message: string } | undefined;
+    // 不加 if 守卫：断言必须真的跑到，否则测试等于自己发通过许可
+    expect(err).toBeDefined();
+    expect(err!.message).toContain('已产出思考内容');
+    expect(err!.message).toContain('max_tokens');
+  });
+});

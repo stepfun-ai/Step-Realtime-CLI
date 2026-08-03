@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
-import { UNKNOWN_CAPABILITY } from '../../src/provider/capability-registry.js';
+
 import {
   applyReprojectionLevel,
   degradeMessages,
@@ -80,11 +80,14 @@ describe('degradeMessages 主动降级', () => {
     expect(out[0]!.content).toEqual(input[0]!.content);
   });
 
-  it('UNKNOWN 能力（全 false）：三类同时降级', () => {
-    const out = degradeMessages(
-      [{ role: 'assistant', content: [thinkingBlock, imageBlock] }],
-      UNKNOWN_CAPABILITY,
-    );
+  it('全 false 能力：三类同时降级', () => {
+    const out = degradeMessages([{ role: 'assistant', content: [thinkingBlock, imageBlock] }], {
+      ...FULL_CAPABILITY,
+      image_in: false,
+      reasoning: false,
+      cache_control: false,
+      tool_use: false,
+    });
     expect(out[0]!.content).toEqual([
       { type: 'text', text: '[image omitted: model has no image input]' },
     ]);

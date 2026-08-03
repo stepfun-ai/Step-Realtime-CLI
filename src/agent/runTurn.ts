@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import {
   abortableSleep,
   computeRetryDelay,
+  type EmptyResponseContext,
   EmptyResponseError,
   errorAdvice,
   isContextOverflowError,
@@ -20,6 +21,7 @@ import type { ToolContext, ToolResult } from '../tools/types.js';
 import type { AgentEvent } from './events.js';
 import { type LoopHooks, resolveAuthorization, resolveFinalizeResult } from './hooks.js';
 import { stored, type StoredMessage } from './message.js';
+import { capToolResult } from './toolResultLimit.js';
 import { ToolScheduler } from './toolScheduler.js';
 import { toWire } from './wire.js';
 
@@ -77,7 +79,13 @@ export function subagentRequeueDelay(
   return retryAfterMs(result.cause) ?? SUBAGENT_REQUEUE_DELAYS[Math.min(requeued, SUBAGENT_REQUEUE_DELAYS.length - 1)]!;
 }
 
-/** 错误事件文案：可读摘要（HTTP 状态码 + 服务端错误类型/消息）+ 按错误码附加的建议用户动作。 */
+/**
+ * 错误事件文案：可读摘要（HTTP 状态码 + 服务端错误类型/消息）+ 按错误码附加的建议用户动作。
+ *
+ * 空响应带诊断上下文时（{@link EmptyResponseError.context}）会附一行事实说明。
+ * 不猜成因——旧文案写死「通常是网关或服务端的瞬时故障」，该归因无证据支撑且实测被证伪
+ * （真实成因是输出预算被思考吃满），反而误导排查方向。
+ */
 function errorMessageWithAdvice(err: unknown): string {
   const advice = errorAdvice(err);
   // 空流/空响应给确定的中文文案：SDK 原文是英文且不附恢复线索
@@ -85,7 +93,37 @@ function errorMessageWithAdvice(err: unknown): string {
     err instanceof EmptyResponseError || isEmptyStreamError(err)
       ? t('error.emptyStream')
       : summarizeError(err);
-  return advice === undefined ? message : `${message}\n${advice}`;
+  const diagnostics =
+    err instanceof EmptyResponseError && err.context !== undefined
+      ? emptyResponseDiagnostics(err.context)
+      : undefined;
+  return [message, diagnostics, advice].filter((s) => s !== undefined && s !== '').join('\n');
+}
+
+/**
+ * 把空响应诊断上下文渲染成一行事实陈述。
+ *
+ * 只陈述观测到的量，不做归因；`hadReasoning=true` 且 `outputTokens` 可观时
+ * 追加一句「预算已用于思考」的判断依据，因为这一组合足以排除「模型没响应」。
+ */
+function emptyResponseDiagnostics(ctx: EmptyResponseContext): string | undefined {
+  const parts: string[] = [];
+  if (ctx.model !== undefined && ctx.model !== '') parts.push(t('error.emptyStream.model', { model: ctx.model }));
+  if (ctx.hadReasoning !== undefined) {
+    parts.push(ctx.hadReasoning ? t('error.emptyStream.hadReasoning') : t('error.emptyStream.noReasoning'));
+  }
+  if (ctx.stopReason !== undefined) {
+    parts.push(t('error.emptyStream.stopReason', { reason: ctx.stopReason ?? t('error.emptyStream.noSignal') }));
+  }
+  if (ctx.outputTokens !== undefined) {
+    parts.push(t('error.emptyStream.outputTokens', { tokens: String(ctx.outputTokens) }));
+  }
+  if (parts.length === 0) return undefined;
+  const line = t('error.emptyStream.diagnostics', { details: parts.join(' · ') });
+  // 思考存在且烧了 token：可判定为预算耗尽，重发无用，直接给可执行动作。
+  return ctx.hadReasoning === true && (ctx.outputTokens ?? 0) > 0
+    ? `${line}\n${t('error.emptyStream.budgetHint')}`
+    : line;
 }
 
 /** 空响应判定：content 里既没有 text 块也没有 tool_use 块（thinking-only 视为空——思考不构成正文）。 */
@@ -167,7 +205,15 @@ export async function* runTurn(
           final = msg;
           break;
         }
-        throw new EmptyResponseError('empty response (no text, no tool_use)');
+        // 带诊断上下文：空响应的成因决定可重试性，只报事实不猜原因。
+        // hadReasoning=true + outputTokens 很大 → 预算烧在思考上，重发无用；
+        // 两者都空 → 更像服务端瞬时故障，重试有意义。
+        throw new EmptyResponseError('empty response (no text, no tool_use)', {
+          hadReasoning: msg.content.some((b: Anthropic.ContentBlock) => b.type === 'thinking'),
+          stopReason: msg.stop_reason,
+          outputTokens: msg.usage?.output_tokens ?? 0,
+          model: msg.model,
+        });
       }
       final = msg;
       break;
@@ -274,7 +320,9 @@ export async function* runTurn(
         try {
           let result = await executeTool(p.tu.name, p.tu.input, ctx);
           result = await resolveFinalizeResult(hooks, { id: p.tu.id, name: p.tu.name, input: p.tu.input }, result);
-          p.result = result;
+          // 兜底长度上限：这一处赋值同时决定 tool_end 事件（→ items）与 makeToolResult（→ history），
+          // 单点拦截覆盖三处副本，且界面与模型看到的是同一份内容。放在 hook 之后：hook 先见全文。
+          p.result = capToolResult(result);
         } catch (e) {
           p.result = { content: `工具 ${p.tu.name} 执行异常：${(e as Error).message}`, isError: true };
         }

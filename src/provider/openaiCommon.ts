@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { mapStepChatFinishReason } from './step/stepCommon.js';
 
 /**
  * OpenAI 协议适配层的共享纯函数：请求侧把 Anthropic 形状翻译成 OpenAI 形状，
@@ -150,6 +151,11 @@ export class OpenAiChatAccumulator {
   private finishReason: string | null = null;
   private usage: Anthropic.Usage | undefined;
 
+  /** 追加文本到 thinking 段（非主 completion 的归痕，debug bundle 需要留痕）。 */
+  addThinking(text: string): void {
+    if (typeof text === 'string' && text.length > 0) this.thinking += text;
+  }
+
   /** 累积一个 choices[0].delta（流式）。 */
   addDelta(delta: OpenAiStreamDelta): void {
     if (typeof delta.content === 'string') this.text += delta.content;
@@ -212,7 +218,7 @@ export class OpenAiChatAccumulator {
       role: 'assistant',
       model,
       content,
-      stop_reason: mapStopReason(this.finishReason, this.toolCalls.size > 0),
+      stop_reason: mapStepChatFinishReason(this.finishReason, this.toolCalls.size > 0),
       stop_sequence: null,
       usage: this.usage ?? emptyUsage(),
     } as unknown as Anthropic.Message;
@@ -231,20 +237,6 @@ export function parseToolArguments(raw: string): Record<string, unknown> {
   }
 }
 
-/**
- * OpenAI finish_reason → Anthropic stop_reason：
- * tool_calls → tool_use、stop → end_turn、length → max_tokens、其余 → end_turn。
- * 有工具调用时无论 finish_reason 为何都判 tool_use（防个别网关末尾漏 finish_reason）。
- */
-export function mapStopReason(
-  finishReason: string | null,
-  hasToolCalls: boolean,
-): Anthropic.Message['stop_reason'] {
-  if (hasToolCalls || finishReason === 'tool_calls') return 'tool_use';
-  if (finishReason === 'length') return 'max_tokens';
-  if (finishReason === 'stop') return 'end_turn';
-  return 'end_turn';
-}
 
 /** OpenAI usage → Anthropic.Usage（input_tokens 不含 cached，cache_read 单列，对齐 anthropic 语义）。 */
 export function mapUsage(usage: OpenAiUsage): Anthropic.Usage {
@@ -294,6 +286,7 @@ export interface OpenAiUsage {
 }
 
 export interface OpenAiStreamChunk {
+  id?: string;
   choices?: Array<{ delta?: OpenAiStreamDelta; finish_reason?: string | null }>;
   usage?: OpenAiUsage | null;
 }
