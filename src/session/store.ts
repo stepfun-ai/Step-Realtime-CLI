@@ -11,7 +11,6 @@ import {
   emptyWireReplayState,
   notifyDedupKeyFromOrigin,
   parseWireLine,
-  repairOrphanToolResults,
   WIRE_FORMAT_VERSION,
   type WireEvent,
 } from '../agent/wirelog.js';
@@ -75,10 +74,6 @@ export interface ResumeResult {
   closedDanglingToolUse: boolean;
   /** 被闭合的 tool_use id 列表（审计用）。 */
   closedToolUseIds: string[];
-  /** 是否在恢复时把孤儿 tool_result 降级为 text（存量重复数据的配对修复）。 */
-  repairedOrphanToolResults: boolean;
-  /** 被降级的 tool_result 对应的 tool_use id 列表（审计用）。 */
-  repairedOrphanToolUseIds: string[];
   /** 本次重放的尾段事件条数。 */
   replayedEvents: number;
 }
@@ -424,10 +419,8 @@ export class SessionStore {
    * 1. 读快照检查点作为恢复基底（无快照但有事件日志时从空基底全量重放）；
    * 2. 重放游标（wireSeq）之后的尾段事件，重建内存态；旧快照无游标时回退
    *    「消息按 id 去重 + 非消息事件 last-write-wins」兼容路径（可能复活被 undo
-   *    删除的消息，是已知边界）。存量快照的游标可能落后于 messages（旧版本 persist
-   *    写盘顺序颠倒所致），尾段中已在快照里的 append_message 按 id 滤掉；
-   * 3. 孤儿 tool_result 降级为 text（存量重复数据的配对修复，内容保留），
-   *    再闭合末尾悬空 tool_use（合成 is_error 的 tool_result，不假装成功、不改写日志）。
+   *    删除的消息，是已知边界）；
+   * 3. 闭合末尾悬空 tool_use（合成 is_error 的 tool_result，不假装成功、不改写日志）。
    *
    * restore 无副作用契约：本方法是纯读取——不写盘、不追加事件、不投递通知、
    * 不调度任务（内存缓存刷新除外）。重复调用结果一致。
@@ -450,14 +443,9 @@ export class SessionStore {
     // 2. 尾段切片：有游标按游标切；无游标（旧快照/无快照）走兼容路径
     let tail: WireEvent[];
     if (snapshot?.wireSeq !== undefined) {
-      // 存量数据防御：旧版本 persist 先存快照后写事件，快照 messages 会比 wireSeq 游标
-      // 超前 1~2 条。尾段里已在快照中的 append_message 必须按 id 滤掉，否则 resume 把
-      // 它们再追加一次，尾部出现同 id 重复（孤儿的 tool_result 会被严格渠道拒绝）。
-      // 只滤 append_message：apply_compaction 等替换语义事件不在快照里，照常重放。
-      const snapshotIds = new Set(snapshot.messages.map((m) => m.id));
-      tail = events
-        .slice(snapshot.wireSeq)
-        .filter((e) => e.type !== 'context.append_message' || !snapshotIds.has(e.message.id));
+      // 不变量：persist 先写事件后存快照，游标只会落后（崩溃窗口）永不超前于快照
+      // 内容，尾段事件必然是快照之外的新消息。超前 = 历史已被旧版本污染，不兜底。
+      tail = events.slice(snapshot.wireSeq);
     } else if (snapshot !== null) {
       const snapshotIds = new Set(snapshot.messages.map((m) => m.id));
       tail = events.filter(
@@ -490,10 +478,7 @@ export class SessionStore {
       }
     }
 
-    // 3. 孤儿 tool_result 降级为 text（存量尾部重复数据：配对无效但内容保留），
-    //    再闭合末尾悬空 tool_use（合成结果配对有效，不受降级影响）
-    const orphanRepair = repairOrphanToolResults(session.messages);
-    session.messages = orphanRepair.messages;
+    // 3. 闭合末尾悬空 tool_use
     const closure = closeDanglingToolUse(session.messages);
     session.messages = closure.messages;
 
@@ -502,8 +487,6 @@ export class SessionStore {
       deliveredNotifications: state.deliveredNotifications,
       closedDanglingToolUse: closure.closed,
       closedToolUseIds: closure.closedToolUseIds,
-      repairedOrphanToolResults: orphanRepair.repaired,
-      repairedOrphanToolUseIds: orphanRepair.repairedToolUseIds,
       replayedEvents: tail.length,
     };
   }
