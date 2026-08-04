@@ -33,7 +33,7 @@ const MAX_SNIPPET = 500;
 /**
  * 联网搜索工具，接阶跃星辰官方网页搜索接口。
  * endpoint 按「[search.web] → [search] → 主会话渠道」解析；独立配置视为精确意图，
- * 兜底沿用主会话渠道归一化后拼 step_plan 路径（兼容旧行为）。api 与 plan 双通道均可用。
+ * 兜底沿用主会话渠道归一化后拼 step_plan 路径（零配置默认策略：缺省回退主会话渠道）。api 与 plan 双通道均可用。
  * 计费：按阶跃平台网络搜索计价（api 通道按量 / plan 通道消耗 Credit）。
  */
 export const webSearchTool: ToolDef<z.infer<typeof schema>> = {

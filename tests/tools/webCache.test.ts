@@ -24,7 +24,7 @@ describe('WebResultCache', () => {
   });
 
   it('容量恰好为 maxSize：可稳定保存 maxSize 个不同 URL', () => {
-    const cache = new WebResultCache(3);
+    const cache = new WebResultCache({ maxSize: 3 });
     cache.set({ url: 'a', content: 'A', kind: 'fetch', ttlMs: 60_000 });
     cache.set({ url: 'b', content: 'B', kind: 'fetch', ttlMs: 60_000 });
     cache.set({ url: 'c', content: 'C', kind: 'fetch', ttlMs: 60_000 });
@@ -43,7 +43,7 @@ describe('WebResultCache', () => {
   });
 
   it('覆盖同 URL 不触发额外淘汰', () => {
-    const cache = new WebResultCache(2);
+    const cache = new WebResultCache({ maxSize: 2 });
     cache.set({ url: 'a', content: 'A', kind: 'fetch', ttlMs: 60_000 });
     cache.set({ url: 'b', content: 'B', kind: 'fetch', ttlMs: 60_000 });
     cache.set({ url: 'a', content: 'A2', kind: 'fetch', ttlMs: 60_000 });

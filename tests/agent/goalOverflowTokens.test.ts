@@ -10,7 +10,7 @@ function sm(
   message: Anthropic.MessageParam,
   origin: 'user' | 'assistant' | 'tool' = 'user',
 ): StoredMessage {
-  return stored(message, origin);
+  return stored(message, { kind: origin });
 }
 
 /**

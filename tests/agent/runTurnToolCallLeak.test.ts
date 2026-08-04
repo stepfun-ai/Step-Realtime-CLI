@@ -6,7 +6,7 @@ import { stored, type StoredMessage } from '../../src/agent/message.js';
 import { collect, makeFakeProvider, textBlock, thinkingBlock, toolUseBlock } from '../helpers/fakeProvider.js';
 
 function sm(text: string): StoredMessage {
-  return stored({ role: 'user', content: text }, 'user');
+  return stored({ role: 'user', content: text }, { kind: 'user' });
 }
 
 /** 造一个只含 text 块的响应消息（检测器只关心 content 形态）。 */

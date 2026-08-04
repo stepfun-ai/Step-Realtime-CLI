@@ -6,7 +6,7 @@ import { stored, type StoredMessage } from '../../src/agent/message.js';
 import { collect, makeFakeProvider, textBlock, toolUseBlock } from '../helpers/fakeProvider.js';
 
 function sm(text: string): StoredMessage {
-  return stored({ role: 'user', content: text }, 'user');
+  return stored({ role: 'user', content: text }, { kind: 'user' });
 }
 
 const base = (

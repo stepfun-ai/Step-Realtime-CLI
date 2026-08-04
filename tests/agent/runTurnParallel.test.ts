@@ -12,7 +12,7 @@ import { collect, makeFakeProvider, textBlock, toolUseBlock } from '../helpers/f
 const LONG = 'x'.repeat(220); // >200，跳过子 agent 摘要补写
 
 function sm(text: string): StoredMessage {
-  return stored({ role: 'user', content: text }, 'user');
+  return stored({ role: 'user', content: text }, { kind: 'user' });
 }
 
 const base = (

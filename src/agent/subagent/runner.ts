@@ -163,7 +163,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       // 直接续跑发 provider 会 400——补合成中断结果的 tool_result
       repairToolPairing(messages);
       // 新 prompt 追加为一条 user 消息，不替换历史
-      messages.push(stored({ role: 'user', content: req.prompt }, 'user'));
+      messages.push(stored({ role: 'user', content: req.prompt }, { kind: 'user' }));
       subSession.status = 'running';
     } else {
       const def = registry.get(req.subagentType);
@@ -200,7 +200,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         // 全新 UUID 下实际不可达；防御性返回，不带 sessionId（会话未开始）
         return { summary: '子会话活跃锁建立失败，本次派生已取消。', isError: true };
       }
-      messages = [stored({ role: 'user', content: req.prompt }, 'user')];
+      messages = [stored({ role: 'user', content: req.prompt }, { kind: 'user' })];
     }
     // 历史落盘：快照（恢复源）+ 全量日志（完整历史）双写，与主会话保持同一套快照+日志双写语义。
     // 持久化失败只丢落盘，不影响子 agent 运行与结果回灌。
@@ -341,7 +341,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
               role: 'user',
               content: '请把上面的工作展开成更完整的中文说明：做了什么、结论、关键文件/路径。',
             },
-            'user',
+            { kind: 'user' },
           ),
         );
         await run();

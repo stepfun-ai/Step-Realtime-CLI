@@ -189,7 +189,7 @@ describe('createSubagentRunner', () => {
       { textChunks: [], finalContent: [textBlock(LONG)] },
     ]);
     const reg: SkillRegistry = { skills: new Map() };
-    reg.skills.set('demo', parseSkillMd('---\nname: demo\ndescription: 演示技能\n---\n技能正文', '/d', 'user')!);
+    reg.skills.set('demo', parseSkillMd('---\nname: demo\ndescription: 演示技能\n---\n技能正文', '/d', { kind: 'user' })!);
     const run = createSubagentRunner(deps(provider, undefined, { skills: reg }));
     const r = await run({ subagentType: 'explore', prompt: 'x', depth: 0 });
     expect(r.isError).toBe(false);
@@ -343,7 +343,7 @@ describe('runAgent allowedTools 守卫', () => {
       { textChunks: [], finalContent: [toolUseBlock('c1', 'write_file', { path: 'x', content: 'y' })] },
       { textChunks: ['ok'], finalContent: [textBlock('ok')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
     const events = await collect(
       runAgent({
         provider,
@@ -378,7 +378,7 @@ describe('spawn_agent 工具', () => {
       // 主 agent 下一轮：结束
       { textChunks: ['完成'], finalContent: [textBlock('完成')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: '并行调查' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: '并行调查' }, { kind: 'user' })];
     const events = await collect(
       runAgent({
         provider,
@@ -527,7 +527,7 @@ describe('SubagentStore', () => {
     const subStore = makeSubagentStore();
     const cwd = process.cwd();
     const s = subStore.create(cwd, { model: 'm', agentType: 'general', depth: 1, parentId: 'p' });
-    subStore.appendMessages(cwd, s.id, [stored({ role: 'user', content: 'hi' }, 'user')]);
+    subStore.appendMessages(cwd, s.id, [stored({ role: 'user', content: 'hi' }, { kind: 'user' })]);
     subStore.saveSnapshot(s);
 
     expect(subStore.acquireLock(cwd, s.id)).toBe(true);
@@ -551,8 +551,8 @@ describe('SubagentStore', () => {
     expect(a.id).not.toBe(b.id);
     expect(a.id).toMatch(/^[0-9a-f-]{36}$/);
 
-    const m1 = stored({ role: 'user', content: 'q' }, 'user');
-    const m2 = stored({ role: 'assistant', content: 'a' }, 'assistant');
+    const m1 = stored({ role: 'user', content: 'q' }, { kind: 'user' });
+    const m2 = stored({ role: 'assistant', content: 'a' }, { kind: 'assistant' });
     expect(subStore.appendMessages(cwd, a.id, [m1])).toBe(1);
     expect(subStore.appendMessages(cwd, a.id, [m1, m2])).toBe(1); // m1 已存在，只写 m2
     expect(subStore.loadFull(cwd, a.id).map((m) => m.id)).toEqual([m1.id, m2.id]);
@@ -684,10 +684,10 @@ describe('resume：按 id 恢复子会话', () => {
     const s = subStore.create(cwd, { model: 'm', agentType: 'general', depth: 1 });
     // 模拟崩溃在工具执行段的快照：末条 assistant 带 tool_use 但没有配对的 tool_result
     s.messages = [
-      stored({ role: 'user', content: '原始任务' }, 'user'),
+      stored({ role: 'user', content: '原始任务' }, { kind: 'user' }),
       stored(
         { role: 'assistant', content: [textBlock('我来看一下'), toolUseBlock('c1', 'read_file', { path: 'x' })] },
-        'assistant',
+        { kind: 'assistant' },
       ),
     ];
     subStore.saveSnapshot(s);
@@ -724,9 +724,9 @@ describe('resume：按 id 恢复子会话', () => {
             { type: 'image', source: { type: 'base64', media_type: 'image/png', data: ref } },
           ],
         },
-        'user',
+        { kind: 'user' },
       ),
-      stored({ role: 'assistant', content: '看到了' }, 'assistant'),
+      stored({ role: 'assistant', content: '看到了' }, { kind: 'assistant' }),
     ];
     subStore.saveSnapshot(s);
 
@@ -762,10 +762,10 @@ describe('resume：按 id 恢复子会话', () => {
 describe('repairToolPairing（尾部配对校验）', () => {
   it('末条 assistant 含未配对 tool_use → 补合成 tool_result，原条保留', () => {
     const messages: StoredMessage[] = [
-      stored({ role: 'user', content: 'q' }, 'user'),
+      stored({ role: 'user', content: 'q' }, { kind: 'user' }),
       stored(
         { role: 'assistant', content: [textBlock('看'), toolUseBlock('c1', 'read_file', {}), toolUseBlock('c2', 'grep', {})] },
-        'assistant',
+        { kind: 'assistant' },
       ),
     ];
     expect(repairToolPairing(messages)).toBe(2);
@@ -779,19 +779,19 @@ describe('repairToolPairing（尾部配对校验）', () => {
 
   it('部分配对：只补缺失的那个', () => {
     const messages: StoredMessage[] = [
-      stored({ role: 'user', content: 'q' }, 'user'),
+      stored({ role: 'user', content: 'q' }, { kind: 'user' }),
       stored(
         { role: 'assistant', content: [toolUseBlock('c1', 'read_file', {}), toolUseBlock('c2', 'grep', {})] },
-        'assistant',
+        { kind: 'assistant' },
       ),
       stored(
         {
           role: 'user',
           content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'ok' }],
         },
-        'user',
+        { kind: 'user' },
       ),
-      stored({ role: 'assistant', content: [toolUseBlock('c2', 'grep', {})] }, 'assistant'),
+      stored({ role: 'assistant', content: [toolUseBlock('c2', 'grep', {})] }, { kind: 'assistant' }),
     ];
     // c2 在中间条已配对（第二条 user 只答 c1？不——c2 未答；末条 assistant 的 c2 是孤儿）
     expect(repairToolPairing(messages)).toBe(1);
@@ -800,13 +800,13 @@ describe('repairToolPairing（尾部配对校验）', () => {
 
   it('末条非 assistant 或已配对 → 不动', () => {
     const clean: StoredMessage[] = [
-      stored({ role: 'user', content: 'q' }, 'user'),
-      stored({ role: 'assistant', content: [toolUseBlock('c1', 'read_file', {})] }, 'assistant'),
-      stored({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'ok' }] }, 'user'),
+      stored({ role: 'user', content: 'q' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [toolUseBlock('c1', 'read_file', {})] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'ok' }] }, { kind: 'user' }),
     ];
     expect(repairToolPairing(clean)).toBe(0);
     expect(clean).toHaveLength(3);
-    const textOnly: StoredMessage[] = [stored({ role: 'assistant', content: '纯文本' }, 'assistant')];
+    const textOnly: StoredMessage[] = [stored({ role: 'assistant', content: '纯文本' }, { kind: 'assistant' })];
     expect(repairToolPairing(textOnly)).toBe(0);
     expect(repairToolPairing([])).toBe(0);
   });

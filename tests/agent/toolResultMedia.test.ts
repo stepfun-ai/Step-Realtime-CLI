@@ -34,7 +34,7 @@ function toolResultMsg(imageData: string, text = '看图'): StoredMessage {
         },
       ],
     },
-    'tool',
+    { kind: 'tool' },
   );
 }
 
@@ -58,7 +58,7 @@ describe('ToolResult.images → tool_result 内嵌图片', () => {
       { textChunks: [], finalContent: [toolUseBlock('c1', 'fake_image_tool', {})] },
       { textChunks: ['完成'], finalContent: [textBlock('完成')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: '读图' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: '读图' }, { kind: 'user' })];
     const events = await collect(runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages }));
 
     // tool_end 事件只回 text 部分

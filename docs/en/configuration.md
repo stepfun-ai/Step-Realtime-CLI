@@ -14,8 +14,8 @@ Three ways to supply it, in priority order: environment variable > `.env` at the
 `.env` only fills in environment variables that are **not already set** (existing keys are never overwritten), so its real role is "a supplementary source for environment variables" rather than an independent third priority level. Only `KEY=VALUE` lines are parsed; comments and blank lines are ignored, and single or double quotes wrapping the value are stripped automatically.
 
 ```bash
-# Environment variables (STEP_CODE_API_KEY is preferred; when unset, the conventional
-# variable for the provider type is used as a fallback, so stepfun → STEPFUN_API_KEY still works)
+# Environment variables (the implicit provider recognizes only STEP_CODE_API_KEY;
+# the anthropic / openai protocols additionally recognize their conventional variables)
 export STEP_CODE_API_KEY=<your-key>
 
 # Optional overrides
@@ -105,24 +105,23 @@ api_key = "<your-key>"                # recommended for multi-provider setups: s
 | `api_key` | No | Provider-specific key (recommended for multi-provider setups); when omitted it falls back along the [key resolution priority](#key-resolution-priority) |
 | `api_key_env` | No | Indirect reference: stores only the environment variable name, keeping the secret off disk. Lower priority than `api_key`, higher than the conventional environment variables |
 
-When a provider sets neither `api_key` nor `api_key_env`, it falls back to the conventional environment variable for its `type`. Each protocol has its own widely used variable name, and reusing them lets an existing environment work with zero changes:
+When a provider sets neither `api_key` nor `api_key_env`, it falls back to the conventional environment variable for its `type`. These protocols have their own widely used variable names, and reusing them lets an existing environment work with zero changes:
 
 | Provider type | Conventional environment variable |
 |-----------|--------------|
-| `stepfun` | `STEPFUN_API_KEY` |
 | `anthropic` | `ANTHROPIC_API_KEY` |
 | `openai` / `openai_responses` | `OPENAI_API_KEY` |
 
-The built-in presets `stepfun` and `anthropic` always exist as implicit providers, and the `provider` field in `[models]` may point either at a custom provider id or directly at a built-in preset name, so older configs need no migration.
+The built-in presets `stepfun` and `anthropic` are only the carriers of the zero-config default policy: with no `[providers]` table at all, the top-level `provider` takes effect directly. The `provider` field in `[models]` may only point at a `[providers.<id>]` custom provider id or be omitted to inherit the top level; explicitly naming a built-in preset makes the alias invalid.
 
 ### Key resolution priority
 
 When each model alias is expanded, the first available key is taken along the chain for its branch (`env(X)` means reading the environment variable named X; an empty string counts as unset):
 
-- **Provider branch** (the alias `provider` points at a `[providers.<id>]` provider): provider `api_key` → env(provider `api_key_env`) → the conventional environment variable for the provider type → alias `api_key` → env(alias `api_key_env`) → the implicit provider key (`STEP_CODE_API_KEY` or the conventional environment variable for that branch's provider).
-- **Preset/inherited branch** (the alias `provider` points at a built-in preset name, or is omitted): alias `api_key` → env(alias `api_key_env`) → the conventional environment variable for that branch's provider (inherited from the top-level provider when the alias `provider` is omitted) → `STEP_CODE_API_KEY`.
+- **Provider branch** (the alias `provider` points at a `[providers.<id>]` provider): provider `api_key` → env(provider `api_key_env`) → the conventional environment variable for the provider type → alias `api_key` → env(alias `api_key_env`) → the implicit provider key (`STEP_CODE_API_KEY` or the conventional environment variable for the top-level provider).
+- **Inherited branch** (the alias `provider` is omitted): alias `api_key` → env(alias `api_key_env`) → the conventional environment variable for the top-level provider → `STEP_CODE_API_KEY`.
 
-The implicit provider key itself comes from `STEP_CODE_API_KEY` > the conventional environment variable for the current provider. `api_key` is no longer supported at the top level of config.toml. When no key is found anywhere along the chain, startup no longer fails; instead the provider constructor throws a "missing API key" error with configuration guidance.
+The implicit provider key itself comes from `STEP_CODE_API_KEY` (the anthropic / openai protocols additionally recognize their conventional environment variables). `api_key` is no longer supported at the top level of config.toml. When no key is found anywhere along the chain, startup no longer fails; instead the provider constructor throws a "missing API key" error with configuration guidance.
 
 > **Warning about mixing vendors**: the implicit provider key is the last fallback for every provider, so when a provider has no key of its own, that key is sent to that provider's endpoint. When mixing several vendors, always give each provider its own `api_key` or `api_key_env` so a key is never sent to the wrong vendor.
 
@@ -132,7 +131,7 @@ An alias packages "provider + model id + context window + display information" i
 
 ```toml
 [models."step-3.7-flash"]
-provider = "stepfun"                    # references a provider id or a built-in preset name
+# provider = "<provider-id>"           # optional: references a [providers.<id>] custom provider; defaults to the top-level provider
 model = "step-3.7-flash"
 max_context_size = 262144
 display_name = "Step 3.7 Flash"         # optional, used by the selector and the status bar
@@ -141,7 +140,7 @@ capabilities = ["thinking", "image_in"] # optional, see capabilities tags below
 
 | Field | Description |
 |------|------|
-| `provider` | A provider id or a built-in preset name; defaults to the top-level provider. If the id it points at is neither a declared provider nor a built-in preset name, the alias is invalid (it has no effect when expanded and falls back to the top-level configuration) |
+| `provider` | A `[providers.<id>]` custom provider id; defaults to the top-level provider. Explicitly naming a built-in preset (stepfun, anthropic, etc.) or pointing at an undeclared id makes the alias invalid (it has no effect when expanded and falls back to the top-level configuration) |
 | `model` | The real model id; when omitted it equals the alias itself |
 | `base_url` / `api_key` | Overrides the endpoint and credentials of the provider or the top level |
 | `api_key_env` | Indirect reference: stores only the environment variable name, keeping the secret off disk. For its position in the fallback chain, see [Key resolution priority](#key-resolution-priority) |
@@ -414,8 +413,7 @@ Only user-level global configuration is supported (`~/.step-code/config.toml`), 
 
 | Variable | Description |
 |------|------|
-| `STEP_CODE_API_KEY` | API key, highest priority |
-| `STEPFUN_API_KEY` | The conventional key variable when the top-level provider is `stepfun`; for other protocols, see the conventional variable table in [the provider table](#the-providersid-provider-table) |
+| `STEP_CODE_API_KEY` | API key; the only variable the implicit provider recognizes |
 | `ANTHROPIC_API_KEY` | The conventional key variable when the provider or provider type is `anthropic` |
 | `OPENAI_API_KEY` | The conventional key variable when the provider or provider type is `openai` / `openai_responses` |
 | `STEP_CODE_PROVIDER` | Provider; higher priority than config.toml, lower than `--provider` |

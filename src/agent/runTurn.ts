@@ -328,7 +328,7 @@ export async function* runTurn(
   }
   const usage = final.usage;
 
-  messages.push(stored({ role: 'assistant', content: final.content }, 'assistant'));
+  messages.push(stored({ role: 'assistant', content: final.content }, { kind: 'assistant' }));
 
   // 输出达 max_tokens 上限被截断：截断响应里的 tool_use 不执行——
   // 半截 JSON 参数可能解析出错误输入，执行有副作用风险。assistant 消息保留进历史，
@@ -457,7 +457,7 @@ export async function* runTurn(
     scheduler.drain();
     while (pendingStarts.length > 0) yield pendingStarts.shift()!;
   }
-  messages.push(stored({ role: 'user', content: toolResults }, 'tool'));
+  messages.push(stored({ role: 'user', content: toolResults }, { kind: 'tool' }));
 
   return { stopReason: userAborted ? 'aborted' : 'tool_use', usage };
 }
