@@ -5,7 +5,7 @@ import type { DisplayItem } from '../../src/tui/types.js';
 
 describe('extractUserText 抽回用户文本', () => {
   it('纯字符串 content 原样返回', () => {
-    const msg = stored({ role: 'user', content: '你好' }, 'user');
+    const msg = stored({ role: 'user', content: '你好' }, { kind: 'user' });
     expect(extractUserText(msg)).toBe('你好');
   });
 
@@ -18,7 +18,7 @@ describe('extractUserText 抽回用户文本', () => {
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'xxx' } },
         ],
       },
-      'user',
+      { kind: 'user' },
     );
     expect(extractUserText(msg)).toBe('看这张图');
   });
@@ -26,7 +26,7 @@ describe('extractUserText 抽回用户文本', () => {
   it('无文本块返回空串', () => {
     const msg = stored(
       { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'x' } }] },
-      'user',
+      { kind: 'user' },
     );
     expect(extractUserText(msg)).toBe('');
   });
@@ -35,10 +35,10 @@ describe('extractUserText 抽回用户文本', () => {
 describe('computeBacktrack 历史回退', () => {
   it('回滚最后一条 user 及其之后的全部历史，返回 prefill', () => {
     const history: StoredMessage[] = [
-      stored({ role: 'user', content: '第一条' }, 'user'),
-      stored({ role: 'assistant', content: '回复一' }, 'assistant'),
-      stored({ role: 'user', content: '第二条' }, 'user'),
-      stored({ role: 'assistant', content: '回复二' }, 'assistant'),
+      stored({ role: 'user', content: '第一条' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: '回复一' }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '第二条' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: '回复二' }, { kind: 'assistant' }),
     ];
     const res = computeBacktrack(history);
     expect(res).not.toBeNull();
@@ -50,22 +50,22 @@ describe('computeBacktrack 历史回退', () => {
   });
 
   it('只有一条 user 时回退成空历史', () => {
-    const history: StoredMessage[] = [stored({ role: 'user', content: '唯一' }, 'user')];
+    const history: StoredMessage[] = [stored({ role: 'user', content: '唯一' }, { kind: 'user' })];
     const res = computeBacktrack(history);
     expect(res!.history).toHaveLength(0);
     expect(res!.prefill).toBe('唯一');
   });
 
   it('无 user 消息返回 null', () => {
-    const history: StoredMessage[] = [stored({ role: 'assistant', content: '无主' }, 'assistant')];
+    const history: StoredMessage[] = [stored({ role: 'assistant', content: '无主' }, { kind: 'assistant' })];
     expect(computeBacktrack(history)).toBeNull();
     expect(computeBacktrack([])).toBeNull();
   });
 
   it('不修改传入数组（返回新切片）', () => {
     const history: StoredMessage[] = [
-      stored({ role: 'user', content: 'a' }, 'user'),
-      stored({ role: 'assistant', content: 'b' }, 'assistant'),
+      stored({ role: 'user', content: 'a' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: 'b' }, { kind: 'assistant' }),
     ];
     computeBacktrack(history);
     expect(history).toHaveLength(2);

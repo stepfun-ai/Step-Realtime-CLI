@@ -61,12 +61,6 @@ export const DEFAULT_CAPABILITY: ModelCapability = {
   max_output_tokens: 0,
 };
 
-/**
- * @deprecated 旧名保留仅为兼容既有引用；语义已从「全 false 兜底」改为
- * {@link DEFAULT_CAPABILITY}。新代码直接用 DEFAULT_CAPABILITY。
- */
-export const UNKNOWN_CAPABILITY: ModelCapability = DEFAULT_CAPABILITY;
-
 /** 能力查询结果：能力本体 + 来源标记（诊断展示用，不影响行为）。 */
 export interface ResolvedCapability extends ModelCapability {
   /** 声明来源：静态表 / config 覆盖 / 未命中兜底。 */

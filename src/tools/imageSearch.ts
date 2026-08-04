@@ -26,7 +26,7 @@ interface ImageSearchResponse {
 /**
  * 文搜图工具，接阶跃星辰官方文搜图接口（仅 Step Plan 通道提供）。
  * endpoint 按「[search.image] → [search] → 主会话渠道」解析；独立配置视为精确意图，
- * 兜底沿用主会话渠道归一化后拼 step_plan 路径（兼容旧行为）。图片数据来自百度搜图。
+ * 兜底沿用主会话渠道归一化后拼 step_plan 路径（零配置默认策略：缺省回退主会话渠道）。图片数据来自百度搜图。
  * 适合为文档 / 文章 / 演示稿检索配图素材。
  */
 export const imageSearchTool: ToolDef<z.infer<typeof schema>> = {

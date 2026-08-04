@@ -30,12 +30,12 @@ function bucketFiles(): string[] {
 describe('SessionStore.resume 检查点 + 尾段重放', () => {
   it('快照之后追加的尾段消息在 resume 时重放回 messages', () => {
     const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: '第一条' }, 'user');
+    const m1 = stored({ role: 'user', content: '第一条' }, { kind: 'user' });
     s.messages.push(m1);
     store.appendFull(cwd, s.id, [m1]);
     store.save(s); // 检查点覆盖到 metadata+m1
     // 模拟崩溃窗口：又一条消息进了事件日志，但没来得及 save
-    const m2 = stored({ role: 'assistant', content: '第二条' }, 'assistant');
+    const m2 = stored({ role: 'assistant', content: '第二条' }, { kind: 'assistant' });
     store.appendFull(cwd, s.id, [m2]);
 
     const result = store.resume(cwd, s.id)!;
@@ -73,7 +73,7 @@ describe('SessionStore.resume 检查点 + 尾段重放', () => {
         role: 'assistant',
         content: [{ type: 'tool_use', id: 'tu-1', name: 'bash', input: {} }],
       },
-      'assistant',
+      { kind: 'assistant' },
     );
     s.messages.push(dangling);
     store.appendFull(cwd, s.id, [dangling]);
@@ -91,12 +91,12 @@ describe('SessionStore.resume 检查点 + 尾段重放', () => {
 
   it('restore 无副作用契约：resume 不写盘、不产生新文件、重复调用结果一致', () => {
     const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: 'a' }, 'user');
+    const m1 = stored({ role: 'user', content: 'a' }, { kind: 'user' });
     s.messages.push(m1);
     store.appendFull(cwd, s.id, [m1]);
     store.save(s);
     store.appendWire(cwd, s.id, [
-      { type: 'context.append_message', ts: TS, message: stored({ role: 'assistant', content: 'b' }, 'assistant') },
+      { type: 'context.append_message', ts: TS, message: stored({ role: 'assistant', content: 'b' }, { kind: 'assistant' }) },
       { type: 'permission.set_mode', ts: TS, mode: 'auto' },
     ]);
 
@@ -118,23 +118,19 @@ describe('SessionStore.resume 检查点 + 尾段重放', () => {
     expect([...r2.deliveredNotifications]).toEqual([...r1.deliveredNotifications]);
   });
 
-  it('旧快照（无 wireSeq）+ 旧格式 full.jsonl：按消息 id 去重的兼容路径，不重复消息', () => {
+  it('旧快照（无 wireSeq）：忽略快照 messages，从空基底全量重放事件日志', () => {
     const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: '旧第一条' }, 'user');
-    const m2 = stored({ role: 'assistant', content: '旧第二条' }, 'assistant');
+    const m1 = stored({ role: 'user', content: '旧第一条' }, { kind: 'user' });
+    const m2 = stored({ role: 'assistant', content: '旧第二条' }, { kind: 'assistant' });
     s.messages.push(m1, m2);
-    store.save(s);
-    // 手工造旧格式日志：m1、m2（已在快照）+ m3（崩溃窗口没进快照）
-    const m3 = stored({ role: 'assistant', content: '崩溃前最后一条' }, 'assistant');
-    const lines = [m1, m2, m3].map((m) => JSON.stringify(m)).join('\n') + '\n';
-    writeFileSync(join(base, workdirKey(cwd), `${s.id}.full.jsonl`), lines, 'utf8');
+    store.save(s); // 无事件日志 → 快照无 wireSeq，不可作检查点
+    // 事件日志里只有崩溃窗口后的一条（不含快照里的 m1/m2）
+    const m3 = stored({ role: 'assistant', content: '崩溃前最后一条' }, { kind: 'assistant' });
+    store.appendWire(cwd, s.id, [{ type: 'context.append_message', ts: TS, message: m3 }]);
 
     const result = store.resume(cwd, s.id)!;
-    expect(result.session.messages.map((m) => m.message.content)).toEqual([
-      '旧第一条',
-      '旧第二条',
-      '崩溃前最后一条',
-    ]);
+    // 破坏性语义：旧快照 messages 不保留，事件才是事实源
+    expect(result.session.messages.map((m) => m.message.content)).toEqual(['崩溃前最后一条']);
   });
 
   it('已送达集合：delivered 事件与历史中的 background_task 通知消息都会回填', () => {
@@ -163,7 +159,7 @@ describe('SessionStore.resume 检查点 + 尾段重放', () => {
 
   it('无快照但有事件日志：从空基底全量重放', () => {
     const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: '只有日志' }, 'user');
+    const m1 = stored({ role: 'user', content: '只有日志' }, { kind: 'user' });
     store.appendWire(cwd, s.id, [
       { type: 'context.append_message', ts: TS, message: m1 },
       { type: 'permission.set_mode', ts: TS, mode: 'auto' },

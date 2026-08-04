@@ -43,7 +43,7 @@ describe('runAgent 后台通知 step 边界注入', () => {
     const background = new BackgroundManager(10);
     // 任务随循环启动即 resolve：微任务在第 1 回合流式期间完成 → 第 1 回合结束后处于待投递队列
     background.startTask('npm test', Promise.resolve({ output: 'all passed', ok: true }));
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
     const wireEvents: import('../../src/agent/wirelog.js').WireEvent[] = [];
 
     const events = await collect(
@@ -79,7 +79,7 @@ describe('runAgent 后台通知 step 边界注入', () => {
     const background = new BackgroundManager(10);
     background.startTask('任务甲', Promise.resolve({ output: 'A', ok: true }));
     background.startTask('任务乙', Promise.resolve({ output: 'B', ok: false }));
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
 
     await collect(runAgent(runOpts(provider, messages, background, true)));
 
@@ -96,7 +96,7 @@ describe('runAgent 后台通知 step 边界注入', () => {
     const { provider, streamParams } = twoTurnProvider();
     const background = new BackgroundManager(10);
     background.startTask('npm test', Promise.resolve({ output: 'all passed', ok: true }));
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
 
     await collect(runAgent(runOpts(provider, messages, background, false)));
 
@@ -110,7 +110,7 @@ describe('runAgent 后台通知 step 边界注入', () => {
     const id = background.startTask('长任务', new Promise(() => {}));
     background.suppressNotification(id);
     background.stop(id); // 同步置 killed，settle 时被抑制跳过
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
 
     await collect(runAgent(runOpts(provider, messages, background, true)));
 

@@ -15,7 +15,7 @@ const emptyStreamErr = () =>
   new AnthropicSDK.AnthropicError('stream ended without producing a Message with role=assistant');
 
 function sm(text: string): StoredMessage {
-  return stored({ role: 'user', content: text }, 'user');
+  return stored({ role: 'user', content: text }, { kind: 'user' });
 }
 
 describe('空流/空响应的错误分类', () => {

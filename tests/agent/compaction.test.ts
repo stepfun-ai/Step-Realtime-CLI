@@ -24,7 +24,7 @@ function summaryOf(out: StoredMessage[]): StoredMessage {
 }
 
 function toolResultMsg(id: string, content: string): StoredMessage {
-  return stored({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] }, 'tool');
+  return stored({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] }, { kind: 'tool' });
 }
 
 /**
@@ -45,7 +45,7 @@ function imageMsg(data: string): StoredMessage {
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
       ],
     },
-    'user',
+    { kind: 'user' },
   );
 }
 
@@ -86,14 +86,14 @@ describe('estimateTextTokens', () => {
 describe('estimateTokens', () => {
   it('随内容增大而增大，空历史为 0', () => {
     expect(estimateTokens([])).toBe(0);
-    const small = estimateTokens([stored({ role: 'user', content: 'hi' }, 'user')]);
-    const big = estimateTokens([stored({ role: 'user', content: 'x'.repeat(3000) }, 'user')]);
+    const small = estimateTokens([stored({ role: 'user', content: 'hi' }, { kind: 'user' })]);
+    const big = estimateTokens([stored({ role: 'user', content: 'x'.repeat(3000) }, { kind: 'user' })]);
     expect(big).toBeGreaterThan(small);
   });
 
   it('图片块按固定常数（1500）估算，与 base64/stepref 字符数无关', () => {
     const textOnly = estimateTokens([
-      stored({ role: 'user', content: [{ type: 'text', text: '看图' }] }, 'user'),
+      stored({ role: 'user', content: [{ type: 'text', text: '看图' }] }, { kind: 'user' }),
     ]);
     const expected = textOnly + 1500; // PER_IMAGE_TOKENS（compact.ts 内部常数）
     const big = imageMsg(Buffer.alloc(4000, 7).toString('base64'));
@@ -172,7 +172,7 @@ describe('microCompact', () => {
     const msgs: StoredMessage[] = [
       bigToolResultMsg('a', 'OLD-A'),
       bigToolResultMsg('b', 'OLD-B'),
-      stored({ role: 'assistant', content: [textBlock('中间')] }, 'assistant'),
+      stored({ role: 'assistant', content: [textBlock('中间')] }, { kind: 'assistant' }),
       toolResultMsg('c', 'RECENT-C'),
     ];
     const { messages, clearedCount } = microCompact(msgs, 2);
@@ -255,13 +255,13 @@ describe('fullCompact', () => {
       { textChunks: [], finalContent: [textBlock('摘要：用户建了文件 X，代号 ORION。')] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '建文件' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('好的')] }, 'assistant'),
-      stored({ role: 'user', content: '代号 ORION' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('记住了')] }, 'assistant'),
-      stored({ role: 'user', content: '最近1' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('最近2')] }, 'assistant'),
-      stored({ role: 'user', content: '最近3' }, 'user'),
+      stored({ role: 'user', content: '建文件' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好的')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '代号 ORION' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('记住了')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 2);
     const summary = summaryOf(out);
@@ -275,12 +275,12 @@ describe('fullCompact', () => {
       { textChunks: [], finalContent: [textBlock('早期摘要正文')] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '开始任务' }, 'user'),
-      stored({ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'read', input: {} }] }, 'assistant'),
-      stored({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'r1' }] }, 'tool'),
-      stored({ role: 'assistant', content: [textBlock('读完了')] }, 'assistant'),
-      stored({ role: 'user', content: '继续' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('好')] }, 'assistant'),
+      stored({ role: 'user', content: '开始任务' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'read', input: {} }] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'r1' }] }, { kind: 'tool' }),
+      stored({ role: 'assistant', content: [textBlock('读完了')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '继续' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好')] }, { kind: 'assistant' }),
     ];
     // keepRecent=4 → desired cutoff = 2，正落在 tool_result 上 → safeCutoff 挪到 3
     const out = await fullCompact(provider, msgs, 4);
@@ -296,7 +296,7 @@ describe('fullCompact', () => {
 
   it('历史过短时原样返回', async () => {
     const { provider } = makeFakeProvider([]);
-    const msgs: StoredMessage[] = [stored({ role: 'user', content: 'hi' }, 'user')];
+    const msgs: StoredMessage[] = [stored({ role: 'user', content: 'hi' }, { kind: 'user' })];
     const out = await fullCompact(provider, msgs, 6);
     expect(out).toEqual(msgs);
   });
@@ -304,10 +304,10 @@ describe('fullCompact', () => {
   it('摘要失败时原样返回（不丢历史）', async () => {
     const { provider } = makeFakeProvider([{ throw: new Error('boom') }]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: 'a' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('b')] }, 'assistant'),
-      stored({ role: 'user', content: 'c' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('d')] }, 'assistant'),
+      stored({ role: 'user', content: 'a' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('b')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: 'c' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('d')] }, { kind: 'assistant' }),
     ];
     const out = await fullCompact(provider, msgs, 2);
     expect(out).toBe(msgs); // 同引用 = 未压缩
@@ -318,11 +318,11 @@ describe('fullCompact', () => {
       { textChunks: [], finalContent: [textBlock('摘要正文')] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '开始' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('好')] }, 'assistant'),
-      stored({ role: 'user', content: '最近1' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('最近2')] }, 'assistant'),
-      stored({ role: 'user', content: '最近3' }, 'user'),
+      stored({ role: 'user', content: '开始' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 2, [
       { title: '实现登录', status: 'in_progress' },
@@ -339,10 +339,10 @@ describe('fullCompact', () => {
     ]);
     const msgs: StoredMessage[] = [
       imageMsg('stepref:abcd1234ef567890'),
-      stored({ role: 'assistant', content: [textBlock('看到了')] }, 'assistant'),
-      stored({ role: 'user', content: '最近1' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('最近2')] }, 'assistant'),
-      stored({ role: 'user', content: '最近3' }, 'user'),
+      stored({ role: 'assistant', content: [textBlock('看到了')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
     ];
     await fullCompact(provider, msgs, 2);
     const prompt = (streamParams()[0]!['messages'] as Array<{ content: string }>)[0]!.content;
@@ -355,11 +355,11 @@ describe('fullCompact', () => {
       { textChunks: [], finalContent: [textBlock('早期摘要')] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '开始' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('好')] }, 'assistant'),
-      stored({ role: 'user', content: '最近1' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('最近2')] }, 'assistant'),
-      stored({ role: 'user', content: '最近3' }, 'user'),
+      stored({ role: 'user', content: '开始' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 2, undefined, 'step-flash');
     expect(summaryOf(out).origin.kind).toBe('compaction_summary');
@@ -371,11 +371,11 @@ describe('fullCompact', () => {
       { textChunks: [], finalContent: [textBlock('早期摘要')] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '开始' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('好')] }, 'assistant'),
-      stored({ role: 'user', content: '最近1' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('最近2')] }, 'assistant'),
-      stored({ role: 'user', content: '最近3' }, 'user'),
+      stored({ role: 'user', content: '开始' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
     ];
     await fullCompact(provider, msgs, 2);
     expect(streamParams()[0]!['model']).toBeUndefined();
@@ -416,9 +416,9 @@ describe('isCompactableUserOrigin（对象 origin 的 kind 判定表）', () => 
 describe('selectCompactionUserMessages', () => {
   it('预算充足时全留在 tail，且 origin 落成 user_verbatim（可跨轮继承）', () => {
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '第一条' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('回应')] }, 'assistant'),
-      stored({ role: 'user', content: '第二条' }, 'user'),
+      stored({ role: 'user', content: '第一条' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('回应')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '第二条' }, { kind: 'user' }),
     ];
     const sel = selectCompactionUserMessages(msgs);
     expect(sel.head).toEqual([]);
@@ -430,12 +430,12 @@ describe('selectCompactionUserMessages', () => {
 
   it('收 user 与 user_verbatim，排除 tool / injection / 摘要 / assistant', () => {
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '真实输入' }, 'user'),
-      stored({ role: 'user', content: '上一轮保真下来的原话' }, 'user_verbatim'),
+      stored({ role: 'user', content: '真实输入' }, { kind: 'user' }),
+      stored({ role: 'user', content: '上一轮保真下来的原话' }, { kind: 'user_verbatim' }),
       toolResultMsg('t1', '工具结果'),
-      stored({ role: 'user', content: '<system-reminder>注入</system-reminder>' }, 'injection'),
-      stored({ role: 'user', content: '[早期对话摘要] 旧摘要' }, 'compaction_summary'),
-      stored({ role: 'assistant', content: [textBlock('模型的话')] }, 'assistant'),
+      stored({ role: 'user', content: '<system-reminder>注入</system-reminder>' }, { kind: 'injection' }),
+      stored({ role: 'user', content: '[早期对话摘要] 旧摘要' }, { kind: 'compaction_summary' }),
+      stored({ role: 'assistant', content: [textBlock('模型的话')] }, { kind: 'assistant' }),
     ];
     const sel = selectCompactionUserMessages(msgs);
     expect(sel.tail.map((m) => m.message.content)).toEqual(['真实输入', '上一轮保真下来的原话']);
@@ -443,10 +443,10 @@ describe('selectCompactionUserMessages', () => {
 
   it('纯确认语不占预算（避免稀释注意力）', () => {
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '关键请求：路径在 /tmp/x' }, 'user'),
-      stored({ role: 'user', content: '继续' }, 'user'),
-      stored({ role: 'user', content: '好的' }, 'user'),
-      stored({ role: 'user', content: '再继续' }, 'user'),
+      stored({ role: 'user', content: '关键请求：路径在 /tmp/x' }, { kind: 'user' }),
+      stored({ role: 'user', content: '继续' }, { kind: 'user' }),
+      stored({ role: 'user', content: '好的' }, { kind: 'user' }),
+      stored({ role: 'user', content: '再继续' }, { kind: 'user' }),
     ];
     const sel = selectCompactionUserMessages(msgs);
     // 「再继续」不在词表里（只有「继续」是），故保留；「继续」「好的」被滤掉
@@ -455,10 +455,10 @@ describe('selectCompactionUserMessages', () => {
 
   it('预算不足时保最早 + 最近，中段丢弃并计入 omittedTokens', () => {
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: `A${'a'.repeat(399)}` }, 'user'), // 每条 ≈100 token
-      stored({ role: 'user', content: `B${'b'.repeat(399)}` }, 'user'),
-      stored({ role: 'user', content: `C${'c'.repeat(399)}` }, 'user'),
-      stored({ role: 'user', content: `D${'d'.repeat(399)}` }, 'user'),
+      stored({ role: 'user', content: `A${'a'.repeat(399)}` }, { kind: 'user' }), // 每条 ≈100 token
+      stored({ role: 'user', content: `B${'b'.repeat(399)}` }, { kind: 'user' }),
+      stored({ role: 'user', content: `C${'c'.repeat(399)}` }, { kind: 'user' }),
+      stored({ role: 'user', content: `D${'d'.repeat(399)}` }, { kind: 'user' }),
     ];
     const sel = selectCompactionUserMessages(msgs, 250, 100);
     expect(sel.elided).toBe(true);
@@ -470,7 +470,7 @@ describe('selectCompactionUserMessages', () => {
 
   it('单条超预算时按方向截断：最近消息留结尾并带截断标记', () => {
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: `${'X'.repeat(400)}关键收尾诉求` }, 'user'),
+      stored({ role: 'user', content: `${'X'.repeat(400)}关键收尾诉求` }, { kind: 'user' }),
     ];
     const sel = selectCompactionUserMessages(msgs, 40, 0);
     expect(sel.tail).toHaveLength(1);
@@ -481,7 +481,7 @@ describe('selectCompactionUserMessages', () => {
 
   it('大 paste 的丢弃前缀回收进 head：头尾都保住，只丢中间', () => {
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: `任务定义在开头${'M'.repeat(2000)}关键收尾在结尾` }, 'user'),
+      stored({ role: 'user', content: `任务定义在开头${'M'.repeat(2000)}关键收尾在结尾` }, { kind: 'user' }),
     ];
     // 单条远超预算：tail 留结尾、被截掉的前缀回收进 head 留开头
     const sel = selectCompactionUserMessages(msgs, 100, 40);
@@ -493,7 +493,7 @@ describe('selectCompactionUserMessages', () => {
   });
 
   it('预算为 0 时返回空选择（等于关闭保真）', () => {
-    const msgs: StoredMessage[] = [stored({ role: 'user', content: '任何内容' }, 'user')];
+    const msgs: StoredMessage[] = [stored({ role: 'user', content: '任何内容' }, { kind: 'user' })];
     const sel = selectCompactionUserMessages(msgs, 0);
     expect(sel).toEqual({ head: [], tail: [], elided: false, omittedTokens: 0 });
   });
@@ -513,7 +513,7 @@ describe('createElisionMessage', () => {
 describe('fullCompact 用户原话保真', () => {
   /** 模拟真实历史里的长 assistant 输出（让 older 段以模型产出为主，用户原话占比低于守卫阈值）。 */
   function bulkAssistant(tag: string): StoredMessage {
-    return stored({ role: 'assistant', content: [textBlock(`${tag} ${'详细分析内容'.repeat(40)}`)] }, 'assistant');
+    return stored({ role: 'assistant', content: [textBlock(`${tag} ${'详细分析内容'.repeat(40)}`)] }, { kind: 'assistant' });
   }
 
   /**
@@ -529,13 +529,13 @@ describe('fullCompact 用户原话保真', () => {
       { textChunks: [], finalContent: [textBlock('我已经确认了路径并改完了配置。')] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '项目在 C:/proj/step-code-suite 这个哈' }, 'user'),
+      stored({ role: 'user', content: '项目在 C:/proj/step-code-suite 这个哈' }, { kind: 'user' }),
       bulkAssistant('A1'),
-      stored({ role: 'user', content: '代号 ORION，别写成 ORLON' }, 'user'),
+      stored({ role: 'user', content: '代号 ORION，别写成 ORLON' }, { kind: 'user' }),
       bulkAssistant('A2'),
-      stored({ role: 'user', content: '最近1' }, 'user'),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
       bulkAssistant('A3'),
-      stored({ role: 'user', content: '最近3' }, 'user'),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 2);
     const verbatim = out.filter((m) => m.origin.kind === 'user_verbatim');
@@ -555,12 +555,12 @@ describe('fullCompact 用户原话保真', () => {
       makeFakeProvider([{ textChunks: [], finalContent: [textBlock('细节我已了解，继续推进。')] }]).provider;
     const SECRET = 'C:/proj/very-specific-path';
     let history: StoredMessage[] = [
-      stored({ role: 'user', content: `项目在 ${SECRET} 这个哈` }, 'user'),
+      stored({ role: 'user', content: `项目在 ${SECRET} 这个哈` }, { kind: 'user' }),
       bulkAssistant('A1'),
-      stored({ role: 'user', content: '注意 key 在 keys.json' }, 'user'),
+      stored({ role: 'user', content: '注意 key 在 keys.json' }, { kind: 'user' }),
       bulkAssistant('A2'),
       bulkAssistant('A3'),
-      stored({ role: 'user', content: '第一轮末尾' }, 'user'),
+      stored({ role: 'user', content: '第一轮末尾' }, { kind: 'user' }),
     ];
     history = await fullCompact(mkProvider(), history, 2);
     expect(history.some((m) => (m.message.content as string).includes?.(SECRET))).toBe(true);
@@ -569,9 +569,9 @@ describe('fullCompact 用户原话保真', () => {
     history = [
       ...history,
       bulkAssistant('B1'),
-      stored({ role: 'user', content: '现在改压缩逻辑' }, 'user'),
+      stored({ role: 'user', content: '现在改压缩逻辑' }, { kind: 'user' }),
       bulkAssistant('B2'),
-      stored({ role: 'user', content: '第二轮末尾' }, 'user'),
+      stored({ role: 'user', content: '第二轮末尾' }, { kind: 'user' }),
     ];
     history = await fullCompact(mkProvider(), history, 2);
 
@@ -587,11 +587,11 @@ describe('fullCompact 用户原话保真', () => {
     ]);
     // older 段几乎全是用户原话（assistant 极短）→ 占比超阈值 → 不保真
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: `长请求 ${'内容'.repeat(80)}` }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('好')] }, 'assistant'),
-      stored({ role: 'user', content: `再一条 ${'内容'.repeat(80)}` }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('嗯')] }, 'assistant'),
-      stored({ role: 'user', content: '最近' }, 'user'),
+      stored({ role: 'user', content: `长请求 ${'内容'.repeat(80)}` }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: `再一条 ${'内容'.repeat(80)}` }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('嗯')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 2);
     expect(out.some((m) => m.origin.kind === 'user_verbatim')).toBe(false);
@@ -603,11 +603,11 @@ describe('fullCompact 用户原话保真', () => {
       { textChunks: [], finalContent: [textBlock('纯摘要正文')] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '早期请求' }, 'user'),
+      stored({ role: 'user', content: '早期请求' }, { kind: 'user' }),
       bulkAssistant('A1'),
-      stored({ role: 'user', content: '最近1' }, 'user'),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
       bulkAssistant('A2'),
-      stored({ role: 'user', content: '最近3' }, 'user'),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 2, undefined, undefined, { maxTokens: 0 });
     expect(out.some((m) => m.origin.kind === 'user_verbatim')).toBe(false);
@@ -619,12 +619,12 @@ describe('fullCompact 用户原话保真', () => {
       { textChunks: [], finalContent: [textBlock(longSummary('摘要'))] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: 'OLD-ONLY-IN-VERBATIM' }, 'user'),
+      stored({ role: 'user', content: 'OLD-ONLY-IN-VERBATIM' }, { kind: 'user' }),
       bulkAssistant('A1'),
       bulkAssistant('A2'),
-      stored({ role: 'user', content: 'RECENT-KEPT-AS-IS' }, 'user'),
+      stored({ role: 'user', content: 'RECENT-KEPT-AS-IS' }, { kind: 'user' }),
       bulkAssistant('A3'),
-      stored({ role: 'user', content: 'RECENT-LAST' }, 'user'),
+      stored({ role: 'user', content: 'RECENT-LAST' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 3);
     const verbatimTexts = out.filter((m) => m.origin.kind === 'user_verbatim').map((m) => m.message.content);
@@ -639,10 +639,10 @@ describe('fullCompact 用户原话保真', () => {
       { textChunks: [], finalContent: [textBlock(longSummary('摘要'))] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '早期关键请求：路径 /tmp/x' }, 'user'),
+      stored({ role: 'user', content: '早期关键请求：路径 /tmp/x' }, { kind: 'user' }),
       bulkAssistant('A1'),
       bulkAssistant('A2'),
-      stored({ role: 'user', content: '最近的真人输入' }, 'user'),
+      stored({ role: 'user', content: '最近的真人输入' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 1);
     // 保真消息用 user_verbatim，故 turns.ts / backtrack.ts 的 `=== 'user'` 判断不会命中它
@@ -655,11 +655,11 @@ describe('fullCompact 用户原话保真', () => {
       { textChunks: [], finalContent: [textBlock('摘要')] },
     ]);
     const msgs: StoredMessage[] = [
-      stored({ role: 'user', content: '开始' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('好')] }, 'assistant'),
-      stored({ role: 'user', content: '最近1' }, 'user'),
-      stored({ role: 'assistant', content: [textBlock('最近2')] }, 'assistant'),
-      stored({ role: 'user', content: '最近3' }, 'user'),
+      stored({ role: 'user', content: '开始' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
     ];
     await fullCompact(provider, msgs, 2);
     const params = streamParams()[0]!;

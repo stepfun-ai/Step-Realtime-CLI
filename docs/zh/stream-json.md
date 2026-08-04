@@ -12,7 +12,7 @@ step -p "读一下 README 并总结" --output-format stream-json --yolo
 {"type":"tool_end","id":"tu_1","name":"read_file","result":"...","isError":false}
 {"type":"usage","totalTokens":19414,"measuredLength":2,"billedDelta":19414}
 {"type":"turn_done"}
-{"role":"meta","type":"session.resume_hint","session_id":"20260802-abc","command":"step -r 20260802-abc","content":"To resume this session: step -r 20260802-abc"}
+{"type":"session.resume_hint","session_id":"20260802-abc","command":"step -r 20260802-abc","content":"To resume this session: step -r 20260802-abc"}
 ```
 
 ## 信封契约
@@ -36,7 +36,7 @@ for line in proc.stdout:
 
 ## 版本与兼容
 
-`STREAM_JSON_PROTOCOL_VERSION` 当前为 **1**。
+`STREAM_JSON_PROTOCOL_VERSION` 当前为 **2**（v2 起 `session.resume_hint` 的 meta 信封不再带 `role` 字段，只认 `type` 判别）。
 
 递增规则明确划两类：
 
@@ -99,8 +99,6 @@ for line in proc.stdout:
 | type | 说明 |
 |------|------|
 | `session.resume_hint` | 运行结束时发出，带 `session_id` 与 `command`，用于续接本次会话 |
-
-> 该事件目前还带一个 `role: "meta"` 字段，属**历史遗留、已废弃**，下个 breaking 版本移除。请只用 `type` 判别。
 
 ## 错误处理
 

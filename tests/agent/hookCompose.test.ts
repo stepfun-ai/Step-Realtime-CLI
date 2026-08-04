@@ -57,7 +57,7 @@ describe('composeLoopHooks 接入点', () => {
       { textChunks: [], finalContent: [toolUseBlock('c1', 'write_file', { path: 'x', content: 'y' })] },
       { textChunks: ['明白，我不写了'], finalContent: [textBlock('明白，我不写了')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: '写文件' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: '写文件' }, { kind: 'user' })];
     const hooks = composeLoopHooks(engine, {});
     const events = await collect(runAgent(base(provider, messages, hooks)));
 
@@ -83,7 +83,7 @@ describe('composeLoopHooks 接入点', () => {
       { textChunks: [], finalContent: [toolUseBlock('c1', 'write_file', { path: 'x', content: 'y' })] },
       { textChunks: ['好'], finalContent: [textBlock('好')] },
     ]);
-    const messages1: StoredMessage[] = [stored({ role: 'user', content: '写' }, 'user')];
+    const messages1: StoredMessage[] = [stored({ role: 'user', content: '写' }, { kind: 'user' })];
     const events1 = await collect(
       runAgent(base(denied.provider, messages1, composeLoopHooks(engine, denyBase))),
     );
@@ -96,7 +96,7 @@ describe('composeLoopHooks 接入点', () => {
       { textChunks: [], finalContent: [toolUseBlock('c1', 'list_dir', {})] },
       { textChunks: ['列完了'], finalContent: [textBlock('列完了')] },
     ]);
-    const messages2: StoredMessage[] = [stored({ role: 'user', content: 'ls' }, 'user')];
+    const messages2: StoredMessage[] = [stored({ role: 'user', content: 'ls' }, { kind: 'user' })];
     const events2 = await collect(
       runAgent(base(allowed.provider, messages2, composeLoopHooks(engine, {}))),
     );
@@ -116,7 +116,7 @@ describe('composeLoopHooks 接入点', () => {
       { textChunks: [], finalContent: [toolUseBlock('c1', 'list_dir', {})] },
       { textChunks: ['done'], finalContent: [textBlock('done')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'ls' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'ls' }, { kind: 'user' })];
     const events = await collect(
       runAgent(base(provider, messages, composeLoopHooks(engine, {}))),
     );
@@ -135,7 +135,7 @@ describe('composeLoopHooks 接入点', () => {
     const { provider, streamCalls } = makeFakeProvider([
       { textChunks: ['第一段'], finalContent: [textBlock('第一段')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
     const hooks = composeLoopHooks(engine, {});
     const events = await collect(runAgent(base(provider, messages, hooks)));
 
@@ -157,7 +157,7 @@ describe('composeLoopHooks 接入点', () => {
       { textChunks: ['二'], finalContent: [textBlock('二')] },
       { textChunks: ['三'], finalContent: [textBlock('三')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
     const hooks = composeLoopHooks(engine, {});
     // 第一轮：Stop 阻断 → continuation
     const ev1 = await collect(runAgent(base(provider, messages, hooks)));
@@ -180,7 +180,7 @@ describe('composeLoopHooks 接入点', () => {
     const { provider, streamCalls } = makeFakeProvider([
       { textChunks: ['一'], finalContent: [textBlock('一')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
     const blockedBase: LoopHooks = {
       shouldContinueAfterStop: () => null,
     };
@@ -201,7 +201,7 @@ describe('composeLoopHooks 接入点', () => {
       { textChunks: ['三'], finalContent: [textBlock('三')] },
       { textChunks: ['四'], finalContent: [textBlock('四')] },
     ]);
-    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, 'user')];
+    const messages: StoredMessage[] = [stored({ role: 'user', content: 'go' }, { kind: 'user' })];
 
     // base 模拟 goal 轮次预算：最多允许 2 次续接
     let turns = 0;
