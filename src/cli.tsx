@@ -51,7 +51,7 @@ import { registerDynamicTool } from './tools/index.js';
 import { createProvider } from './provider/factory.js';
 import { resolveCompactionBinding } from './provider/compaction.js';
 import type { ChatProvider } from './provider/types.js';
-import { SessionStore, deriveTitle, type ResumeResult, type SessionData } from './session/store.js';
+import { SessionStore, deriveTitle, type SessionData } from './session/store.js';
 import { resumeHintMeta, resumeHintText } from './session/resumeHint.js';
 import {
   subagentTextLine,
@@ -445,24 +445,17 @@ async function pickSession(): Promise<string | null> {
 }
 
 /**
- * 会话恢复入口：优先走 store.resume（快照检查点 + wire.jsonl 尾段重放）；
- * 重放异常或会话不存在时回退旧 load 路径（纯快照读取），保证旧格式会话永远打得开。
- * 返回会话与「已送达通知」幂等键集合（供后台任务对账补投判定）；回退路径集合为空（不补投，行为同旧版）。
+ * 会话恢复入口：store.resume（快照检查点 + wire.jsonl 尾段重放）。
+ * 重放异常直接抛出（响亮失败），不再回退旧 load 路径——旧格式会话不再保证打得开。
+ * 返回会话与「已送达通知」幂等键集合（供后台任务对账补投判定）；会话不存在返回 null。
  */
-function resumeWithFallback(
+function resumeSession(
   store: SessionStore,
   cwd: string,
   id: string,
 ): { session: SessionData; delivered: ReadonlySet<string> } | null {
-  let r: ResumeResult | null = null;
-  try {
-    r = store.resume(cwd, id);
-  } catch {
-    r = null; // 落回旧路径
-  }
-  if (r !== null) return { session: r.session, delivered: r.deliveredNotifications };
-  const data = store.load(cwd, id);
-  return data === null ? null : { session: data, delivered: new Set() };
+  const r = store.resume(cwd, id);
+  return r === null ? null : { session: r.session, delivered: r.deliveredNotifications };
 }
 
 const resolveResume = (r: { session: SessionData; delivered: ReadonlySet<string> } | null): { session: SessionData; delivered: ReadonlySet<string> } =>
@@ -471,21 +464,21 @@ let resolved: { session: SessionData; delivered: ReadonlySet<string> };
 if (opts.resume !== undefined) {
   if (typeof opts.resume === 'string') {
     // 带 id：直接恢复；找不到则新建
-    resolved = resolveResume(resumeWithFallback(store, cwd, opts.resume));
+    resolved = resolveResume(resumeSession(store, cwd, opts.resume));
   } else if (process.stdin.isTTY) {
     // 无 id + TTY：弹交互选择器
     const picked = await pickSession();
-    resolved = resolveResume(picked !== null ? resumeWithFallback(store, cwd, picked) : null);
+    resolved = resolveResume(picked !== null ? resumeSession(store, cwd, picked) : null);
   } else {
     // 无 id + 非 TTY（管道/CI）：退回最近一个（等同 -c）
     const newest = store.list(cwd)[0];
-    resolved = resolveResume(newest !== undefined ? resumeWithFallback(store, cwd, newest.id) : null);
+    resolved = resolveResume(newest !== undefined ? resumeSession(store, cwd, newest.id) : null);
   }
 } else if (opts.session !== undefined) {
-  resolved = resolveResume(resumeWithFallback(store, cwd, opts.session));
+  resolved = resolveResume(resumeSession(store, cwd, opts.session));
 } else if (opts.continue === true) {
   const newest = store.list(cwd)[0];
-  resolved = resolveResume(newest !== undefined ? resumeWithFallback(store, cwd, newest.id) : null);
+  resolved = resolveResume(newest !== undefined ? resumeSession(store, cwd, newest.id) : null);
 } else {
   resolved = resolveResume(null);
 }
@@ -603,11 +596,11 @@ async function runPrint(prompt: string): Promise<void> {
       return;
     }
     if (up.stdout !== '') {
-      session.messages.push(stored({ role: 'user', content: up.stdout }, 'user'));
+      session.messages.push(stored({ role: 'user', content: up.stdout }, { kind: 'user' }));
     }
   }
 
-  session.messages.push(stored({ role: 'user', content: prompt }, 'user'));
+  session.messages.push(stored({ role: 'user', content: prompt }, { kind: 'user' }));
 
   // 软阈值自动微压缩，避免续接的长会话在首次请求前就超限（循环内压缩与溢出兜底为后续保障）
   if (estimateTokens(session.messages) > config.maxContextSize * 0.6) {
@@ -786,7 +779,7 @@ async function runPrint(prompt: string): Promise<void> {
   try {
     do {
       if (pendingInject !== null) {
-        session.messages.push(stored({ role: 'user', content: pendingInject }, 'user'));
+        session.messages.push(stored({ role: 'user', content: pendingInject }, { kind: 'user' }));
         pendingInject = null;
       }
       for await (const ev of runOnce()) {

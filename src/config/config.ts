@@ -95,7 +95,7 @@ export interface BackgroundConfig {
  *
  * 三层结构：[search] 是通用兜底，[search.web] / [search.image] 分别覆盖内容搜索与文搜图。
  * 字段全部可选，缺省键不进结果对象。消费方按「专用段 → 通用段 → 主会话渠道」的优先级解析，
- * 最终都缺时回退主会话 provider（向后兼容兜底，见工具内注释）。
+ * 最终都缺时缺省回退主会话渠道（零配置默认策略，见工具内注释）。
  *
  * url 是「已含协议路径」的完整 Base URL，工具只在末尾拼 /search 或 /search-image，
  * 不做 resolveSearchBaseUrl 式裁剪——独立配置视为用户的精确意图。
@@ -151,7 +151,7 @@ export interface ThinkingConfig {
  * 缺省项在 {@link resolveModelEntry} 合并时继承渠道与顶层配置。
  */
 export interface ModelEntry {
-  /** 渠道 id（[providers.<id>] 自定义渠道）或内置预设名（stepfun/anthropic）；缺省继承顶层 provider。 */
+  /** 渠道 id（[providers.<id>] 自定义渠道）；缺省继承顶层 provider。显式写内置预设名视为无效别名。 */
   provider?: string;
   /** 真实模型 id；缺省 = 别名本身。 */
   model?: string;
@@ -316,11 +316,9 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   openai_responses: { protocol: 'openai_responses', baseUrl: `${DEFAULT_BASE_URL}/v1`, model: DEFAULT_MODEL, sendThinking: false },
 };
 
-/** 渠道 type 对应的惯例 API key 环境变量名（每种协议各有被广泛使用的变量名）；无惯例 → undefined。 */
+/** 渠道 type 对应的惯例 API key 环境变量名（协议层被广泛使用的变量名）；无惯例 → undefined。 */
 export function conventionalApiKeyEnvVar(providerType: string): string | undefined {
   switch (providerType) {
-    case 'stepfun':
-      return 'STEPFUN_API_KEY';
     case 'anthropic':
       return 'ANTHROPIC_API_KEY';
     case 'openai':
@@ -901,21 +899,22 @@ export function resolveHooks(raw: unknown): HookConfigEntry[] | undefined {
 /**
  * 按别名展开模型配置：name 命中 config.models 时返回合并后的新配置，未命中返回 null。
  *
- * entry.provider 的三种指向（优先级从高到低）：
+ * entry.provider 的合法指向：
  * 1. 自定义渠道 id（config.providers）：结果 provider = 渠道 type（协议 key），
  *    baseUrl 取自渠道，渠道缺省回落 entry → 顶层；渠道与 entry 都没给 baseUrl
  *    且 type 与顶层 provider 不同时，回落 type 预设的 baseUrl。
- * 2. 内置预设名（stepfun/anthropic，作为隐式渠道保留）：走原有预设回落逻辑，旧配置零迁移。
- * 3. 都未命中 → 无效别名，返回 null。
- * entry.provider 缺省时继承顶层 provider（原有行为）。entry 其余字段覆盖顶层；
- * model 缺省 = 别名本身。纯函数，不改原对象（env(x) 表示 x 非空时读 process.env[x]，空串视为未设置）。
+ * 2. 缺省：继承顶层 provider（原有行为）。
+ * 显式指向内置预设名（stepfun/anthropic 等）或未声明的渠道 id 一律视为无效别名，
+ * 返回 null——内置预设只是零配置默认策略的载体，不是别名可引用的渠道。
+ * entry 其余字段覆盖顶层；model 缺省 = 别名本身。纯函数，不改原对象
+ * （env(x) 表示 x 非空时读 process.env[x]，空串视为未设置）。
  *
  * apiKey 回落链（多渠道独立密钥设计，config.apiKey 是隐式渠道/环境变量解析结果的
  * 最后一级回落）：
  * - 渠道分支：渠道 apiKey → 渠道 apiKeyEnv 指向的 env → 渠道 type 的惯例 env
  *   （见 {@link conventionalApiKeyEnvVar}）→ entry.apiKey → entry.apiKeyEnv 指向的 env → config.apiKey。
- * - 预设/继承分支：entry.apiKey → entry.apiKeyEnv 指向的 env → 该分支 provider
- *   （entry.provider ?? 顶层 provider）的惯例 env → config.apiKey。
+ * - 继承分支：entry.apiKey → entry.apiKeyEnv 指向的 env → 顶层 provider
+ *   的惯例 env → config.apiKey。
  * 全部缺失时 apiKey 为 undefined，由 provider 工厂在构造前抛带指引的错误。
  * 注意：config.apiKey 来自环境变量，作为最后回落意味着「渠道没配 key 时会把它发给该渠道
  * 端点」；跨服务商混用时务必给每个渠道单独配 apiKey 或 apiKeyEnv。
@@ -943,20 +942,19 @@ export function resolveModelEntry(config: StepCodeConfig, name: string): StepCod
       baseUrl = PROVIDER_PRESETS[provider]?.baseUrl ?? config.baseUrl;
     }
   } else {
-    if (entry.provider !== undefined && PROVIDER_PRESETS[entry.provider] === undefined) {
-      // 显式指向了既不存在的渠道也不是内置预设的 provider：无效别名
+    if (entry.provider !== undefined) {
+      // 显式指向了未声明的渠道 id 或内置预设名：均视为无效别名
+      //（内置预设只是零配置默认策略的载体，不是别名可引用的渠道）
       return null;
     }
-    provider = entry.provider ?? config.provider;
+    // 继承分支：缺省继承顶层 provider
+    provider = config.provider;
     apiKey =
       entry.apiKey ??
       envValue(entry.apiKeyEnv) ??
       envValue(conventionalApiKeyEnvVar(provider)) ??
       config.apiKey;
     baseUrl = entry.baseUrl ?? config.baseUrl;
-    if (entry.baseUrl === undefined && provider !== config.provider) {
-      baseUrl = PROVIDER_PRESETS[provider]?.baseUrl ?? config.baseUrl;
-    }
   }
   return {
     ...config,
@@ -982,8 +980,8 @@ export interface ConfigOverrides {
  * 解析配置，优先级：命令行覆盖 > 环境变量 > config.toml > provider 预设 > 内置默认。
  *
  * provider：`STEP_CODE_PROVIDER` > TOML `provider` > 默认 'stepfun'（overrides.provider 最高优先）。
- * apiKey：`STEP_CODE_API_KEY` > 按 provider 类型的惯例环境变量（见 {@link conventionalApiKeyEnvVar}；
- * stepfun→STEPFUN_API_KEY 自然承接旧的向后兼容回落）。config.toml 顶层不再支持 `api_key`；
+ * apiKey：隐式渠道只认 `STEP_CODE_API_KEY`；anthropic/openai 协议另认各自的惯例环境变量
+ * （见 {@link conventionalApiKeyEnvVar}）。config.toml 顶层不再支持 `api_key`；
  * 配置文件里的 key 只能配在 `[providers.<id>]` 渠道或 `[models.<别名>]` 上。
  * 不再强制：全部缺失时 apiKey 为 undefined 进 cfg，由 provider 工厂在构造前抛带指引的错误
  * （factory.missingApiKey）；启动展开别名时还会经 {@link resolveModelEntry} 的渠道/别名回落链再解析一次。
@@ -1034,7 +1032,7 @@ export function loadConfig(cwd: string = process.cwd(), overrides: ConfigOverrid
   };
   // thinking 请求配置：余量校验以最终生效的 maxTokens 为基准（启用且余量不足时抛配置错误）
   cfg.thinking = resolveThinkingConfig(toml.thinking, cfg.maxTokens);
-  // 联网搜索配置：所有字段可选，缺省时消费方回退主会话渠道（向后兼容）
+  // 联网搜索配置：所有字段可选，缺省时消费方缺省回退主会话渠道（零配置默认策略）
   cfg.search = resolveSearchConfig(toml.search);
   // 自定义加载路径：未配置或非法时键不进结果对象（下游 toEqual 精确断言依赖此形态）
   const agentsPaths = resolveStringArray(toml.agents_paths);

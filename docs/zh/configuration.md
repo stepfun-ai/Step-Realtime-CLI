@@ -9,8 +9,7 @@
 `.env` 只补齐**尚未设置**的环境变量（已存在的键不被覆盖），因此它的实际位置是「环境变量的补充来源」而非独立的第三优先级。只解析 `KEY=VALUE` 行，忽略注释与空行，自动去掉值两侧包裹的单/双引号。
 
 ```bash
-# 环境变量（STEP_CODE_API_KEY 首选；未设置时按 provider 类型回落惯例变量，
-# stepfun → STEPFUN_API_KEY 因此仍然可用）
+# 环境变量（隐式渠道只认 STEP_CODE_API_KEY；anthropic / openai 协议另认各自的惯例变量）
 export STEP_CODE_API_KEY=<your-key>
 
 # 可选覆盖
@@ -100,24 +99,23 @@ api_key = "<your-key>"                # 多渠道推荐写法：key 配在渠道
 | `api_key` | 否 | 渠道专属 key（多渠道推荐写法），缺省按[密钥解析优先级](#密钥解析优先级)回落 |
 | `api_key_env` | 否 | 间接引用：只存环境变量名，密钥不落盘；优先级低于 `api_key`、高于惯例环境变量 |
 
-渠道未配 `api_key` / `api_key_env` 时，按渠道 `type` 回落对应的惯例环境变量——每种协议各有自己被广泛使用的变量名，直接沿用可以让已有环境零改动接入：
+渠道未配 `api_key` / `api_key_env` 时，按渠道 `type` 回落对应的惯例环境变量——这些协议各有自己被广泛使用的变量名，直接沿用可以让已有环境零改动接入：
 
 | 渠道 type | 惯例环境变量 |
 |-----------|--------------|
-| `stepfun` | `STEPFUN_API_KEY` |
 | `anthropic` | `ANTHROPIC_API_KEY` |
 | `openai` / `openai_responses` | `OPENAI_API_KEY` |
 
-内置预设 `stepfun` / `anthropic` 作为隐式渠道始终存在，`[models]` 里的 `provider` 字段既可指自定义渠道 id，也可直接写内置预设名，旧配置零迁移。
+内置预设 `stepfun` / `anthropic` 只是零配置默认策略的载体：不配任何 `[providers]` 时顶层 `provider` 直接生效。`[models]` 里的 `provider` 字段只能指 `[providers.<id>]` 自定义渠道 id 或缺省继承顶层；显式写内置预设名视为无效别名。
 
 ### 密钥解析优先级
 
 每个模型别名展开时按所属分支沿以下链路取第一把可用的 key（`env(X)` 表示读取名为 X 的环境变量，空串视为未设置）：
 
-- **渠道分支**（别名 `provider` 指向 `[providers.<id>]` 渠道）：渠道 `api_key` → env（渠道 `api_key_env`）→ 渠道 type 的惯例环境变量 → 别名 `api_key` → env（别名 `api_key_env`）→ 隐式渠道 key（`STEP_CODE_API_KEY` 或该分支 provider 的惯例环境变量）。
-- **预设/继承分支**（别名 `provider` 指向内置预设名或缺省）：别名 `api_key` → env（别名 `api_key_env`）→ 该分支 provider（别名 `provider` 缺省时继承顶层 provider）的惯例环境变量 → `STEP_CODE_API_KEY`。
+- **渠道分支**（别名 `provider` 指向 `[providers.<id>]` 渠道）：渠道 `api_key` → env（渠道 `api_key_env`）→ 渠道 type 的惯例环境变量 → 别名 `api_key` → env（别名 `api_key_env`）→ 隐式渠道 key（`STEP_CODE_API_KEY` 或顶层 provider 的惯例环境变量）。
+- **继承分支**（别名 `provider` 缺省）：别名 `api_key` → env（别名 `api_key_env`）→ 顶层 provider 的惯例环境变量 → `STEP_CODE_API_KEY`。
 
-隐式渠道 key 本身来自 `STEP_CODE_API_KEY` > 当前 provider 的惯例环境变量。config.toml 顶层不再支持 `api_key`；整条链都找不到 key 时启动不再报错，由 provider 构造时抛出带配置指引的「缺少 API key」错误。
+隐式渠道 key 本身来自 `STEP_CODE_API_KEY`（顶层 provider 为 anthropic / openai 协议时另认其惯例环境变量）。config.toml 顶层不再支持 `api_key`；整条链都找不到 key 时启动不再报错，由 provider 构造时抛出带配置指引的「缺少 API key」错误。
 
 > **跨服务商混用警告**：隐式渠道 key 是所有渠道的最后一级回落——渠道没配 key 时会把它发给该渠道的端点。混用多家服务商时务必给每个渠道单独配 `api_key` 或 `api_key_env`，避免 key 被发到错误的服务商。
 
@@ -127,7 +125,7 @@ api_key = "<your-key>"                # 多渠道推荐写法：key 配在渠道
 
 ```toml
 [models."step-3.7-flash"]
-provider = "stepfun"                    # 引用渠道 id 或内置预设名
+# provider = "<渠道id>"                # 可选：引用 [providers.<id>] 自定义渠道；缺省继承顶层 provider
 model = "step-3.7-flash"
 max_context_size = 262144
 display_name = "Step 3.7 Flash"         # 可选，选择器与状态栏显示用
@@ -136,7 +134,7 @@ capabilities = ["thinking", "image_in"] # 可选，见下方 capabilities 能力
 
 | 字段 | 说明 |
 |------|------|
-| `provider` | 渠道 id 或内置预设名，缺省用顶层 provider。指向的 id 既不是已声明渠道也不是内置预设名时，该别名无效（展开时不生效，回落到顶层配置） |
+| `provider` | `[providers.<id>]` 自定义渠道 id，缺省继承顶层 provider。显式写内置预设名（stepfun / anthropic 等）或指向未声明的 id 时，该别名无效（展开时不生效，回落到顶层配置） |
 | `model` | 真实模型 id，缺省等于别名本身 |
 | `base_url` / `api_key` | 覆盖渠道/顶层的端点与凭据 |
 | `api_key_env` | 间接引用：只存环境变量名，密钥不落盘；在回落链中的位置见[密钥解析优先级](#密钥解析优先级) |
@@ -413,8 +411,7 @@ timeout = 30                                 # 秒，可选，默认 30，硬顶
 
 | 变量 | 说明 |
 |------|------|
-| `STEP_CODE_API_KEY` | API key，优先级最高 |
-| `STEPFUN_API_KEY` | 顶层 provider 为 `stepfun` 时的惯例 key 变量；其余协议见[渠道表](#providersid-渠道表)的惯例变量对照 |
+| `STEP_CODE_API_KEY` | API key，隐式渠道只认这个变量 |
 | `ANTHROPIC_API_KEY` | 渠道/provider 类型为 `anthropic` 时的惯例 key 变量 |
 | `OPENAI_API_KEY` | 渠道/provider 类型为 `openai` / `openai_responses` 时的惯例 key 变量 |
 | `STEP_CODE_PROVIDER` | 服务商，优先级高于 config.toml、低于 `--provider` |

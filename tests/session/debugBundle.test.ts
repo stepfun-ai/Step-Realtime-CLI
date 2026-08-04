@@ -26,7 +26,7 @@ afterEach(() => {
 /** 建一个带一条含密钥的消息的会话，返回 sessionId。 */
 function seedSession(): string {
   const s = store.create(cwd, 'step-3.7-flash');
-  s.messages.push(stored({ role: 'user', content: 'debug this, my api_key=TRANSCRIPTSECRET1 leaked' }, 'user'));
+  s.messages.push(stored({ role: 'user', content: 'debug this, my api_key=TRANSCRIPTSECRET1 leaked' }, { kind: 'user' }));
   store.save(s);
   store.appendFull(cwd, s.id, s.messages);
   return s.id;
@@ -58,8 +58,9 @@ describe('exportDebugBundle', () => {
     expect(redacted).toBe(true);
     const { names, read } = entriesOf(zipPath);
     expect(names).toContain(`session/${id}.json`);
-    // appendFull 的底层已事件化：落盘产物是 wire.jsonl（legacy full.jsonl 只在旧会话上存在）
+    // 落盘产物是 wire.jsonl（full.jsonl 不再打包）
     expect(names).toContain(`session/${id}.wire.jsonl`);
+    expect(names).not.toContain(`session/${id}.full.jsonl`);
     expect(names).toContain('config.toml');
     expect(names).toContain('mcp.json');
     expect(names).toContain('errors.log');
@@ -92,8 +93,8 @@ describe('exportDebugBundle', () => {
     expect(mcp).toContain('[REDACTED]');
 
     // 会话正文的 best-effort 脱敏
-    const full = read(`session/${id}.full.jsonl`);
-    expect(full).not.toContain('TRANSCRIPTSECRET1');
+    const wire = read(`session/${id}.wire.jsonl`);
+    expect(wire).not.toContain('TRANSCRIPTSECRET1');
   });
 
   it('manifest 字段齐全，版本从 package.json 读（非硬编码 unknown）', async () => {

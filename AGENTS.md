@@ -110,7 +110,15 @@ tests/                    # vitest 单元 + 集成测试
 - **模型与协议不是自由组合**：个别模型只在特定接口开放，配错渠道由服务端返回 400 并指明应改用的接口。配置层目前不做前置校验。
 - `ChatProvider` 统一产出 Anthropic 形状的事件流与 `finalMessage()`，OpenAI 协议在 provider 内部翻译，消费方（runTurn/loop/compaction/TUI）零感知；新增协议在 `src/provider/` 加适配器 + `PROVIDER_PRESETS` 注册 type。
 - 多模态：支持 base64 图片理解（`image/png`|`jpeg`|`gif`|`webp`），不支持音视频；TUI 里 Alt+V 从剪贴板粘贴图片。
-- API key 优先级：`STEP_CODE_API_KEY` >（兼容）`STEPFUN_API_KEY` > `~/.step-code/config.toml` 的 `api_key`；`STEP_CODE_PROVIDER`/`BASE_URL`/`MODEL` 可经环境变量覆盖。多渠道多模型经 `[providers.<id>]` + `[models.<别名>]` 配置。
+- API key 优先级：`STEP_CODE_API_KEY` > `~/.step-code/config.toml` 的 `api_key`（anthropic/openai 协议另认 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` 惯例变量）；`STEP_CODE_PROVIDER`/`BASE_URL`/`MODEL` 可经环境变量覆盖。多渠道多模型经 `[providers.<id>]` + `[models.<别名>]` 配置。
+
+## 破坏性迭代与兼容判据
+
+1.0 前允许破坏性迭代。判断一段兼容代码去留的判据只有一条：**只为旧版本自产数据/格式/配置存在的兼容，拆；为不受控外部行为（服务端、SDK、协议、终端、用户手写文件/配置）或前向健壮性（崩溃窗口、中断）存在的容错，留。**
+
+- 拆的例子：读旧格式会话文件时的折算与归一化路径；旧环境变量名的回落识别。
+- 留的例子：事件日志读盘时容忍崩溃截断的尾行（防进程死在写入中途）；对用户手写的 base_url 做裸域名/后缀归一化（防配置书写习惯差异导致 404）。
+- 每一段被保留的容错，注释里必须写明它防的是哪个外部行为，不允许只写「兼容」「兜底」——否则下次清理时无法区分它是容错还是旧数据兼容。
 
 ## 开发纪律
 

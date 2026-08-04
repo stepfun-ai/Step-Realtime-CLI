@@ -17,7 +17,6 @@ export function resumeHintText(sessionId: string): string {
 
 /** stream-json 模式的 meta 事件（session resume hint 结构）。 */
 export function resumeHintMeta(sessionId: string): {
-  role: 'meta';
   type: 'session.resume_hint';
   session_id: string;
   command: string;
@@ -25,7 +24,6 @@ export function resumeHintMeta(sessionId: string): {
 } {
   const command = resumeCommand(sessionId);
   return {
-    role: 'meta',
     type: 'session.resume_hint',
     session_id: sessionId,
     command,

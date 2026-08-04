@@ -1419,20 +1419,15 @@ export function App({
    */
   const resumeSessionById = useCallback(
     (id: string): boolean => {
-      // 恢复入口：优先 store.resume（快照检查点 + 事件日志尾段重放）；重放异常回退旧 load 路径，
-      // 保证旧格式会话永远打得开（回退路径已送达集合为空 = 不做对账补投，行为同旧版）。
+      // 恢复入口：store.resume（快照检查点 + 事件日志尾段重放）。重放异常直接抛出（响亮失败），
+      // 不再回退旧 load 路径——旧格式会话不再保证打得开。
       let data: SessionData | null = null;
       let delivered: ReadonlySet<string> = new Set();
-      try {
-        const r = store.resume(ctx.cwd, id);
-        if (r !== null) {
-          data = r.session;
-          delivered = r.deliveredNotifications;
-        }
-      } catch {
-        data = null; // 落回旧路径
+      const r = store.resume(ctx.cwd, id);
+      if (r !== null) {
+        data = r.session;
+        delivered = r.deliveredNotifications;
       }
-      if (data === null) data = store.load(ctx.cwd, id);
       if (data === null) return false;
       // 先保存当前会话，避免切走丢数据
       persist();
@@ -2293,7 +2288,7 @@ export function App({
           return;
         }
         if (up.stdout !== '') {
-          history.current.push(stored({ role: 'user', content: up.stdout }, 'user'));
+          history.current.push(stored({ role: 'user', content: up.stdout }, { kind: 'user' }));
         }
       }
 
@@ -2301,7 +2296,7 @@ export function App({
       // 静默注入（cron 触发等合成消息）不在转录区显示 user 条目——cron 场景由触发卡片承载展示
       if (!opts?.silent) setItems((prev) => [...prev, { kind: 'user', text: `${extracted.displayText}${imgNote}` }]);
       // 后台通知走预装配本体（background_task origin + 幂等 id 随行），其余消息现场打包
-      history.current.push(opts?.prepared ?? stored({ role: 'user', content: extracted.content }, 'user'));
+      history.current.push(opts?.prepared ?? stored({ role: 'user', content: extracted.content }, { kind: 'user' }));
       imageStore.current.clear();
       pasteStore.current.clear();
       // 新 append 的这条还没经历 API 往返：立刻把它计入未测量尾部估算，

@@ -24,7 +24,7 @@ function summaryOf(out: StoredMessage[]): StoredMessage {
 
 /** 长 assistant 输出：把 older 段撑到足够大，使长度闸门的比例下限真正生效。 */
 function bulkAssistant(tag: string): StoredMessage {
-  return stored({ role: 'assistant', content: [textBlock(`${tag} ${'详细分析内容'.repeat(60)}`)] }, 'assistant');
+  return stored({ role: 'assistant', content: [textBlock(`${tag} ${'详细分析内容'.repeat(60)}`)] }, { kind: 'assistant' });
 }
 
 /** 合格摘要：长度稳定超过闸门封顶值（200 字符），marker 留在开头供断言。 */
@@ -38,13 +38,13 @@ const GARBAGE_SUMMARY = '[早期对话摘要]\n[调用工具 bash] 搜索 step-c
 /** 构造一段「older 足够大 + 用户原话带关键事实」的历史。 */
 function historyWithFacts(): StoredMessage[] {
   return [
-    stored({ role: 'user', content: '项目在 D:/work/demo-repo/packages/core' }, 'user'),
+    stored({ role: 'user', content: '项目在 D:/work/demo-repo/packages/core' }, { kind: 'user' }),
     bulkAssistant('A1'),
-    stored({ role: 'user', content: '注意 key 在 keys.json' }, 'user'),
+    stored({ role: 'user', content: '注意 key 在 keys.json' }, { kind: 'user' }),
     bulkAssistant('A2'),
-    stored({ role: 'user', content: '最近1' }, 'user'),
+    stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
     bulkAssistant('A3'),
-    stored({ role: 'user', content: '最近2' }, 'user'),
+    stored({ role: 'user', content: '最近2' }, { kind: 'user' }),
   ];
 }
 
@@ -193,7 +193,7 @@ describe('fullCompact overflow / 媒体块自救', () => {
           } as Anthropic.ImageBlockParam,
         ],
       },
-      'user',
+      { kind: 'user' },
     );
   }
 
@@ -205,7 +205,7 @@ describe('fullCompact overflow / 媒体块自救', () => {
     const msgs: StoredMessage[] = [
       imageMsg('项目路径在 C:/step-code'),
       bulkAssistant('A1'),
-      stored({ role: 'user', content: '继续' }, 'user'),
+      stored({ role: 'user', content: '继续' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 1);
     expect(streamCalls()).toBe(2);
@@ -236,7 +236,7 @@ describe('fullCompact overflow / 媒体块自救', () => {
       bulkAssistant('A1'),
       imageMsg('图2'),
       bulkAssistant('A2'),
-      stored({ role: 'user', content: '最近' }, 'user'),
+      stored({ role: 'user', content: '最近' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 1);
     expect(streamCalls()).toBe(3);
@@ -253,7 +253,7 @@ describe('fullCompact overflow / 媒体块自救', () => {
     const msgs: StoredMessage[] = [
       imageMsg('图1'),
       bulkAssistant('A1'),
-      stored({ role: 'user', content: '最近' }, 'user'),
+      stored({ role: 'user', content: '最近' }, { kind: 'user' }),
     ];
     const out = await fullCompact(provider, msgs, 1);
     expect(streamCalls()).toBe(3);

@@ -588,7 +588,7 @@ const zh = {
   // --- provider 工厂（cli.tsx 在 setLocale 之后调用，翻得到）---
   'factory.unknownProvider': "未知服务商 provider='{provider}'。当前支持：{list}。",
   'factory.missingApiKey':
-    '缺少 API key（provider={provider}）。请设置环境变量 STEP_CODE_API_KEY、该服务商的惯例环境变量（stepfun→STEPFUN_API_KEY、anthropic→ANTHROPIC_API_KEY、openai→OPENAI_API_KEY），或在 ~/.step-code/config.toml 的 [providers] 渠道 / [models] 别名下写入 api_key（也可用 api_key_env 指定环境变量名）。',
+    '缺少 API key（provider={provider}）。请设置环境变量 STEP_CODE_API_KEY、该服务商的惯例环境变量（anthropic→ANTHROPIC_API_KEY、openai→OPENAI_API_KEY），或在 ~/.step-code/config.toml 的 [providers] 渠道 / [models] 别名下写入 api_key（也可用 api_key_env 指定环境变量名）。',
 } as const;
 
 /** 英文表：key 与 zh 一一对应（类型级强制，漏 key 直接编译报错）。 */
@@ -1118,7 +1118,7 @@ const en: Record<keyof typeof zh, string> = {
 
   'factory.unknownProvider': "Unknown provider provider='{provider}'. Supported: {list}.",
   'factory.missingApiKey':
-    'Missing API key (provider={provider}). Set the STEP_CODE_API_KEY environment variable, the conventional variable for this provider (stepfun→STEPFUN_API_KEY, anthropic→ANTHROPIC_API_KEY, openai→OPENAI_API_KEY), or write api_key under a [providers] channel / under a [models] alias in ~/.step-code/config.toml (api_key_env may name an environment variable instead).',
+    'Missing API key (provider={provider}). Set the STEP_CODE_API_KEY environment variable, the conventional variable for this provider (anthropic→ANTHROPIC_API_KEY, openai→OPENAI_API_KEY), or write api_key under a [providers] channel / under a [models] alias in ~/.step-code/config.toml (api_key_env may name an environment variable instead).',
 };
 
 /** 两张字典表（导出供测试遍历断言 key 一致性；生产代码请走 t()）。 */

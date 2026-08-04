@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { mapBlocksDeep, normalizeMessage, type StoredMessage } from '../agent/message.js';
+import { mapBlocksDeep, type StoredMessage } from '../agent/message.js';
 import type { GoalState } from '../agent/goal/mode.js';
 import type { PermissionMode } from '../agent/permission/mode.js';
 import {
@@ -57,9 +57,10 @@ export interface SessionData extends SessionMeta {
   /** skill 激活计数（仅子 agent 会话使用）：随快照持久化，resume 时带回，防递归防护被 resume 重置。 */
   skillActivations?: number;
   /**
-   * 检查点游标：本快照覆盖到事件日志（wire.jsonl，含 legacy full.jsonl 折算）的第几条事件。
+   * 检查点游标：本快照覆盖到事件日志（wire.jsonl）的第几条事件。
    * 快照自本版本起降级为「检查点 + 派生缓存」，事件日志才是事实源；resume 时从本游标
-   * 之后的尾段事件开始重放。旧快照缺失本字段 → resume 回退到按消息 id 去重的兼容路径。
+   * 之后的尾段事件开始重放。本字段缺失时快照不可作检查点：resume 忽略其 messages，
+   * 从空基底全量重放事件（破坏性语义，不保留旧快照消息）。
    */
   wireSeq?: number;
 }
@@ -170,12 +171,7 @@ export class SessionStore {
     return join(this.dirFor(cwd), `${id}.json`);
   }
 
-  /** 全量历史日志（append-only JSONL）路径：与 JSON 快照并列。 */
-  private fullFileFor(cwd: string, id: string): string {
-    return join(this.dirFor(cwd), `${id}.full.jsonl`);
-  }
-
-  /** 事件日志（append-only JSONL）路径：full.jsonl 的事件化升级形态，会话状态机的事实源。 */
+  /** 事件日志（append-only JSONL）路径：会话状态机的事实源。 */
   private wireFileFor(cwd: string, id: string): string {
     return join(this.dirFor(cwd), `${id}.wire.jsonl`);
   }
@@ -186,14 +182,13 @@ export class SessionStore {
   }
 
   /**
-   * 调试导出用：返回某会话的落盘文件路径（会话桶目录 + JSON 快照 + 全量历史 JSONL）。
+   * 调试导出用：返回某会话的落盘文件路径（会话桶目录 + JSON 快照 + 事件日志 JSONL）。
    * 复用内部路径规则，供 debugBundle 收集，避免在外部重算 workdirKey。
    */
-  sessionPaths(cwd: string, id: string): { dir: string; json: string; full: string; wire: string } {
+  sessionPaths(cwd: string, id: string): { dir: string; json: string; wire: string } {
     return {
       dir: this.dirFor(cwd),
       json: this.fileFor(cwd, id),
-      full: this.fullFileFor(cwd, id),
       wire: this.wireFileFor(cwd, id),
     };
   }
@@ -248,7 +243,8 @@ export class SessionStore {
       if (preview !== undefined) session.preview = preview;
     }
     // 检查点游标：快照记录自己覆盖到事件日志的哪一条，resume 只重放游标之后的尾段。
-    // 本进程从未见过该会话的事件日志（无缓存、无文件）时保持缺失，走兼容恢复路径。
+    // 本进程从未见过该会话的事件日志（无缓存、无文件）时保持缺失，
+    // resume 按「无检查点」处理：忽略快照 messages，全量重放事件。
     const wireCount = this.wireEventCount(session.cwd, session.id);
     if (wireCount !== undefined) session.wireSeq = wireCount;
     // 落盘前把图片 base64 卸载成 stepref 指针（作用于副本，不污染内存 session.messages）
@@ -259,14 +255,12 @@ export class SessionStore {
     writeAtomic(this.fileFor(session.cwd, session.id), JSON.stringify(toWrite, null, 2));
   }
 
-  /** 按 id 载入。找不到返回 null。旧快照的字符串 origin 读入即归一化为对象形态。 */
+  /** 按 id 载入。找不到返回 null。 */
   load(cwd: string, id: string): SessionData | null {
     const file = this.fileFor(cwd, id);
     if (!existsSync(file)) return null;
     try {
-      const data = JSON.parse(readFileSync(file, 'utf8')) as SessionData;
-      data.messages = data.messages.map(normalizeMessage);
-      return data;
+      return JSON.parse(readFileSync(file, 'utf8')) as SessionData;
     } catch {
       return null;
     }
@@ -286,7 +280,7 @@ export class SessionStore {
     let priorCount = this.wireCounts.get(cacheKey);
     let seen = this.fullSeen.get(cacheKey);
     if (seen === undefined) {
-      // 首次写该会话的事件日志：建立去重集合（含 legacy full.jsonl 折算进来的消息）
+      // 首次写该会话的事件日志：建立去重集合
       const loaded = this.loadWire(cwd, id);
       priorCount = loaded.length;
       seen = new Set(
@@ -338,24 +332,11 @@ export class SessionStore {
 
   /**
    * 读回事件日志的全部事件（按写入顺序）。
-   * legacy 兼容：旧格式 full.jsonl（每行一条 StoredMessage）折算为 context.append_message
-   * 事件读入；与 wire.jsonl 并存时 legacy 在前、wire 在后拼接（升级只发生一次，
-   * full.jsonl 自此停写，不存在时序交错）。损坏行与崩溃截断的尾行跳过。
+   * 损坏行与崩溃截断的尾行跳过。
    * 副作用：刷新该会话的条数缓存（供 save 写检查点游标）。
    */
   loadWire(cwd: string, id: string): WireEvent[] {
     const events: WireEvent[] = [];
-    const fullFile = this.fullFileFor(cwd, id);
-    if (existsSync(fullFile)) {
-      for (const line of this.readLines(fullFile)) {
-        try {
-          const message = normalizeMessage(JSON.parse(line) as StoredMessage);
-          events.push({ type: 'context.append_message', ts: message.ts, message });
-        } catch {
-          // 跳过损坏行
-        }
-      }
-    }
     const wireFile = this.wireFileFor(cwd, id);
     if (existsSync(wireFile)) {
       for (const line of this.readLines(wireFile)) {
@@ -372,7 +353,7 @@ export class SessionStore {
     const cacheKey = `${workdirKey(cwd)}${id}`;
     const cached = this.wireCounts.get(cacheKey);
     if (cached !== undefined) return cached;
-    if (!existsSync(this.wireFileFor(cwd, id)) && !existsSync(this.fullFileFor(cwd, id))) {
+    if (!existsSync(this.wireFileFor(cwd, id))) {
       return undefined;
     }
     return this.loadWire(cwd, id).length;
@@ -390,8 +371,8 @@ export class SessionStore {
   }
 
   /**
-   * 向全量历史日志追加消息（兼容 API）：语义不变（按 id 去重、只追加），
-   * 底层改写为 context.append_message 事件进 wire.jsonl；存量 full.jsonl 由读路径兼容。
+   * 向全量历史日志追加消息：语义不变（按 id 去重、只追加），
+   * 底层写为 context.append_message 事件进 wire.jsonl。
    * 压缩链路（loop.replaceMessages / /compact）只动 history.current 与 JSON 快照，
    * 绝不触碰事件日志——它是 /reflect 能遍历完整历史的唯一保证。
    */
@@ -404,11 +385,11 @@ export class SessionStore {
     return this.appendWire(cwd, id, events);
   }
 
-  /** 读回全量历史日志的所有消息（按写入顺序，含 legacy full.jsonl 折算）。 */
+  /** 读回全量历史日志的所有消息（按写入顺序，取自 wire.jsonl 的 append_message 事件）。 */
   loadFull(cwd: string, id: string): StoredMessage[] {
     return this.loadWire(cwd, id)
       .filter((e) => e.type === 'context.append_message')
-      .map((e) => normalizeMessage(e.message));
+      .map((e) => e.message);
   }
 
   /**
@@ -417,9 +398,9 @@ export class SessionStore {
    * 步骤（对齐设计「resume 流程」的前三步；第 4 步后台任务对账由调用方拿到
    * deliveredNotifications 后自行触发，不在本方法内）：
    * 1. 读快照检查点作为恢复基底（无快照但有事件日志时从空基底全量重放）；
-   * 2. 重放游标（wireSeq）之后的尾段事件，重建内存态；旧快照无游标时回退
-   *    「消息按 id 去重 + 非消息事件 last-write-wins」兼容路径（可能复活被 undo
-   *    删除的消息，是已知边界）；
+   * 2. 重放游标（wireSeq）之后的尾段事件，重建内存态。游标缺失（无快照或旧快照）
+   *    时快照不可作检查点：忽略其 messages，从空基底全量重放事件——事件才是事实源。
+   *    这是破坏性语义：旧快照的 messages 不再保留；
    * 3. 闭合末尾悬空 tool_use（合成 is_error 的 tool_result，不假装成功、不改写日志）。
    *
    * restore 无副作用契约：本方法是纯读取——不写盘、不追加事件、不投递通知、
@@ -430,27 +411,19 @@ export class SessionStore {
     const events = this.loadWire(cwd, id);
     if (snapshot === null && events.length === 0) return null;
 
-    // 1. 基底：快照检查点（快照字段即检查点时刻的状态）
+    // 1. 基底 + 2. 尾段切片：有游标时快照作检查点、只重放游标后尾段；
+    // 无游标（无快照或旧快照）时忽略快照 messages，从空基底全量重放。
     const state = emptyWireReplayState();
-    if (snapshot !== null) {
+    let tail: WireEvent[];
+    if (snapshot?.wireSeq !== undefined) {
       state.messages = [...snapshot.messages];
       state.mode = snapshot.mode;
       state.planMode = snapshot.planMode;
       state.thinkOverride = snapshot.thinkOverride;
       state.goal = snapshot.goal;
-    }
-
-    // 2. 尾段切片：有游标按游标切；无游标（旧快照/无快照）走兼容路径
-    let tail: WireEvent[];
-    if (snapshot?.wireSeq !== undefined) {
       // 不变量：persist 先写事件后存快照，游标只会落后（崩溃窗口）永不超前于快照
       // 内容，尾段事件必然是快照之外的新消息。超前 = 历史已被旧版本污染，不兜底。
       tail = events.slice(snapshot.wireSeq);
-    } else if (snapshot !== null) {
-      const snapshotIds = new Set(snapshot.messages.map((m) => m.id));
-      tail = events.filter(
-        (e) => e.type !== 'context.append_message' || !snapshotIds.has(e.message.id),
-      );
     } else {
       tail = events;
     }
@@ -501,8 +474,7 @@ export class SessionStore {
       const name = entry.name;
       try {
         const data = JSON.parse(readFileSync(join(dir, name), 'utf8')) as SessionData;
-        // 旧快照的字符串 origin 先归一化，title/preview 兜底派生才认对象形态
-        const messages = (data.messages ?? []).map(normalizeMessage);
+        const messages = data.messages ?? [];
         metas.push({
           id: data.id,
           cwd: data.cwd,
@@ -512,9 +484,9 @@ export class SessionStore {
           messageCount: data.messageCount ?? messages.length,
           // 自定义名直通（重命名不经过 save，list 是改名后唯一的读取口径）
           name: data.name,
-          // 有 title 用 title；旧快照无 title 时现场从 messages 派生兜底
+          // 有 title 用 title；快照无 title 时现场从 messages 派生兜底
           title: data.title ?? deriveTitle(messages),
-          // preview 供选择器搜索；旧快照无 preview 时现场派生兜底
+          // preview 供选择器搜索；快照无 preview 时现场派生兜底
           preview: data.preview ?? derivePreview(messages),
         });
       } catch {
@@ -538,10 +510,9 @@ export class SessionStore {
     try {
       if (!existsSync(file)) return false;
       unlinkSync(file);
-      // 全量日志一并删除：快照没了之后这份 JSONL 不再有入口（/resume、/reflect 都按快照定位），
-      // 留下只会随会话越删越多形成孤儿文件。seen-id 缓存同步失效，避免同名 id 复用时跳过写入。
-      rmSync(this.fullFileFor(cwd, id), { force: true });
-      // 事件日志与后台任务持久化目录同理清理，条数缓存同步失效
+      // 事件日志与后台任务持久化目录一并删除：快照没了之后这些文件不再有入口
+      // （/resume、/reflect 都按快照定位），留下只会随会话越删越多形成孤儿文件。
+      // seen-id 与条数缓存同步失效，避免同名 id 复用时跳过写入。
       rmSync(this.wireFileFor(cwd, id), { force: true });
       rmSync(this.tasksDirFor(cwd, id), { recursive: true, force: true });
       this.fullSeen.delete(`${workdirKey(cwd)}${id}`);

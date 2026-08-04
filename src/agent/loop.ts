@@ -440,7 +440,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
               role: 'user',
               content: '用户中断了模型的本次输出。这不是系统错误，请等待用户的下一步指示。',
             },
-            'injection',
+            { kind: 'injection' },
           ),
         );
         yield { type: 'aborted' };

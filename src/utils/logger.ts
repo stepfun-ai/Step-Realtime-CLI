@@ -1,5 +1,5 @@
 /**
- * 运行日志（诊断通道）。会话记录走 SessionStore 的 `.full.jsonl`，与此无关。
+ * 运行日志（诊断通道）。会话记录走 SessionStore 的 `.wire.jsonl`，与此无关。
  *
  * 设计：
  * - 一条通道，同时写全局文件 `~/.step-code/logs/step-code.log` 和进程内环形缓冲。
