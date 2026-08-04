@@ -133,4 +133,76 @@ describe('web_fetch 工具', () => {
     expect(webResultCache.get(url)?.content).toBe('small body');
     webResultCache.clear();
   });
+
+  // --- 站点适配：微信公众号 #js_content 隐藏容器 ---
+  // 公众号正文容器首屏带 style="visibility:hidden;opacity:0"，Readability 判不可见
+  // 只返回标题作者（2026-08-04 实测 272 字 vs 正文 6632 字）。适配仅对
+  // mp.weixin.qq.com 主机、仅对 #js_content 生效，不得泄漏成全局行为。
+
+  function makeWeChatHtml(paragraphs: string[]): string {
+    const body = paragraphs.map((p) => `<p>${p}</p>`).join('');
+    return (
+      '<html><head><title>文章标题</title></head><body>' +
+      '<div class="rich_media"><h1>文章标题</h1><div id="js_name">某公众号</div>' +
+      `<div class="rich_media_content" id="js_content" style="visibility: hidden; opacity: 0;">${body}</div>` +
+      '</div></body></html>'
+    );
+  }
+
+  it('微信公众号：#js_content 隐藏 style 被剥离后返回正文而非只有标题作者', async () => {
+    webResultCache.clear();
+    const paragraphs = Array.from({ length: 30 }, (_, i) => `正文段落第 ${String(i)} 段，公众号正文内容。`);
+    mockedFetch.mockResolvedValueOnce(
+      makeResponse({
+        headers: { 'content-type': 'text/html' },
+        body: makeWeChatHtml(paragraphs),
+      }) as unknown as Awaited<ReturnType<typeof undici.fetch>>,
+    );
+    const r = await webFetchTool.execute({ url: 'https://mp.weixin.qq.com/s/abc123' }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.content).toContain('正文段落第 29 段');
+    expect(r.content.length).toBeGreaterThan(paragraphs.join('').length / 2);
+    webResultCache.clear();
+  });
+
+  it('非微信 URL 不触发特判：隐藏容器仍按原逻辑处理', async () => {
+    webResultCache.clear();
+    // 同一 fixture 放在非微信域名下，隐藏内容不应被强行提取；
+    // Readability/fallback 原逻辑返回什么就是什么，关键是返回值不含「正文字段」直取痕迹
+    const paragraphs = Array.from({ length: 30 }, (_, i) => `正文字段第 ${String(i)} 段内容。`);
+    mockedFetch.mockResolvedValueOnce(
+      makeResponse({
+        headers: { 'content-type': 'text/html' },
+        body:
+          '<html><head><title>T</title></head><body><article><p>可见正文</p></article>' +
+          `<div id="js_content" style="visibility:hidden;opacity:0;">${paragraphs
+            .map((p) => `<p>${p}</p>`)
+            .join('')}</div></body></html>`,
+      }) as unknown as Awaited<ReturnType<typeof undici.fetch>>,
+    );
+    const r = await webFetchTool.execute({ url: 'https://example.com/article' }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.content).toContain('可见正文');
+    expect(r.content).not.toContain('正文字段第 29 段');
+    webResultCache.clear();
+  });
+
+  it('微信页 Readability 结果异常短时回退到 #js_content 文本', async () => {
+    webResultCache.clear();
+    // 无 h1/标题线索、正文容器结构极扁平时，Readability 可能只返回页头碎片；
+    // 只要结果远短于 #js_content 自身文本（阈值 1/3），必须回退直取
+    const paragraphs = Array.from({ length: 40 }, (_, i) => `回退路径正文第 ${String(i)} 段，内容内容内容。`);
+    mockedFetch.mockResolvedValueOnce(
+      makeResponse({
+        headers: { 'content-type': 'text/html' },
+        body: makeWeChatHtml(paragraphs),
+      }) as unknown as Awaited<ReturnType<typeof undici.fetch>>,
+    );
+    const r = await webFetchTool.execute({ url: 'https://mp.weixin.qq.com/s/def456' }, ctx);
+    expect(r.isError).toBe(false);
+    // 不管走的是 Readability 主路径还是 #js_content 回退，完整正文都必须在
+    expect(r.content).toContain('回退路径正文第 0 段');
+    expect(r.content).toContain('回退路径正文第 39 段');
+    webResultCache.clear();
+  });
 });
