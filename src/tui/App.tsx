@@ -497,10 +497,13 @@ export function App({
     sessionRef.current.thinkOverride = thinkOverrideRef.current;
     sessionRef.current.planMode = planModeRef.current;
     try {
-      store.save(sessionRef.current);
+      // 顺序是不变量：必须先 appendFull 后 save。save() 会把当前 wire 事件数写进快照
+      // 当 wireSeq 检查点游标；若先 save 再 append，快照 messages 就会比游标超前，
+      // resume 重放游标后的尾段事件时把已在快照中的消息再追加一次（尾部重复）。
       // 全量历史日志：按 id 去重追加 history.current 中尚未写过的消息。
       // 压缩后 history.current 变短，但已落盘的 JSONL 保留被压缩掉的行，不受影响。
       store.appendFull(sessionRef.current.cwd, sessionRef.current.id, history.current);
+      store.save(sessionRef.current);
     } catch {
       // 持久化失败不应打断会话
     }
