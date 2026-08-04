@@ -36,6 +36,11 @@ describe('summarizeError', () => {
     expect(summarizeError(new Error('boom'))).toBe('boom');
   });
 
+  it('undici fetch failed → 附 cause 链上的真实 code', () => {
+    const err = new TypeError('fetch failed', { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) });
+    expect(summarizeError(err)).toBe('fetch failed (ECONNRESET)');
+  });
+
   it('SDK 已带状态码前缀 → 剥掉后统一成 HTTP {status} · 形式', () => {
     const err = Anthropic.APIError.generate(429, { message: 'rate limited' }, undefined, new Headers());
     expect(summarizeError(err)).toBe('HTTP 429 · rate limited');
@@ -55,6 +60,30 @@ describe('isRetryableError', () => {
   it('普通错误不可重试', () => {
     expect(isRetryableError(new Error('boom'))).toBe(false);
     expect(isRetryableError(undefined)).toBe(false);
+  });
+
+  it('undici fetch failed（code 嵌在 cause 链）→ 可重试', () => {
+    // OpenAI 兼容通道裸 fetch 的真实失败形态：TypeError 顶层无 code
+    const err = new TypeError('fetch failed', { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) });
+    expect(isRetryableError(err)).toBe(true);
+  });
+
+  it('undici 裸 fetch failed / terminated（cause 缺 code）→ 可重试', () => {
+    expect(isRetryableError(new TypeError('fetch failed'))).toBe(true);
+    expect(isRetryableError(new TypeError('terminated'))).toBe(true);
+  });
+
+  it('undici 自定义 code（UND_ERR_SOCKET 等，可能多级嵌套）→ 可重试', () => {
+    const socket = Object.assign(new Error('socket'), { code: 'UND_ERR_SOCKET' });
+    const err = new TypeError('fetch failed', { cause: { cause: socket } });
+    expect(isRetryableError(err)).toBe(true);
+    expect(isRetryableError(Object.assign(new Error('x'), { code: 'EAI_AGAIN' }))).toBe(true);
+  });
+
+  it('非网络类 TypeError（如 invalid URL）→ 不可重试', () => {
+    expect(isRetryableError(new TypeError('Invalid URL'))).toBe(false);
+    // cause 链上是不可重试的 code 也不算
+    expect(isRetryableError(Object.assign(new Error('x'), { code: 'ENOTFOUND' }))).toBe(false);
   });
 });
 
@@ -215,6 +244,17 @@ describe('withRetry', () => {
     const fn = vi.fn(async () => {
       n++;
       if (n < 2) throw Object.assign(new Error('net'), { code: 'ECONNRESET' });
+      return 'done';
+    });
+    await expect(withRetry(fn, { maxAttempts: 3 })).resolves.toBe('done');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('undici fetch failed（裸 fetch 真实失败形态）重试后成功', async () => {
+    let n = 0;
+    const fn = vi.fn(async () => {
+      n++;
+      if (n < 2) throw new TypeError('fetch failed', { cause: Object.assign(new Error('x'), { code: 'UND_ERR_SOCKET' }) });
       return 'done';
     });
     await expect(withRetry(fn, { maxAttempts: 3 })).resolves.toBe('done');
