@@ -14,7 +14,7 @@ import type { WireEvent } from '../../src/agent/wirelog.js';
 import { collect, makeFakeProvider, textBlock, toolUseBlock } from '../helpers/fakeProvider.js';
 
 function sm(message: Anthropic.MessageParam, origin: 'user' | 'assistant' | 'tool' = 'user'): StoredMessage {
-  return stored(message, origin);
+  return stored(message, { kind: origin });
 }
 
 /** 取出所有 model.usage 事件（收窄类型便于断言字段）。 */

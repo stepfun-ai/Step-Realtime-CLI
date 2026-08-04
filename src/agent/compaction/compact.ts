@@ -593,7 +593,7 @@ export function createElisionMessage(omittedTokens: number): StoredMessage {
       '中间部分已丢弃，其内容由下方交接摘要覆盖。若下一步依赖被省略段的细节，先向用户确认，不要臆测。',
     '</system-reminder>',
   ].join('\n');
-  return stored({ role: 'user', content: text }, 'injection');
+  return stored({ role: 'user', content: text }, { kind: 'injection' });
 }
 
 /** 摘要请求的 system prompt：定调「第一人称交接笔记」而非第三方报告。 */
@@ -789,8 +789,8 @@ export async function fullCompact(
       : [];
     return [
       ...verbatim,
-      stored({ role: 'user', content: summaryText }, 'compaction_summary'),
-      stored({ role: 'assistant', content: '已了解上述摘要，继续。' }, 'assistant'),
+      stored({ role: 'user', content: summaryText }, { kind: 'compaction_summary' }),
+      stored({ role: 'assistant', content: '已了解上述摘要，继续。' }, { kind: 'assistant' }),
       ...recent,
     ];
   };

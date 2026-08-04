@@ -119,7 +119,7 @@ describe('loadConfig [providers.<id>] 集成', () => {
     expect(cfg.baseUrl).toBe('https://gw.example.com');
   });
 
-  it('别名仍指内置预设名 → 向后兼容，走原有预设回落', () => {
+  it('别名显式指内置预设名 → 无效别名不展开，顶层 model 原样保留', () => {
     writeToml(
       [
         'model = "claude"',
@@ -131,8 +131,9 @@ describe('loadConfig [providers.<id>] 集成', () => {
       ].join('\n'),
     );
     const cfg = loadConfig(dir);
-    expect(cfg.provider).toBe('anthropic');
-    expect(cfg.baseUrl).toBe('https://api.anthropic.com');
+    // 无效别名不展开：model 保留别名本身，其余顶层字段不动
+    expect(cfg.model).toBe('claude');
+    expect(cfg.provider).toBe('stepfun');
     expect('providers' in cfg).toBe(false);
   });
 
@@ -274,19 +275,19 @@ describe('loadConfig 多渠道密钥（无顶层 key 场景）', () => {
     expect(cfg.apiKey).toBe('k-gw');
   });
 
-  it('model 未命中别名时隐式渠道 apiKey 链：STEP_CODE_API_KEY > STEPFUN_API_KEY', () => {
+  it('model 未命中别名时隐式渠道只认 STEP_CODE_API_KEY', () => {
     process.env['STEP_CODE_API_KEY'] = 'k-top-env';
     process.env['STEPFUN_API_KEY'] = 'k-legacy';
     writeToml(['model = "plain-model"', ''].join('\n'));
     expect(loadConfig(dir).apiKey).toBe('k-top-env');
   });
 
-  it('顶层无 key 且 model 不命中别名 → STEPFUN_API_KEY 对默认 stepfun 仍生效（向后兼容）', () => {
+  it('顶层无 key 且 model 不命中别名 → STEPFUN_API_KEY 不再识别（旧变量名被忽略）', () => {
     process.env['STEPFUN_API_KEY'] = 'k-legacy';
     writeToml(['model = "step-3.7-flash"', ''].join('\n'));
     const cfg = loadConfig(dir);
     expect(cfg.provider).toBe('stepfun');
-    expect(cfg.apiKey).toBe('k-legacy');
+    expect(cfg.apiKey).toBeUndefined();
   });
 
   it('config.toml 顶层 api_key 已不再生效（忽略，不抛错）', () => {

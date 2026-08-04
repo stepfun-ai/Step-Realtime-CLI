@@ -17,7 +17,7 @@ describe('replayWireEvents 纯函数重放', () => {
   it('append_message 按序重建消息历史；非消息事件各自落到对应状态字段', () => {
     const events: WireEvent[] = [
       { type: 'metadata', version: 1, sessionId: 's1', createdAt: TS },
-      { type: 'context.append_message', ts: TS, message: stored({ role: 'user', content: 'hi' }, 'user') },
+      { type: 'context.append_message', ts: TS, message: stored({ role: 'user', content: 'hi' }, { kind: 'user' }) },
       { type: 'turn.prompt', ts: TS },
       { type: 'permission.set_mode', ts: TS, mode: 'yolo' },
       { type: 'plan_mode.set', ts: TS, enabled: true },
@@ -27,7 +27,7 @@ describe('replayWireEvents 纯函数重放', () => {
         ts: TS,
         goal: { objective: '写报告', status: 'active', turnsUsed: 0, tokensUsed: 0, createdAt: 1 },
       },
-      { type: 'context.append_message', ts: TS, message: stored({ role: 'assistant', content: 'ok' }, 'assistant') },
+      { type: 'context.append_message', ts: TS, message: stored({ role: 'assistant', content: 'ok' }, { kind: 'assistant' }) },
     ];
     const state = replayWireEvents(events);
     expect(state.messages).toHaveLength(2);
@@ -39,12 +39,12 @@ describe('replayWireEvents 纯函数重放', () => {
   });
 
   it('apply_compaction 整体替换已重建的消息历史（日志不截断，内存在该事件处折叠）', () => {
-    const old = [1, 2, 3].map((i) => stored({ role: 'user', content: `m${i}` }, 'user'));
-    const survivors = [stored({ role: 'user', content: '摘要' }, 'compaction_summary')];
+    const old = [1, 2, 3].map((i) => stored({ role: 'user', content: `m${i}` }, { kind: 'user' }));
+    const survivors = [stored({ role: 'user', content: '摘要' }, { kind: 'compaction_summary' })];
     const events: WireEvent[] = [
       ...old.map((m): WireEvent => ({ type: 'context.append_message', ts: TS, message: m })),
       { type: 'context.apply_compaction', ts: TS, messages: survivors },
-      { type: 'context.append_message', ts: TS, message: stored({ role: 'user', content: 'm4' }, 'user') },
+      { type: 'context.append_message', ts: TS, message: stored({ role: 'user', content: 'm4' }, { kind: 'user' }) },
     ];
     const state = replayWireEvents(events);
     expect(state.messages.map((m) => m.message.content)).toEqual(['摘要', 'm4']);
@@ -66,7 +66,7 @@ describe('replayWireEvents 纯函数重放', () => {
 
   it('重放无副作用：同一事件序列重放两次结果一致，且不修改输入事件', () => {
     const events: WireEvent[] = [
-      { type: 'context.append_message', ts: TS, message: stored({ role: 'user', content: 'a' }, 'user') },
+      { type: 'context.append_message', ts: TS, message: stored({ role: 'user', content: 'a' }, { kind: 'user' }) },
       { type: 'permission.set_mode', ts: TS, mode: 'auto' },
     ];
     const snapshot = JSON.stringify(events);
@@ -137,7 +137,7 @@ describe('parseWireLine', () => {
 describe('closeDanglingToolUse 悬空 tool_use 闭合', () => {
   it('末尾 assistant 带 tool_use：合成 is_error 的 tool_result 闭合，不假装成功', () => {
     const messages = [
-      stored({ role: 'user', content: '跑一下' }, 'user'),
+      stored({ role: 'user', content: '跑一下' }, { kind: 'user' }),
       stored(
         {
           role: 'assistant',
@@ -146,7 +146,7 @@ describe('closeDanglingToolUse 悬空 tool_use 闭合', () => {
             { type: 'tool_use', id: 'tu-1', name: 'bash', input: { command: 'ls' } },
           ],
         },
-        'assistant',
+        { kind: 'assistant' },
       ),
     ];
     const result = closeDanglingToolUse(messages);
@@ -174,7 +174,7 @@ describe('closeDanglingToolUse 悬空 tool_use 闭合', () => {
             { type: 'tool_use', id: 'tu-2', name: 'b', input: {} },
           ],
         },
-        'assistant',
+        { kind: 'assistant' },
       ),
     ];
     const result = closeDanglingToolUse(messages);
@@ -183,13 +183,13 @@ describe('closeDanglingToolUse 悬空 tool_use 闭合', () => {
   });
 
   it('末尾不是悬空 tool_use（纯文本/已有 tool_result/user 消息/空历史）：不闭合', () => {
-    const textTail = [stored({ role: 'assistant', content: 'done' }, 'assistant')];
+    const textTail = [stored({ role: 'assistant', content: 'done' }, { kind: 'assistant' })];
     expect(closeDanglingToolUse(textTail).closed).toBe(false);
-    const userTail = [stored({ role: 'user', content: 'q' }, 'user')];
+    const userTail = [stored({ role: 'user', content: 'q' }, { kind: 'user' })];
     expect(closeDanglingToolUse(userTail).closed).toBe(false);
     expect(closeDanglingToolUse([]).closed).toBe(false);
     const noToolUse = [
-      stored({ role: 'assistant', content: [{ type: 'text', text: '想完了' }] }, 'assistant'),
+      stored({ role: 'assistant', content: [{ type: 'text', text: '想完了' }] }, { kind: 'assistant' }),
     ];
     expect(closeDanglingToolUse(noToolUse).closed).toBe(false);
   });

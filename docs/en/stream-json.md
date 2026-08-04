@@ -12,7 +12,7 @@ step -p "Read the README and summarize it" --output-format stream-json --yolo
 {"type":"tool_end","id":"tu_1","name":"read_file","result":"...","isError":false}
 {"type":"usage","totalTokens":19414,"measuredLength":2,"billedDelta":19414}
 {"type":"turn_done"}
-{"role":"meta","type":"session.resume_hint","session_id":"20260802-abc","command":"step -r 20260802-abc","content":"To resume this session: step -r 20260802-abc"}
+{"type":"session.resume_hint","session_id":"20260802-abc","command":"step -r 20260802-abc","content":"To resume this session: step -r 20260802-abc"}
 ```
 
 ## Envelope contract
@@ -99,8 +99,6 @@ On `subagent.end`:
 | type | Notes |
 |------|-------|
 | `session.resume_hint` | Emitted at end of run with `session_id` and `command`, for resuming this session |
-
-> This event still carries a `role: "meta"` field. It is **legacy and deprecated**, and will be removed in the next breaking release. Discriminate on `type` only.
 
 ## Error handling
 

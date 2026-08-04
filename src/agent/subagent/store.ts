@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { normalizeMessage, type StoredMessage } from '../message.js';
+import { type StoredMessage } from '../message.js';
 import { deriveTitle, type SessionData, type SessionMeta, type SessionStore } from '../../session/store.js';
 
 /**
@@ -22,7 +22,7 @@ export type SubagentDeleteResult = 'deleted' | 'locked' | 'missing';
  * 独立子目录是为了不污染主会话桶（SessionStore.list 只扫桶根，/resume 与 --continue 看不到子会话）。
  * 注入现有 SessionStore：复用 baseDir 分桶、attachments offload 与 deriveTitle，不另起第二套存储语义。
  *
- * 边界确认：/reflect 按主会话 id 直读 `<workdirKey>/<mainId>.full.jsonl`（无目录扫描），
+ * 边界确认：/reflect 按主会话 id 经 SessionStore.loadFull 直读 `<workdirKey>/<mainId>.wire.jsonl`（无目录扫描），
  * 本目录下的子会话日志天然不在其遍历范围内——子 agent 历史面向事后追查，不进方法论回顾。
  *
  * id 用 randomUUID：秒级时间戳 + 短随机的 randomId 在同秒并发派生时有碰撞风险，
@@ -121,14 +121,12 @@ export class SubagentStore {
     return fresh.length;
   }
 
-  /** 按 id 载入快照。找不到或损坏返回 null。旧快照的字符串 origin 读入即归一化为对象形态。 */
+  /** 按 id 载入快照。找不到或损坏返回 null。 */
   loadSnapshot(cwd: string, id: string): SessionData | null {
     const file = this.fileFor(cwd, id);
     if (!existsSync(file)) return null;
     try {
-      const data = JSON.parse(readFileSync(file, 'utf8')) as SessionData;
-      data.messages = data.messages.map(normalizeMessage);
-      return data;
+      return JSON.parse(readFileSync(file, 'utf8')) as SessionData;
     } catch {
       return null;
     }
@@ -148,8 +146,7 @@ export class SubagentStore {
     for (const line of raw.split('\n')) {
       if (line.trim() === '') continue;
       try {
-        // 旧行可能是字符串 origin：读入即归一化为对象形态
-        out.push(normalizeMessage(JSON.parse(line) as StoredMessage));
+        out.push(JSON.parse(line) as StoredMessage);
       } catch {
         // 跳过损坏行，尽量返回可用部分
       }
@@ -166,8 +163,7 @@ export class SubagentStore {
       if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
       try {
         const data = JSON.parse(readFileSync(join(dir, entry.name), 'utf8')) as SessionData;
-        // 旧快照的字符串 origin 先归一化，title 兜底派生才认对象形态
-        const messages = (data.messages ?? []).map(normalizeMessage);
+        const messages = data.messages ?? [];
         metas.push({
           id: data.id,
           cwd: data.cwd,

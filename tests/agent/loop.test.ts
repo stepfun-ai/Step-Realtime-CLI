@@ -9,7 +9,7 @@ import { collect, makeFakeProvider, textBlock, toolUseBlock } from '../helpers/f
 
 /** 包一条 storage 消息（测试用）。 */
 function sm(message: Anthropic.MessageParam, origin: 'user' | 'assistant' | 'tool' = 'user'): StoredMessage {
-  return stored(message, origin);
+  return stored(message, { kind: origin });
 }
 
 const baseOpts = (

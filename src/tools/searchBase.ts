@@ -55,7 +55,7 @@ export function resolveSearchToolEndpoint(
     const base = endpoint.url.replace(/\/+$/, '');
     return { url: `${base}${path}`, key: endpoint.key ?? session.apiKey };
   }
-  // 兜底：主会话渠道，走归一化后再拼 step_plan 路径（保留旧行为）
+  // 缺省回退主会话渠道（零配置默认策略）：走归一化后再拼 step_plan 路径
   const base = resolveSearchBaseUrl(session.baseUrl);
   const planPath = path === '/search-image' ? '/step_plan/v1/search-image' : '/step_plan/v1/search';
   return { url: `${base}${planPath}`, key: session.apiKey };

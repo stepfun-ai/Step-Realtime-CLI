@@ -49,7 +49,7 @@ afterEach(() => {
 
 describe('loadConfig', () => {
   it('环境变量优先，覆盖默认值', () => {
-    process.env['STEPFUN_API_KEY'] = 'k-env';
+    process.env['STEP_CODE_API_KEY'] = 'k-env';
     process.env['STEP_CODE_MODEL'] = 'step-custom';
     process.env['STEP_CODE_BASE_URL'] = 'https://example.test';
     const cfg = loadConfig(dir);
@@ -59,13 +59,13 @@ describe('loadConfig', () => {
   });
 
   it('从 cwd/.env 读取 key（env 未设时）', () => {
-    writeFileSync(join(dir, '.env'), 'STEPFUN_API_KEY=k-dotenv\n');
+    writeFileSync(join(dir, '.env'), 'STEP_CODE_API_KEY=k-dotenv\n');
     const cfg = loadConfig(dir);
     expect(cfg.apiKey).toBe('k-dotenv');
   });
 
   it('有 key 时给出合理默认（model=step-3.7-flash）', () => {
-    process.env['STEPFUN_API_KEY'] = 'k';
+    process.env['STEP_CODE_API_KEY'] = 'k';
     const cfg = loadConfig(dir);
     expect(cfg.model).toBe('step-3.7-flash');
     expect(cfg.baseUrl).toBe('https://api.stepfun.com');
@@ -78,7 +78,7 @@ describe('loadConfig', () => {
   });
 
   it('config 带 subagent 与 compaction 字段', () => {
-    process.env['STEPFUN_API_KEY'] = 'k';
+    process.env['STEP_CODE_API_KEY'] = 'k';
     const cfg = loadConfig(dir);
     expect(cfg.subagent.maxPerSession).toBeGreaterThanOrEqual(1);
     expect(cfg.subagent.maxDepth).toBeGreaterThanOrEqual(1);
@@ -90,7 +90,7 @@ describe('loadConfig', () => {
 
 describe('loadConfig provider 解析', () => {
   it('默认 provider 为 stepfun，且预设默认字节级不变', () => {
-    process.env['STEPFUN_API_KEY'] = 'k';
+    process.env['STEP_CODE_API_KEY'] = 'k';
     const cfg = loadConfig(dir);
     expect(cfg.provider).toBe('stepfun');
     expect(cfg.baseUrl).toBe('https://api.stepfun.com');
@@ -98,7 +98,7 @@ describe('loadConfig provider 解析', () => {
   });
 
   it('STEP_CODE_PROVIDER 覆盖为 anthropic，未配 model 时用预设（anthropic 无预设 model → 空串）', () => {
-    process.env['STEPFUN_API_KEY'] = 'k';
+    process.env['STEP_CODE_API_KEY'] = 'k';
     process.env['STEP_CODE_PROVIDER'] = 'anthropic';
     const cfg = loadConfig(dir);
     expect(cfg.provider).toBe('anthropic');
@@ -107,26 +107,26 @@ describe('loadConfig provider 解析', () => {
   });
 
   it('overrides.provider 优先于环境变量', () => {
-    process.env['STEPFUN_API_KEY'] = 'k';
+    process.env['STEP_CODE_API_KEY'] = 'k';
     process.env['STEP_CODE_PROVIDER'] = 'stepfun';
     const cfg = loadConfig(dir, { provider: 'anthropic' });
     expect(cfg.provider).toBe('anthropic');
   });
 
   it('overrides.model 优先于环境变量与预设', () => {
-    process.env['STEPFUN_API_KEY'] = 'k';
+    process.env['STEP_CODE_API_KEY'] = 'k';
     process.env['STEP_CODE_MODEL'] = 'env-model';
     const cfg = loadConfig(dir, { model: 'cli-model' });
     expect(cfg.model).toBe('cli-model');
   });
 
-  it('apiKey 回退 STEPFUN_API_KEY 仍工作', () => {
+  it('STEPFUN_API_KEY 不再识别（旧变量名被忽略）', () => {
     process.env['STEPFUN_API_KEY'] = 'legacy-key';
     const cfg = loadConfig(dir);
-    expect(cfg.apiKey).toBe('legacy-key');
+    expect(cfg.apiKey).toBeUndefined();
   });
 
-  it('STEP_CODE_API_KEY 优先于 STEPFUN_API_KEY', () => {
+  it('STEP_CODE_API_KEY 生效，STEPFUN_API_KEY 被忽略', () => {
     process.env['STEPFUN_API_KEY'] = 'legacy-key';
     process.env['STEP_CODE_API_KEY'] = 'new-key';
     const cfg = loadConfig(dir);
@@ -134,7 +134,7 @@ describe('loadConfig provider 解析', () => {
   });
 
   it('用户显式 baseUrl/model 优先于 provider 预设', () => {
-    process.env['STEPFUN_API_KEY'] = 'k';
+    process.env['STEP_CODE_API_KEY'] = 'k';
     process.env['STEP_CODE_PROVIDER'] = 'anthropic';
     process.env['STEP_CODE_BASE_URL'] = 'https://custom.example';
     process.env['STEP_CODE_MODEL'] = 'my-model';
@@ -385,21 +385,13 @@ describe('resolveModelEntry（别名展开合并）', () => {
     expect(merged!.model).toBe('step-3.5-flash');
   });
 
-  it('provider 变了且没给 baseUrl → 用新 provider 预设 baseUrl', () => {
-    const merged = resolveModelEntry(
-      baseConfig({ claude: { provider: 'anthropic', model: 'test-model-y' } }),
-      'claude',
-    );
-    expect(merged!.provider).toBe('anthropic');
-    expect(merged!.baseUrl).toBe('https://api.anthropic.com');
-  });
-
-  it('provider 变了但 entry 显式给了 baseUrl → 用 entry 的', () => {
-    const merged = resolveModelEntry(
-      baseConfig({ claude: { provider: 'anthropic', baseUrl: 'https://proxy.example' } }),
-      'claude',
-    );
-    expect(merged!.baseUrl).toBe('https://proxy.example');
+  it('entry.provider 显式写内置预设名 → 无效别名，返回 null', () => {
+    expect(
+      resolveModelEntry(baseConfig({ claude: { provider: 'anthropic', model: 'test-model-y' } }), 'claude'),
+    ).toBeNull();
+    expect(
+      resolveModelEntry(baseConfig({ fast: { provider: 'stepfun' } }), 'fast'),
+    ).toBeNull();
   });
 
   it('provider 没变且没给 baseUrl → 继承顶层 baseUrl（不走预设）', () => {
@@ -566,16 +558,13 @@ describe('resolveModelEntry（自定义渠道合并）', () => {
     expect(merged!.baseUrl).toBe('https://gw.example.com');
   });
 
-  it('entry.provider 仍指内置预设名 → 走原有预设逻辑（向后兼容）', () => {
-    const merged = resolveModelEntry(
-      channelConfig(
-        { gw: { type: 'stepfun' } },
-        { claude: { provider: 'anthropic', model: 'test-model-y' } },
+  it('entry.provider 显式指内置预设名 → null（无效别名，不再走预设回落）', () => {
+    expect(
+      resolveModelEntry(
+        channelConfig({ gw: { type: 'stepfun' } }, { claude: { provider: 'anthropic', model: 'test-model-y' } }),
+        'claude',
       ),
-      'claude',
-    );
-    expect(merged!.provider).toBe('anthropic');
-    expect(merged!.baseUrl).toBe('https://api.anthropic.com');
+    ).toBeNull();
   });
 
   it('entry.provider 既非渠道也非内置预设 → null（无效别名）', () => {
@@ -592,13 +581,13 @@ describe('resolveModelEntry（自定义渠道合并）', () => {
 
 describe('conventionalApiKeyEnvVar（惯例环境变量映射）', () => {
   it('已知 type → 对应惯例变量名', () => {
-    expect(conventionalApiKeyEnvVar('stepfun')).toBe('STEPFUN_API_KEY');
     expect(conventionalApiKeyEnvVar('anthropic')).toBe('ANTHROPIC_API_KEY');
     expect(conventionalApiKeyEnvVar('openai')).toBe('OPENAI_API_KEY');
     expect(conventionalApiKeyEnvVar('openai_responses')).toBe('OPENAI_API_KEY');
   });
 
-  it('未知 type / 空串 → undefined', () => {
+  it('stepfun（无惯例变量）/ 未知 type / 空串 → undefined', () => {
+    expect(conventionalApiKeyEnvVar('stepfun')).toBeUndefined();
     expect(conventionalApiKeyEnvVar('not-a-real-protocol')).toBeUndefined();
     expect(conventionalApiKeyEnvVar('')).toBeUndefined();
   });
@@ -706,42 +695,44 @@ describe('resolveModelEntry（apiKey 多渠道回落链）', () => {
     expect(merged!.apiKey).toBe('k-env-anthropic');
   });
 
-  // 预设/继承分支：entry.apiKey > entry api_key_env > 惯例 env（按该分支 provider）> 顶层
-  it('预设分支：entry.apiKey 优先于 entry api_key_env 与惯例 env', () => {
+  // 继承分支：entry.apiKey > entry api_key_env > 顶层 provider 惯例 env > 隐式渠道 key
+  it('继承分支：entry.apiKey 优先于 entry api_key_env 与惯例 env', () => {
     process.env['ANTHROPIC_API_KEY'] = 'k-env-anthropic';
     process.env['ENTRY_ENV_KEY'] = 'k-entry-env';
-    const merged = resolveModelEntry(
-      chainConfig(undefined, { c: { provider: 'anthropic', apiKey: 'k-entry', apiKeyEnv: 'ENTRY_ENV_KEY' } }),
-      'c',
-    );
+    const cfg = chainConfig(undefined, { c: { apiKey: 'k-entry', apiKeyEnv: 'ENTRY_ENV_KEY' } });
+    cfg.provider = 'anthropic';
+    const merged = resolveModelEntry(cfg, 'c');
     expect(merged!.apiKey).toBe('k-entry');
   });
 
-  it('预设分支：entry 无 apiKey → entry api_key_env 指向的 env', () => {
+  it('继承分支：entry 无 apiKey → entry api_key_env 指向的 env', () => {
     process.env['ANTHROPIC_API_KEY'] = 'k-env-anthropic';
     process.env['ENTRY_ENV_KEY'] = 'k-entry-env';
-    const merged = resolveModelEntry(
-      chainConfig(undefined, { c: { provider: 'anthropic', apiKeyEnv: 'ENTRY_ENV_KEY' } }),
-      'c',
-    );
+    const cfg = chainConfig(undefined, { c: { apiKeyEnv: 'ENTRY_ENV_KEY' } });
+    cfg.provider = 'anthropic';
+    const merged = resolveModelEntry(cfg, 'c');
     expect(merged!.apiKey).toBe('k-entry-env');
   });
 
-  it('预设分支：entry 两项都缺 → 按 entry.provider 的惯例 env', () => {
+  it('继承分支：entry 两项都缺 → 顶层 provider 的惯例 env', () => {
     process.env['ANTHROPIC_API_KEY'] = 'k-env-anthropic';
-    const merged = resolveModelEntry(chainConfig(undefined, { c: { provider: 'anthropic' } }), 'c');
+    const cfg = chainConfig(undefined, { c: {} });
+    cfg.provider = 'anthropic';
+    const merged = resolveModelEntry(cfg, 'c');
     expect(merged!.apiKey).toBe('k-env-anthropic');
   });
 
-  it('继承分支：entry.provider 缺省 → 惯例 env 按顶层 provider（stepfun→STEPFUN_API_KEY）', () => {
-    process.env['STEPFUN_API_KEY'] = 'k-env-stepfun';
+  it('继承分支：顶层 provider 为 stepfun（无惯例 env）→ 回落隐式渠道 apiKey', () => {
     const merged = resolveModelEntry(chainConfig(undefined, { c: {} }), 'c');
-    expect(merged!.apiKey).toBe('k-env-stepfun');
+    expect(merged!.apiKey).toBe('k-implicit');
   });
 
-  it('预设分支：各级都缺 → 隐式渠道 apiKey（最后回落）', () => {
-    const merged = resolveModelEntry(chainConfig(undefined, { c: { provider: 'anthropic' } }), 'c');
-    expect(merged!.apiKey).toBe('k-implicit');
+  it('继承分支：各级都缺 → apiKey 为 undefined（不抛错，由 provider 工厂兜底）', () => {
+    const cfg = chainConfig(undefined, { c: {} });
+    cfg.apiKey = undefined;
+    const merged = resolveModelEntry(cfg, 'c');
+    expect(merged).not.toBeNull();
+    expect(merged!.apiKey).toBeUndefined();
   });
 
   it('渠道与顶层都没有任何 key → apiKey 为 undefined（不抛错，由 provider 工厂兜底）', () => {

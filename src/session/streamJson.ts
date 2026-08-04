@@ -11,10 +11,6 @@ import type { SubagentProgressEvent } from '../agent/events.js';
  * - agent 循环事件：`AgentEvent` 原样输出（`text` / `tool_start` / `usage` / ...），无前缀
  * - 子 agent 事件：`subagent.*`
  * - 会话元信息：`session.*`
- *
- * 历史包袱：`resumeHintMeta` 曾带 `role: 'meta'` 字段，与 `AgentEvent` 的扁平结构不一致，
- * 消费方需要同时认 `type` 和 `role` 两套判别。2026-08-02 统一为只认 `type`，`role` 保留
- * 但标记为 deprecated（见 `session/resumeHint.ts`），下个 breaking 版本移除。
  */
 
 /** 当前 stream-json 协议版本。信封结构或事件语义发生不兼容变更时递增。 */

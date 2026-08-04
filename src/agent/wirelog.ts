@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { normalizeMessage, stored, type StoredMessage } from './message.js';
+import { stored, type StoredMessage } from './message.js';
 import type { GoalState } from './goal/mode.js';
 import type { PermissionMode } from './permission/mode.js';
 import type { BackgroundTask } from './background/manager.js';
@@ -7,7 +7,7 @@ import type { BackgroundTask } from './background/manager.js';
 /**
  * 事件日志（wire.jsonl）模块：会话状态机的事实源。
  *
- * 定位：`full.jsonl` 从「每行一条消息」升级为「每行一个事件」。消息只是事件的一种
+ * 定位：每行一个事件。消息只是事件的一种
  * （context.append_message），权限模式 / planMode / thinkOverride / goal / 后台任务生命周期
  * 等非消息状态同样以事件落盘，从而获得时序与任意点恢复能力。
  *
@@ -188,7 +188,7 @@ export function applyWireEvent(state: WireReplayState, event: WireEvent): void {
     case 'metadata':
       break;
     case 'context.append_message': {
-      const message = normalizeMessage(event.message);
+      const message = event.message;
       state.messages.push(message);
       const origin = message.origin;
       if (origin.kind === 'background_task' && origin.notificationId !== undefined) {
@@ -212,7 +212,7 @@ export function applyWireEvent(state: WireReplayState, event: WireEvent): void {
       state.goal = event.goal;
       break;
     case 'context.apply_compaction':
-      state.messages = event.messages.map(normalizeMessage);
+      state.messages = [...event.messages];
       break;
     case 'background.task_settle':
       state.settledTasks.set(event.task.id, event.task);
@@ -237,7 +237,6 @@ export function replayWireEvents(events: readonly WireEvent[], base?: WireReplay
 
 /**
  * 解析一行 JSONL 为事件。损坏行（含崩溃截断的尾行）返回 null，调用方跳过。
- * 行内消息型载荷读入即归一化（旧字符串 origin → 对象形态）。
  */
 export function parseWireLine(line: string): WireEvent | null {
   const trimmed = line.trim();
@@ -289,7 +288,7 @@ export function closeDanglingToolUse(messages: readonly StoredMessage[]): Dangli
     content: '[会话中断：该工具调用未产生结果，已按失败闭合]',
   }));
   return {
-    messages: [...messages, stored({ role: 'user', content: closure }, 'tool')],
+    messages: [...messages, stored({ role: 'user', content: closure }, { kind: 'tool' })],
     closed: true,
     closedToolUseIds: toolUseIds,
   };

@@ -25,7 +25,7 @@ afterEach(() => {
 /** 建一个会话并落盘，返回 id。 */
 function seed(model = 'step-3.7-flash'): string {
   const s = store.create(cwd, model);
-  s.messages.push(stored({ role: 'user', content: 'hi' }, 'user'));
+  s.messages.push(stored({ role: 'user', content: 'hi' }, { kind: 'user' }));
   store.save(s);
   store.appendFull(cwd, s.id, s.messages);
   return s.id;
