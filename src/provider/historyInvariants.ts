@@ -9,15 +9,16 @@ import type Anthropic from '@anthropic-ai/sdk';
  * - id 唯一性是存储层（`StoredMessage`）的性质，由 `src/agent/message.ts` 的 `randomUUID` 保证；
  * - 本层刻意不引入存储层依赖，也不自行发明 id 字段。
  *
- * 其余四条不变量可以在裸消息层判定，这里集中实现。
+ * 「连续同 role」同样**不算违规**：内部历史里它是正常常态——发送队列会连着追加多条
+ * user，工具结果回灌（user）之后紧接用户新输入也是 user。它由 `normalizeHistory` 的
+ * 合并步骤消化，不指向任何源头缺陷；报成违规只会让每个会话都刷一条无意义的告警，
+ * 把真正的孤儿/悬空信号淹掉。
+ *
+ * 剩下三条可以在裸消息层判定，这里集中实现。
  */
 
 export interface HistoryViolation {
-  code:
-    | 'dangling-tool-use'
-    | 'orphan-tool-result'
-    | 'pairing-not-adjacent'
-    | 'consecutive-same-role';
+  code: 'dangling-tool-use' | 'orphan-tool-result' | 'pairing-not-adjacent';
   /** 可定位的说明，带 tool_use_id 或消息序号（从 0 起）。 */
   detail: string;
 }
@@ -95,40 +96,27 @@ export function checkHistoryInvariants(
     }
   }
 
-  // ③ assistant(tool_use) 之后紧跟它的 tool_result 组，中间不插入其他消息
+  // ③ assistant(tool_use) 之后紧跟它的 tool_result 组，中间不插入其他消息。
+  //    判据收严到「只允许纯 tool_result 的 user 消息」：并行工具的结果可能分成连续
+  //    几条 user 消息落盘，那仍属同一个配对组；但只要中间那条 user 带了文本块，
+  //    投影到 OpenAI Chat 后就成了插在 assistant 与 role:'tool' 之间的 user 消息，
+  //    正是严格网关 400 的形态——放行 text 等于漏掉要查的那种缺陷。
   for (const tu of toolUses) {
     if (!answeredFirstIdx.has(tu.id)) continue; // 未配对，已在上条记录
     const resultIdx = answeredFirstIdx.get(tu.id)!;
     if (resultIdx <= tu.msgIdx) continue; // 同一消息内或更早，不应发生
-    // 检查 (tu.msgIdx, resultIdx) 之间是否全是 user 且只含 tool_result/text
     for (let i = tu.msgIdx + 1; i < resultIdx; i++) {
       const m = messages[i]!;
-      if (m.role !== 'user') {
-        violations.push({
-          code: 'pairing-not-adjacent',
-          detail: `tool_use(id=${tu.id}) 在 #${tu.msgIdx} 与配对 tool_result 在 #${resultIdx} 之间插入了 #${i} role=${m.role}`,
-        });
-        break;
-      }
       const blocks = toBlocks(m);
-      const hasNonTool = blocks.some((b) => b.type !== 'tool_result' && b.type !== 'text');
-      if (hasNonTool) {
+      const isToolResultGroup =
+        m.role === 'user' && blocks.length > 0 && blocks.every((b) => b.type === 'tool_result');
+      if (!isToolResultGroup) {
         violations.push({
           code: 'pairing-not-adjacent',
-          detail: `tool_use(id=${tu.id}) 与配对 tool_result 之间的 user 消息 #${i} 含有非工具结果块`,
+          detail: `tool_use(id=${tu.id}) 在 #${tu.msgIdx} 与配对 tool_result 在 #${resultIdx} 之间插入了 #${i}（role=${m.role}，非纯工具结果消息）`,
         });
         break;
       }
-    }
-  }
-
-  // ④ 不出现连续同 role 消息
-  for (let i = 1; i < messages.length; i++) {
-    if (messages[i]!.role === messages[i - 1]!.role) {
-      violations.push({
-        code: 'consecutive-same-role',
-        detail: `消息 #${i - 1} 与 #${i} 连续同为 role=${messages[i]!.role}`,
-      });
     }
   }
 
