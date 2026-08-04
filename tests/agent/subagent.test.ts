@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SubagentProgressEvent } from '../../src/agent/events.js';
 import { buildAgentRegistry, parseAgentMarkdown } from '../../src/agent/subagent/registry.js';
-import { repairToolPairing, RESUME_INTERRUPT_TOOL_MSG } from '../../src/agent/subagent/repair.js';
+import { closeDanglingToolUse } from '../../src/agent/wirelog.js';
 import { createSubagentRunner, type SubagentRunnerDeps } from '../../src/agent/subagent/runner.js';
 import { SubagentStore } from '../../src/agent/subagent/store.js';
 import type { SubagentResult } from '../../src/agent/subagent/types.js';
@@ -702,10 +702,10 @@ describe('resume：按 id 恢复子会话', () => {
     // 补合成后无孤儿；原 assistant 条保留（模型能看到自己发起过那次调用）
     expectPaired(snap.messages);
     const json = JSON.stringify(snap.messages);
-    expect(json).toContain(RESUME_INTERRUPT_TOOL_MSG);
+    expect(json).toContain('[工具调用未产生结果：执行被中断。不要重试这次调用，按最新指示继续。]');
     expect(json).toContain('read_file');
     // 首个请求就已带上合成结果
-    expect(JSON.stringify(streamParams()[0]!.messages)).toContain(RESUME_INTERRUPT_TOOL_MSG);
+    expect(JSON.stringify(streamParams()[0]!.messages)).toContain('[工具调用未产生结果：执行被中断。不要重试这次调用，按最新指示继续。]');
   });
 
   it('resume 回灌的 stepref 图片经 attachments rehydrate 后发给 provider（指针不外泄）', async () => {
@@ -759,8 +759,8 @@ describe('resume：按 id 恢复子会话', () => {
   });
 });
 
-describe('repairToolPairing（尾部配对校验）', () => {
-  it('末条 assistant 含未配对 tool_use → 补合成 tool_result，原条保留', () => {
+describe('closeDanglingToolUse（尾部悬空 tool_use 闭合）', () => {
+  it('末条 assistant 含未配对 tool_use → 补合成 error tool_result，原条保留', () => {
     const messages: StoredMessage[] = [
       stored({ role: 'user', content: 'q' }, { kind: 'user' }),
       stored(
@@ -768,13 +768,15 @@ describe('repairToolPairing（尾部配对校验）', () => {
         { kind: 'assistant' },
       ),
     ];
-    expect(repairToolPairing(messages)).toBe(2);
-    expectPaired(messages);
+    const result = closeDanglingToolUse(messages);
+    expect(result.closed).toBe(true);
+    expect(result.closedToolUseIds).toEqual(['c1', 'c2']);
+    expectPaired(result.messages);
     // 原 assistant 条仍在（未截掉）
-    expect(messages[1]!.message.role).toBe('assistant');
-    const last = messages.at(-1)!;
+    expect(result.messages[1]!.message.role).toBe('assistant');
+    const last = result.messages.at(-1)!;
     expect(last.message.role).toBe('user');
-    expect(JSON.stringify(last.message.content)).toContain(RESUME_INTERRUPT_TOOL_MSG);
+    expect(JSON.stringify(last.message.content)).toContain('[工具调用未产生结果：执行被中断。不要重试这次调用，按最新指示继续。]');
   });
 
   it('部分配对：只补缺失的那个', () => {
@@ -793,9 +795,10 @@ describe('repairToolPairing（尾部配对校验）', () => {
       ),
       stored({ role: 'assistant', content: [toolUseBlock('c2', 'grep', {})] }, { kind: 'assistant' }),
     ];
-    // c2 在中间条已配对（第二条 user 只答 c1？不——c2 未答；末条 assistant 的 c2 是孤儿）
-    expect(repairToolPairing(messages)).toBe(1);
-    expectPaired(messages);
+    const result = closeDanglingToolUse(messages);
+    expect(result.closed).toBe(true);
+    expect(result.closedToolUseIds).toEqual(['c2']);
+    expectPaired(result.messages);
   });
 
   it('末条非 assistant 或已配对 → 不动', () => {
@@ -804,11 +807,12 @@ describe('repairToolPairing（尾部配对校验）', () => {
       stored({ role: 'assistant', content: [toolUseBlock('c1', 'read_file', {})] }, { kind: 'assistant' }),
       stored({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'ok' }] }, { kind: 'user' }),
     ];
-    expect(repairToolPairing(clean)).toBe(0);
-    expect(clean).toHaveLength(3);
+    const result = closeDanglingToolUse(clean);
+    expect(result.closed).toBe(false);
+    expect(result.messages).toHaveLength(3);
     const textOnly: StoredMessage[] = [stored({ role: 'assistant', content: '纯文本' }, { kind: 'assistant' })];
-    expect(repairToolPairing(textOnly)).toBe(0);
-    expect(repairToolPairing([])).toBe(0);
+    expect(closeDanglingToolUse(textOnly).closed).toBe(false);
+    expect(closeDanglingToolUse([]).closed).toBe(false);
   });
 });
 

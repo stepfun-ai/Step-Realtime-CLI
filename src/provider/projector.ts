@@ -1,4 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { synthesizeToolResultBlocks } from '../agent/toolClosure.js';
 
 /**
  * 请求前统一整形（projection）：把内部消息序列修成任何 provider 都接受的最简形态。
@@ -13,35 +14,9 @@ import type Anthropic from '@anthropic-ai/sdk';
  *    有 tool_use 无 tool_result 的，合成一条错误 tool_result 闭合（崩在工具执行
  *    中途的历史不带闭合结果直接回灌会被服务端拒绝）。
  * 2. 合并连续同 role 消息（content 块直接拼接）。
- * 3. 首条消息不是 user 时，补一条空 user 消息（部分端点要求对话必须从 user 开始）。
  *
  * 不改动入参数组与消息对象，全部返回新对象。
  */
-
-/** 合成闭合结果的占位文本：工具结果在宿主侧丢失（如崩溃中断），对模型如实标注。 */
-const SYNTHETIC_TOOL_RESULT_TEXT = '[tool result missing: execution was interrupted]';
-
-type Block = Anthropic.ContentBlockParam;
-
-/** content 归一化为 block 数组（字符串包成单个 text block）。 */
-function toBlocks(msg: Anthropic.MessageParam): Block[] {
-  if (typeof msg.content === 'string') {
-    return msg.content === '' ? [] : [{ type: 'text', text: msg.content }];
-  }
-  return [...msg.content];
-}
-
-/** 收集全部 assistant 消息里的 tool_use id（保持出现顺序）。 */
-function collectToolUseIds(messages: Anthropic.MessageParam[]): string[] {
-  const ids: string[] = [];
-  for (const msg of messages) {
-    if (msg.role !== 'assistant') continue;
-    for (const block of toBlocks(msg)) {
-      if (block.type === 'tool_use') ids.push(block.id);
-    }
-  }
-  return ids;
-}
 
 /**
  * 第一步：孤儿 tool_result 丢弃 + 悬空 tool_use 合成闭合。
@@ -66,20 +41,18 @@ function repairToolPairing(messages: Anthropic.MessageParam[]): Anthropic.Messag
   // 悬空 tool_use：按消息顺序找所属 assistant，合成错误结果闭合
   for (const id of collectToolUseIds(messages)) {
     if (answered.has(id)) continue;
-    const synthetic: Block = {
-      type: 'tool_result',
-      tool_use_id: id,
-      content: SYNTHETIC_TOOL_RESULT_TEXT,
-      is_error: true,
-    };
+    const synthetic = synthesizeToolResultBlocks([id])[0]!;
     const assistantIdx = out.findIndex(
       (msg) =>
         msg.role === 'assistant' &&
-        (msg.content as Block[]).some((b) => b.type === 'tool_use' && b.id === id),
+        (msg.content as Anthropic.ContentBlockParam[]).some((b) => b.type === 'tool_use' && b.id === id),
     );
     const next = out[assistantIdx + 1];
     if (next !== undefined && next.role === 'user') {
-      out[assistantIdx + 1] = { role: 'user', content: [synthetic, ...(next.content as Block[])] };
+      out[assistantIdx + 1] = {
+        role: 'user',
+        content: [synthetic, ...(next.content as Anthropic.ContentBlockParam[])],
+      };
     } else {
       out.splice(assistantIdx + 1, 0, { role: 'user', content: [synthetic] });
     }
@@ -87,7 +60,29 @@ function repairToolPairing(messages: Anthropic.MessageParam[]): Anthropic.Messag
   return out;
 }
 
-/** 第二步：合并连续同 role 消息；空 content 的消息（修复后被掏空）直接丢弃。 */
+type Block = Anthropic.ContentBlockParam;
+
+/** content 归一化为 block 数组（字符串包成单个 text block）。 */
+function toBlocks(msg: Anthropic.MessageParam): Block[] {
+  if (typeof msg.content === 'string') {
+    return msg.content === '' ? [] : [{ type: 'text', text: msg.content }];
+  }
+  return [...msg.content];
+}
+
+/** 收集全部 assistant 消息里的 tool_use id（保持出现顺序）。 */
+function collectToolUseIds(messages: Anthropic.MessageParam[]): string[] {
+  const ids: string[] = [];
+  for (const msg of messages) {
+    if (msg.role !== 'assistant') continue;
+    for (const block of toBlocks(msg)) {
+      if (block.type === 'tool_use') ids.push(block.id);
+    }
+  }
+  return ids;
+}
+
+/** 合并连续同 role 消息；空 content 的消息（修复后被掏空）直接丢弃。 */
 function mergeConsecutiveSameRole(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = [];
   for (const msg of messages) {
@@ -104,15 +99,34 @@ function mergeConsecutiveSameRole(messages: Anthropic.MessageParam[]): Anthropic
 }
 
 /**
- * 投影入口：按「修复工具配对 → 合并同 role → 补首条 user」的顺序整形。
+ * 协议无关的不变量维护：修复工具配对 + 合并连续同 role。
+ * 不改动入参数组与消息对象，全部返回新对象。
+ */
+export function normalizeHistory(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  const repaired = repairToolPairing(messages);
+  return mergeConsecutiveSameRole(repaired);
+}
+
+/**
+ * Anthropic 协议要求：对话必须从 user 开始。
+ * 若首条消息不是 user，补一条空 user 消息。
+ *
+ * 这是协议要求，不是通用不变量——OpenAI Chat Completions 允许 system 开场，
+ * 插一条空 user 反而可能被严格网关拒绝，因此这一步不属于 `normalizeHistory`，
+ * 只应在明确需要 Anthropic 协议形态时调用。
+ */
+export function ensureLeadingUser(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  if (messages.length === 0 || messages[0]!.role !== 'user') {
+    return [{ role: 'user', content: '' }, ...messages];
+  }
+  return messages;
+}
+
+/**
+ * 投影入口（Anthropic 协议专用）：按「修复工具配对 → 合并同 role → 补首条 user」的顺序整形。
  * 空 user 消息用空字符串 content（部分端点要求 user 开场但接受空正文）；
  * 若目标端点连空正文也拒，由 degrader 的 strict 档再处理。
  */
 export function projectMessages(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
-  const repaired = repairToolPairing(messages);
-  const merged = mergeConsecutiveSameRole(repaired);
-  if (merged.length === 0 || merged[0]!.role !== 'user') {
-    return [{ role: 'user', content: '' }, ...merged];
-  }
-  return merged;
+  return ensureLeadingUser(normalizeHistory(messages));
 }
