@@ -131,3 +131,42 @@ describe('SessionStore 事件日志（appendWire / loadWire）', () => {
     expect(store.load(cwd, s.id)!.wireSeq).toBeUndefined();
   });
 });
+
+describe('listWireSessionIds（以事件日志为事实源列举）', () => {
+  it('列出有事件日志的会话 id，升序', () => {
+    const a = store.create(cwd, 'm');
+    const b = store.create(cwd, 'm');
+    store.appendWire(cwd, a.id, [{ type: 'permission.set_mode', ts: TS, mode: 'auto' }]);
+    store.appendWire(cwd, b.id, [{ type: 'permission.set_mode', ts: TS, mode: 'auto' }]);
+    const ids = store.listWireSessionIds(cwd);
+    expect(ids).toHaveLength(2);
+    expect(ids).toEqual([...ids].sort());
+    expect(new Set(ids)).toEqual(new Set([a.id, b.id]));
+  });
+
+  it('有事件日志但无 .json 快照的会话也要列出（list 会漏掉它们）', () => {
+    // 复现真实场景：写完事件日志、还没走到 save 就崩溃/被强杀。
+    // 实测某工作目录下 79 个事件日志里有 7 个处于此状态，其中一个含 3 条 model.usage。
+    const s = store.create(cwd, 'm');
+    store.appendWire(cwd, s.id, [{ type: 'permission.set_mode', ts: TS, mode: 'auto' }]);
+    rmSync(join(base, workdirKey(cwd), `${s.id}.json`), { force: true });
+
+    expect(store.list(cwd).some((m) => m.id === s.id)).toBe(false);
+    expect(store.listWireSessionIds(cwd)).toContain(s.id);
+  });
+
+  it('只认 .wire.jsonl：同一会话的快照与事件日志不重复计数', () => {
+    const s = store.create(cwd, 'm');
+    store.appendFull(cwd, s.id, [stored({ role: 'user', content: 'a' }, { kind: 'user' })]);
+    store.save(s);
+    // 该仓的 appendFull 已改为落进 wire.jsonl，不再写 full.jsonl（见上方同名用例）
+    expect(existsSync(fullPath(s.id))).toBe(false);
+    expect(existsSync(join(base, workdirKey(cwd), `${s.id}.json`))).toBe(true);
+    // 快照 + 事件日志两个文件并存，但只应算一个会话
+    expect(store.listWireSessionIds(cwd).filter((id) => id === s.id)).toHaveLength(1);
+  });
+
+  it('工作目录不存在时返回空数组', () => {
+    expect(store.listWireSessionIds('D:/never/existed')).toEqual([]);
+  });
+});
