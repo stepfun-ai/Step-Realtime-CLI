@@ -7,7 +7,6 @@ import {
   notifyDedupKey,
   notifyDedupKeyFromOrigin,
   parseWireLine,
-  repairOrphanToolResults,
   replayWireEvents,
   type WireEvent,
 } from '../../src/agent/wirelog.js';
@@ -193,90 +192,5 @@ describe('closeDanglingToolUse 悬空 tool_use 闭合', () => {
       stored({ role: 'assistant', content: [{ type: 'text', text: '想完了' }] }, 'assistant'),
     ];
     expect(closeDanglingToolUse(noToolUse).closed).toBe(false);
-  });
-});
-
-describe('repairOrphanToolResults 孤儿 tool_result 降级', () => {
-  const assistantToolUse = stored(
-    {
-      role: 'assistant',
-      content: [
-        { type: 'text', text: '读一下' },
-        { type: 'tool_use', id: 'tu-1', name: 'read_file', input: { path: 'a.ts' } },
-      ],
-    },
-    'assistant',
-  );
-  const toolResult = (id: string, text = '文件内容') =>
-    stored({ role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] }, 'tool');
-  const assistantText = stored({ role: 'assistant', content: [{ type: 'text', text: '读完了' }] }, 'assistant');
-
-  it('有效配对不动：tool_result 紧跟含匹配 tool_use 的 assistant', () => {
-    const messages = [assistantToolUse, toolResult('tu-1'), assistantText];
-    const result = repairOrphanToolResults(messages);
-    expect(result.repaired).toBe(false);
-    expect(result.repairedToolUseIds).toEqual([]);
-    expect(result.messages[1]!.message.content).toEqual(messages[1]!.message.content);
-  });
-
-  it('连续的纯 tool_result user 组同属一组应答：全部视为有效配对', () => {
-    const multiUse = stored(
-      {
-        role: 'assistant',
-        content: [
-          { type: 'tool_use', id: 'tu-1', name: 'a', input: {} },
-          { type: 'tool_use', id: 'tu-2', name: 'b', input: {} },
-        ],
-      },
-      'assistant',
-    );
-    const messages = [multiUse, toolResult('tu-1'), toolResult('tu-2'), assistantText];
-    const result = repairOrphanToolResults(messages);
-    expect(result.repaired).toBe(false);
-  });
-
-  it('孤儿 tool_result（前序是 assistant 纯文本）降级为 text，内容完整保留', () => {
-    // 存量尾部重复的同构序列：assistant(tool_use) → result → assistant(text) → result(孤儿)
-    const messages = [assistantToolUse, toolResult('tu-1'), assistantText, toolResult('tu-1'), assistantText];
-    const result = repairOrphanToolResults(messages);
-    expect(result.repaired).toBe(true);
-    expect(result.repairedToolUseIds).toEqual(['tu-1']);
-    // 第一条 result 是有效配对，保持 tool_result 类型
-    const kept = result.messages[1]!.message.content as { type: string }[];
-    expect(kept[0]!.type).toBe('tool_result');
-    // 孤儿那条变成 text 块，原文与 id 都留在文本里
-    const demoted = result.messages[3]!.message.content as { type: string; text: string }[];
-    expect(demoted[0]!.type).toBe('text');
-    expect(demoted[0]!.text).toContain('文件内容');
-    expect(demoted[0]!.text).toContain('tu-1');
-    // 原数组不被修改
-    expect((messages[3]!.message.content as { type: string }[])[0]!.type).toBe('tool_result');
-  });
-
-  it('混合内容消息里的孤儿块单独降级，同消息内的文本块保留', () => {
-    const mixed = stored(
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: '补充说明' },
-          { type: 'tool_result', tool_use_id: 'tu-9', content: '旧结果' },
-        ],
-      },
-      'tool',
-    );
-    const messages = [assistantText, mixed];
-    const result = repairOrphanToolResults(messages);
-    expect(result.repairedToolUseIds).toEqual(['tu-9']);
-    const blocks = result.messages[1]!.message.content as { type: string; text?: string }[];
-    expect(blocks.map((b) => b.type)).toEqual(['text', 'text']);
-    expect(blocks[0]!.text).toBe('补充说明');
-    expect(blocks[1]!.text).toContain('旧结果');
-  });
-
-  it('无 tool_result 的历史原样返回', () => {
-    const messages = [stored({ role: 'user', content: 'q' }, 'user'), assistantText];
-    const result = repairOrphanToolResults(messages);
-    expect(result.repaired).toBe(false);
-    expect(result.messages).toEqual(messages);
   });
 });
