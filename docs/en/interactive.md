@@ -47,6 +47,7 @@ All 24 commands (the table below has 25 rows, because `/skill reload` is listed 
 | `/history [N]` (alias `/undo`) | With no argument, opens the input history panel for this session (Enter backtracks to that turn and recalls the original text for resending, Tab only recalls the text); with an argument, undoes the last N turns directly without opening the panel |
 | `/reflect` | Review the full session history, distill reusable methodology, and print it |
 | `/export-debug-zip` | Export a session debug bundle (session body + redacted config + runtime logs) |
+| `/usage [--all]` | Show per-model token usage and cache hit rate for this session; `--all` aggregates every session in this working directory (including crash leftovers that have an event log but no snapshot). Read-only, runs instantly while busy |
 | `/resume [id]` (alias `/sessions`) | With no argument, opens the interactive session picker; with an id, switches directly |
 | `/lang [zh\|en]` | With no argument, shows the current language; with an argument, switches the interface between Chinese and English and writes `language` back to `config.toml` |
 | `/mcp` | Check MCP server connection status and tool counts |
