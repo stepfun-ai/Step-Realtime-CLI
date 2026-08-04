@@ -464,6 +464,29 @@ export class SessionStore {
     };
   }
 
+  /**
+   * 列出该工作目录下所有**有事件日志**的会话 id（升序）。
+   *
+   * 与 {@link list} 的区别是事实源不同：`list` 按 `<id>.json` 快照列举，
+   * 而本方法按 `<id>.wire.jsonl` 列举。两者会不一致——会话在写完事件日志后
+   * 若未走到 save（崩溃、强杀），就只有事件日志没有快照。实测某工作目录下
+   * 79 个事件日志里有 7 个没有对应快照。
+   *
+   * 因此凡以事件日志为数据源的统计（如 `/usage`）必须用本方法列举，
+   * 用 `list` 会静默漏掉这些会话；反之需要标题、模型、更新时间等元信息时用 `list`。
+   */
+  listWireSessionIds(cwd: string): string[] {
+    const dir = this.dirFor(cwd);
+    if (!existsSync(dir)) return [];
+    const suffix = '.wire.jsonl';
+    const ids: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(suffix)) continue;
+      ids.push(entry.name.slice(0, -suffix.length));
+    }
+    return ids.sort();
+  }
+
   /** 列出该工作目录下的会话元信息，按 updatedAt 倒序。只扫桶根文件：subagents/ 等子目录不属于主会话列表。 */
   list(cwd: string): SessionMeta[] {
     const dir = this.dirFor(cwd);

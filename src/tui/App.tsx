@@ -97,6 +97,8 @@ import { applyStepEvent, applySubagentEvent, parseWorkflowInput, parseWfSid } fr
 import { WelcomeBox } from './WelcomeBox.js';
 import type { SessionData, SessionMeta, SessionStore } from '../session/store.js';
 import { exportDebugBundle } from '../session/debugBundle.js';
+import { aggregateModelUsage } from '../session/usageReport.js';
+import { formatUsageReport } from './usagePanel.js';
 import { InputHistoryStore } from '../session/inputHistory.js';
 import type { DisplayItem } from './types.js';
 import { versionLine } from '../buildInfo.js';
@@ -2051,6 +2053,35 @@ export function App({
               busyRef.current = false;
             }
           })();
+          break;
+        }
+        case 'usage': {
+          // 纯只读统计：数据源是已落盘的 model.usage 事件，不碰任何会话状态，
+          // 故列入 INSTANT_WHEN_BUSY、回合进行中也能看。
+          const wantAll = args.trim() === '--all';
+          if (wantAll) {
+            // 范围只到当前工作目录，不跨目录：跨目录会把别的项目的会话读进来。
+            // 用 listWireSessionIds 而非 list：后者按 .json 快照列举，会漏掉
+            // 「有事件日志但没走到 save」的会话（实测 79 个日志里有 7 个如此）。
+            const ids = store.listWireSessionIds(ctx.cwd);
+            const events = ids.flatMap((id) => store.loadWire(ctx.cwd, id));
+            pushItem({
+              kind: 'note',
+              text: formatUsageReport(
+                aggregateModelUsage(events),
+                t('app.usage.scope.all', { count: String(ids.length) }),
+              ),
+            });
+          } else {
+            const events = store.loadWire(sessionRef.current.cwd, sessionRef.current.id);
+            pushItem({
+              kind: 'note',
+              text: formatUsageReport(
+                aggregateModelUsage(events),
+                t('app.usage.scope.session', { id: sessionRef.current.id }),
+              ),
+            });
+          }
           break;
         }
         case 'resume': {
