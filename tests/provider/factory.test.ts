@@ -27,27 +27,30 @@ describe('createProvider', () => {
     expect(typeof p.stream).toBe('function');
   });
 
-  it('anthropic → AnthropicMessagesProvider 实例', () => {
+  it('anthropic → AnthropicMessagesProvider 实例（包装在历史整形装饰器内）', () => {
     const p = createProvider(
       baseConfig({ provider: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-x' }),
     );
-    expect(p).toBeInstanceOf(AnthropicMessagesProvider);
+    const inner = (p as unknown as { inner: ChatProvider }).inner;
+    expect(inner).toBeInstanceOf(AnthropicMessagesProvider);
     expect(typeof p.stream).toBe('function');
   });
 
-  it('openai → OpenAiChatProvider 实例', () => {
+  it('openai → OpenAiChatProvider 实例（包装在历史整形装饰器内）', () => {
     const p = createProvider(
       baseConfig({ provider: 'openai', baseUrl: 'https://api.stepfun.com/v1' }),
     );
-    expect(p).toBeInstanceOf(OpenAiChatProvider);
+    const inner = (p as unknown as { inner: ChatProvider }).inner;
+    expect(inner).toBeInstanceOf(OpenAiChatProvider);
     expect(typeof p.stream).toBe('function');
   });
 
-  it('openai_responses → OpenAiResponsesProvider 实例', () => {
+  it('openai_responses → OpenAiResponsesProvider 实例（包装在历史整形装饰器内）', () => {
     const p = createProvider(
       baseConfig({ provider: 'openai_responses', baseUrl: 'https://api.stepfun.com/v1' }),
     );
-    expect(p).toBeInstanceOf(OpenAiResponsesProvider);
+    const inner = (p as unknown as { inner: ChatProvider }).inner;
+    expect(inner).toBeInstanceOf(OpenAiResponsesProvider);
     expect(typeof p.stream).toBe('function');
   });
 
@@ -116,9 +119,9 @@ describe('createProvider', () => {
 
   it('anthropic 预设 sendThinking=true，但未配 [thinking] 时不注入 thinking 参数', () => {
     const p = createProvider(baseConfig({ provider: 'anthropic', baseUrl: 'https://api.anthropic.com' }));
-    const internals = p as unknown as { sendThinking: boolean; thinking?: unknown };
-    expect(internals.sendThinking).toBe(true);
-    expect(internals.thinking).toBeUndefined();
+    const inner = (p as unknown as { inner: { sendThinking: boolean; thinking?: unknown } }).inner;
+    expect(inner.sendThinking).toBe(true);
+    expect(inner.thinking).toBeUndefined();
   });
 });
 
