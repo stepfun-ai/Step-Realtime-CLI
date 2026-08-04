@@ -61,14 +61,38 @@ describe('checkHistoryInvariants', () => {
     expect(violations.some((v) => v.code === 'pairing-not-adjacent')).toBe(true);
   });
 
-  it('consecutive-same-role：连续同 role', () => {
+  it('连续同 role 不算违规：内部历史的正常常态，由 normalizeHistory 合并', () => {
     const violations = checkHistoryInvariants([
       { role: 'user', content: '一' },
       { role: 'user', content: '二' },
     ]);
-    expect(violations).toEqual([
-      { code: 'consecutive-same-role', detail: expect.stringContaining('role=user') },
+    expect(violations).toEqual([]);
+  });
+
+  it('并行工具结果分成连续几条纯 tool_result user 消息，仍视为同一配对组（不报不相邻）', () => {
+    const violations = checkHistoryInvariants([
+      { role: 'user', content: '问' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'a', name: 't', input: {} },
+          { type: 'tool_use', id: 'b', name: 't', input: {} },
+        ],
+      },
+      userToolResult('a'),
+      userToolResult('b'),
     ]);
+    expect(violations).toEqual([]);
+  });
+
+  it('配对组中间夹一条带文本的 user 消息 → 报不相邻（投影到 Chat 后即严格网关 400 的形态）', () => {
+    const violations = checkHistoryInvariants([
+      { role: 'user', content: '问' },
+      assistantToolUse('x'),
+      { role: 'user', content: '插一句话' },
+      userToolResult('x'),
+    ]);
+    expect(violations.some((v) => v.code === 'pairing-not-adjacent')).toBe(true);
   });
 });
 
@@ -156,9 +180,10 @@ describe('withHistoryNormalization 装饰器', () => {
       },
     };
     const provider = withHistoryNormalization(fakeInner as unknown as Parameters<typeof withHistoryNormalization>[0]);
+    // 用孤儿 tool_result 当违规样本：连续同 role 是内部历史的正常常态，不算违规
     const messages: Anthropic.MessageParam[] = [
-      { role: 'user', content: '一' },
-      { role: 'user', content: '二' },
+      { role: 'user', content: '问' },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'ghost', content: 'r' }] },
     ];
     // 未设环境变量：不抛
     const prev = process.env['STEP_CODE_STRICT_HISTORY'];
@@ -171,7 +196,7 @@ describe('withHistoryNormalization 装饰器', () => {
     // 设环境变量：抛错
     process.env['STEP_CODE_STRICT_HISTORY'] = '1';
     try {
-      expect(() => provider.stream({ system: '', tools: [], messages })).toThrow('history invariant violations');
+      expect(() => provider.stream({ system: '', tools: [], messages })).toThrow('历史不变量被破坏');
     } finally {
       process.env['STEP_CODE_STRICT_HISTORY'] = prev ?? '';
     }
