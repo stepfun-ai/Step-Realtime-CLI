@@ -13,8 +13,8 @@ import type { SubagentProgressEvent } from '../agent/events.js';
  * - 会话元信息：`session.*`
  */
 
-/** 当前 stream-json 协议版本。信封结构或事件语义发生不兼容变更时递增。 */
-export const STREAM_JSON_PROTOCOL_VERSION = 1;
+/** 当前 stream-json 协议版本。信封结构或事件语义发生不兼容变更时递增。v2：移除 resumeHintMeta 的 `role` 字段。 */
+export const STREAM_JSON_PROTOCOL_VERSION = 2;
 
 /**
  * 子 agent 进度事件的 stream-json 形态。

@@ -36,7 +36,7 @@ for line in proc.stdout:
 
 ## Versioning and compatibility
 
-`STREAM_JSON_PROTOCOL_VERSION` is currently **1**.
+`STREAM_JSON_PROTOCOL_VERSION` is currently **2** (since v2 the `session.resume_hint` meta envelope no longer carries a `role` field — `type` is the only discriminator).
 
 The bump rule splits cleanly in two:
 
