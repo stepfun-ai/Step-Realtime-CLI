@@ -10,6 +10,7 @@ import { capabilitiesToOverride } from './capability-registry.js';
 import { AnthropicMessagesProvider } from './anthropicMessages.js';
 import { OpenAiChatProvider } from './openaiChat.js';
 import { OpenAiResponsesProvider } from './openaiResponses.js';
+import { withHistoryNormalization } from './normalizedProvider.js';
 import type { ChatProvider } from './types.js';
 
 /**
@@ -22,6 +23,12 @@ import type { ChatProvider } from './types.js';
  * - openai_responses → {@link OpenAiResponsesProvider}（/v1/responses）
  * 未知 provider（不在 PROVIDER_PRESETS 内）抛错；apiKey 缺失/空串抛带配置指引的错误
  * （loadConfig 起不再强制 key，密钥解析允许多渠道独立配置，缺失在此兜底）。
+ *
+ * 装配不对称说明：
+ * - openai / openai_responses / anthropic 三条路径的返回值用 {@link withHistoryNormalization}
+ *   包一层，保证请求前历史整形覆盖全部通道；
+ * - stepfun 路径不包：`StepfunAdapter` 内部已调 `projectMessages`（含 normalizeHistory +
+ *   ensureLeadingUser），且它还额外实现了 `send()`，用装饰器包装会丢掉那个方法。
  */
 export function createProvider(config: StepCodeConfig): ChatProvider {
   const preset = PROVIDER_PRESETS[config.provider];
@@ -62,24 +69,28 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
     : undefined;
 
   if (preset.protocol === 'openai') {
-    return new OpenAiChatProvider({
-      apiKey,
-      baseUrl: config.baseUrl,
-      model: config.model,
-      maxTokens: config.maxTokens,
-      sendThinking,
-      ...(thinking !== undefined ? { thinking } : {}),
-    });
+    return withHistoryNormalization(
+      new OpenAiChatProvider({
+        apiKey,
+        baseUrl: config.baseUrl,
+        model: config.model,
+        maxTokens: config.maxTokens,
+        sendThinking,
+        ...(thinking !== undefined ? { thinking } : {}),
+      }),
+    );
   }
   if (preset.protocol === 'openai_responses') {
-    return new OpenAiResponsesProvider({
-      apiKey,
-      baseUrl: config.baseUrl,
-      model: config.model,
-      maxTokens: config.maxTokens,
-      sendThinking,
-      ...(thinking !== undefined ? { thinking } : {}),
-    });
+    return withHistoryNormalization(
+      new OpenAiResponsesProvider({
+        apiKey,
+        baseUrl: config.baseUrl,
+        model: config.model,
+        maxTokens: config.maxTokens,
+        sendThinking,
+        ...(thinking !== undefined ? { thinking } : {}),
+      }),
+    );
   }
 
   // stepfun 通道走 adapter：请求整形（projector）、主动降级（degrader）、能力表
@@ -100,12 +111,14 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
     });
   }
 
-  return new AnthropicMessagesProvider({
-    apiKey,
-    baseUrl: config.baseUrl,
-    model: config.model,
-    maxTokens: config.maxTokens,
-    sendThinking,
-    thinking,
-  });
+  return withHistoryNormalization(
+    new AnthropicMessagesProvider({
+      apiKey,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      maxTokens: config.maxTokens,
+      sendThinking,
+      thinking,
+    }),
+  );
 }

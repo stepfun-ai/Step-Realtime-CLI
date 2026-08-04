@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import type { StepCodeConfig } from '../../src/config/config.js';
 import { resolveCompactionBinding } from '../../src/provider/compaction.js';
 import { OpenAiChatProvider } from '../../src/provider/openaiChat.js';
+import type { NormalizedChatProvider } from '../../src/provider/normalizedProvider.js';
 import { StepfunAdapter } from '../../src/provider/adapter.js';
 import type { ChatProvider } from '../../src/provider/types.js';
 
@@ -71,7 +72,8 @@ describe('resolveCompactionBinding', () => {
   it('命中别名 → 建该别名渠道的独立 provider，且模型解析为别名的真实 id', () => {
     const binding = resolveCompactionBinding(crossChannelConfig('step35-plan'));
     // 主会话是 stepfun（anthropic 协议 → StepfunAdapter），压缩必须换成 openai 协议实例
-    expect(binding.provider).toBeInstanceOf(OpenAiChatProvider);
+    const inner = (binding.provider as NormalizedChatProvider).inner;
+    expect(inner).toBeInstanceOf(OpenAiChatProvider);
     expect(binding.provider).not.toBeInstanceOf(StepfunAdapter);
     // 回的是别名绑定的真实模型 id，不是别名本身
     expect(binding.model).toBe('step-3.5-flash-2603');

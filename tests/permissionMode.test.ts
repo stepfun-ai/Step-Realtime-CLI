@@ -5,10 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // loadConfig 读 ~/.step-code/config.toml：把 homedir 指到临时目录（对齐 tests/config.test.ts 的做法），
 // 避免开发机上的真实配置污染断言。
-let fakeHome = '';
+//
+// 容器用 vi.hoisted 而不是裸 `let`：mock 工厂会被 vitest 提升到文件顶部执行，若工厂闭包
+// 引用普通 let，而被测模块在 **import 阶段** 就调用了 homedir()（logger 在模块顶层算日志
+// 目录即如此），变量还没初始化，会抛 ReferenceError: Cannot access before initialization。
+const home = vi.hoisted(() => ({ path: '' }));
 vi.mock('node:os', async (importOriginal) => {
   const orig = await importOriginal<typeof import('node:os')>();
-  return { ...orig, homedir: () => fakeHome };
+  return { ...orig, homedir: () => home.path };
 });
 
 import { loadConfig, resolvePermissionMode, type StepCodeConfig } from '../src/config/config.js';
@@ -27,7 +31,7 @@ beforeEach(() => {
     delete process.env[k];
   }
   dir = mkdtempSync(join(tmpdir(), 'stepcode-permmode-'));
-  fakeHome = dir;
+  home.path = dir;
 });
 
 afterEach(() => {
@@ -35,7 +39,7 @@ afterEach(() => {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k];
   }
-  fakeHome = '';
+  home.path = '';
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -45,7 +49,7 @@ function writeToml(content: string): string {
   return p;
 }
 
-/** 写 loadConfig 实际读取的 <fakeHome>/.step-code/config.toml。 */
+/** 写 loadConfig 实际读取的 临时 home 下的 .step-code/config.toml。 */
 function writeHomeConfig(content: string): void {
   const cfgDir = join(dir, '.step-code');
   mkdirSync(cfgDir, { recursive: true });

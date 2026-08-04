@@ -12,7 +12,7 @@ import type { SessionData } from '../../session/store.js';
 import { resolveModelEntry, type StepCodeConfig } from '../../config/config.js';
 import { createProvider } from '../../provider/factory.js';
 import { buildAgentRegistry } from './registry.js';
-import { repairToolPairing } from './repair.js';
+import { closeDanglingToolUse } from '../wirelog.js';
 import type { SubagentStore } from './store.js';
 import type { AgentDefinition, RunSubagentFn, SpawnSubagentRequest, SubagentResult } from './types.js';
 
@@ -161,7 +161,10 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       messages = snap.messages;
       // 尾部配对校验：崩溃若发生在工具执行段，盘上末条可能是没有配对 tool_result 的 assistant，
       // 直接续跑发 provider 会 400——补合成中断结果的 tool_result
-      repairToolPairing(messages);
+      const closure = closeDanglingToolUse(messages);
+      // closeDanglingToolUse 返回新数组，必须同步 subSession.messages 与 messages 两个引用；
+      // 否则后续 push 只改 messages，subSession 仍持旧引用，落盘时新消息丢失。
+      subSession.messages = messages = closure.messages;
       // 新 prompt 追加为一条 user 消息，不替换历史
       messages.push(stored({ role: 'user', content: req.prompt }, { kind: 'user' }));
       subSession.status = 'running';
