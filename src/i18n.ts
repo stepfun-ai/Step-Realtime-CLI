@@ -425,6 +425,14 @@ const zh = {
   'app.export.warning': '⚠️ 里面含会话正文与脱敏后的配置，正文脱敏为尽力而为、不保证完全。请勿公开分享，仅私下发给我们排查。',
   'app.export.failed': '导出调试包失败：{message}',
 
+  // --- App /usage（token 与缓存命中统计）---
+  'app.usage.none': '本会话还没有模型往返记录，跑一轮对话后再看。',
+  'app.usage.header': 'usage · {scope} · {turns} 轮',
+  'app.usage.scope.session': '会话 {id}',
+  'app.usage.scope.all': '本工作目录 {count} 个会话',
+  'app.usage.cacheCreateNote': '注：{detail} 有缓存写入（cache_creation），已计入命中率分母。',
+  'app.usage.lowHit': '⚠ {model} 缓存命中率偏低（{rate}）。前缀稳定性正常时多为服务端缓存行为所致，可用 /usage --all 对比其他模型。',
+
   // --- App /sessions /resume（cli.tsx sessions 子命令复用 app.sessions.none / app.sessions.untitled / app.resume.notFound）---
   'app.sessions.none': '本工作目录暂无历史会话。',
   'app.sessions.untitled': '(无标题)',
@@ -494,6 +502,7 @@ const zh = {
   'cmd.history': '回顾本会话的输入历史并回退到指定轮（回滚上下文与任务清单/计划模式，代码改动不受影响）：/history [N]',
   'cmd.reflect': '回顾完整对话历史，沉淀可复用的方法论经验（打印到终端）',
   'cmd.export-debug-zip': '导出调试 zip（发给我们排查 bug，请勿公开分享）',
+  'cmd.usage': '查看本会话的 token 与缓存命中统计：/usage（加 --all 汇总本目录全部会话）',
   'cmd.sessions': '列出本工作目录下的历史会话',
   'cmd.resume': '切换到指定历史会话：/resume <id>（不带 id 列出可选会话）',
   'cmd.lang': '显示或切换界面语言：/lang [zh|en]',
@@ -962,6 +971,13 @@ const en: Record<keyof typeof zh, string> = {
   'app.export.warning': '⚠️ It contains the session transcript and redacted config; redaction is best-effort, not guaranteed complete. Do not share publicly; send it to us privately for troubleshooting.',
   'app.export.failed': 'Failed to export debug bundle: {message}',
 
+  'app.usage.none': 'No model round-trips recorded in this session yet; run a turn first.',
+  'app.usage.header': 'usage · {scope} · {turns} turns',
+  'app.usage.scope.session': 'session {id}',
+  'app.usage.scope.all': '{count} sessions in this working directory',
+  'app.usage.cacheCreateNote': 'Note: {detail} had cache writes (cache_creation), counted in the hit-rate denominator.',
+  'app.usage.lowHit': '⚠ {model} cache hit rate is low ({rate}). With a stable prefix this usually reflects server-side cache behavior; use /usage --all to compare across models.',
+
   'app.sessions.none': 'No past sessions in this working directory.',
   'app.sessions.untitled': '(untitled)',
   'app.resume.notFound': 'Session {id} not found',
@@ -1029,6 +1045,7 @@ const en: Record<keyof typeof zh, string> = {
   'cmd.history': 'Review inputs of this session and backtrack to a turn (rolls back context and todo/plan state; code changes are not reverted): /history [N]',
   'cmd.reflect': 'Review full conversation history and distill reusable methodology (prints to terminal)',
   'cmd.export-debug-zip': 'Export a debug zip (send to us for troubleshooting; do not share publicly)',
+  'cmd.usage': 'Show token and cache-hit stats for this session: /usage (--all aggregates every session in this directory)',
   'cmd.sessions': 'List past sessions in this working directory',
   'cmd.resume': 'Switch to a past session: /resume <id> (no id: list sessions)',
   'cmd.lang': 'Show or switch UI language: /lang [zh|en]',
