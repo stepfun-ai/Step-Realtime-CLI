@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { stored, type StoredMessage } from './message.js';
+import { synthesizeToolResultBlocks } from './toolClosure.js';
 import type { GoalState } from './goal/mode.js';
 import type { PermissionMode } from './permission/mode.js';
 import type { BackgroundTask } from './background/manager.js';
@@ -281,13 +282,9 @@ export function closeDanglingToolUse(messages: readonly StoredMessage[]): Dangli
   if (toolUseIds.length === 0) {
     return { messages: [...messages], closed: false, closedToolUseIds: [] };
   }
-  const closure: Anthropic.ToolResultBlockParam[] = toolUseIds.map((id) => ({
-    type: 'tool_result',
-    tool_use_id: id,
-    is_error: true,
-    content: '[会话中断：该工具调用未产生结果，已按失败闭合]',
-  }));
+  const closure = synthesizeToolResultBlocks(toolUseIds);
   return {
+    // 返回新数组，调用方需同步原引用（见 runner.ts 注释）
     messages: [...messages, stored({ role: 'user', content: closure }, { kind: 'tool' })],
     closed: true,
     closedToolUseIds: toolUseIds,
