@@ -806,9 +806,10 @@ async function runPrint(prompt: string): Promise<void> {
   }
   session.todos = [...todosStore.items];
   try {
-    store.save(session);
-    // 与 TUI 一致：非交互会话也写全量历史日志（append-only，按 id 去重）
+    // 顺序是不变量（同 TUI persist）：先 appendFull 后 save，否则快照 messages 超前
+    // wireSeq 游标，resume 重放尾段时尾部消息重复。
     store.appendFull(cwd, session.id, session.messages);
+    store.save(session);
   } catch {
     // 持久化失败不影响输出
   }
