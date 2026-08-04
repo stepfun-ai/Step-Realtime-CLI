@@ -148,10 +148,10 @@ Matching lines are returned in `path:line:content` format, with paths relative t
 Behavioral limits:
 
 - Ignored directories: `node_modules`, `.git`, `dist`, `.next`, `build`, `.cache`.
-- Directory recursion depth is capped at **20** levels; the number of files scanned is capped at **3000**; single files larger than **512 KB** are skipped.
+- Directory recursion depth is capped at **20** levels; the number of files scanned is capped at **3000**.
+- Single files larger than **512 KB** switch to streaming line-by-line scan; individual line content is truncated to **1 MB**, and the truncation amount is reported truthfully.
 - Matches are capped at **200**; on reaching the cap, scanning stops and `[结果已达上限 200 条，可能还有更多匹配]` is appended.
 - Files containing NUL bytes are treated as binary and skipped.
-- Individual line content is truncated to **300** characters.
 
 A common pitfall: the regular expressions use JavaScript syntax, not grep's POSIX syntax, so escaping rules such as `\{` differ from the command-line `grep`. An invalid regular expression returns an error rather than empty results. Also, each line reports at most one match, so multiple hits on a single line are not listed separately.
 
