@@ -46,7 +46,7 @@ Ink 终端界面：顶部欢迎框，中间是会话流（你的输入、模型�
 | `/resume [id]`（别名 `/sessions`） | 无参打开交互式会话选择器，带 id 直接切换 |
 | `/lang [zh\|en]` | 无参显示当前语言，带参切换中英文界面并写回 `config.toml` 的 `language` |
 | `/mcp` | 查看 MCP server 连接状态与工具数 |
-| `/skill [名称] [参数]` | 无参列出可用技能，带参手动激活 |
+| `/skill [名称] [参数]` | 无参打开交互式技能选择器（输入过滤，↑↓ 选择，Enter 激活，Esc 取消），带参手动激活 |
 | `/skill reload` | 强制重扫技能目录（会话中改动 SKILL.md 后即时生效；回合边界也会自动检测） |
 | `/reload` | 热重载 `config.toml` |
 | `/plugin` | 管理插件：`install / list / enable / disable / remove / info` |

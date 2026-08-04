@@ -68,6 +68,7 @@ import { resolveProviderTarget } from './providerSwitch.js';
 import { removeProviderConfig } from '../config/tomlAppend.js';
 import { SessionPicker, resolveVisibleRows, subagentSectionRows } from './SessionPicker.js';
 import { ThinkPicker, type ThinkPickerItem } from './ThinkPicker.js';
+import { SkillPicker } from './SkillPicker.js';
 import { HistoryPanel, collectHistoryItems, type HistoryPanelItem } from './HistoryPanel.js';
 import {
   clearUndoSnapshots,
@@ -241,6 +242,8 @@ export function App({
   const [sessionPickerSubs, setSessionPickerSubs] = useState<SessionMeta[]>([]);
   // /think 无参唤起的交互式思考深度选择器（同 ModelPicker 弹层挂载模式）。
   const [thinkPickerOpen, setThinkPickerOpen] = useState(false);
+  // /skill 无参唤起的交互式技能选择器（同 ModelPicker 弹层挂载模式）。
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   // /history（/undo 别名）无参唤起的统一回顾回退面板（同 ModelPicker 弹层挂载模式）。
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
   // 会话级思考深度覆盖：undefined = 跟随 config 默认；'off' = 本会话不发 thinking 字段；
@@ -960,6 +963,10 @@ export function App({
     }
     // 思考深度选择器打开时：全部按键交给 ThinkPicker 自身的 useInput 处理（↑↓/Enter/Esc），App 不插手
     if (thinkPickerOpen) {
+      return;
+    }
+    // 技能选择器打开时：全部按键交给 SkillPicker 自身的 useInput 处理（↑↓/过滤/Enter/Esc），App 不插手
+    if (skillPickerOpen) {
       return;
     }
     // 回顾回退面板打开时：全部按键交给 HistoryPanel 自身的 useInput 处理（↑↓/Enter/Tab/Esc），App 不插手
@@ -2100,12 +2107,9 @@ export function App({
           const skills = skillsRef.current;
           const trimmed = args.trim();
           const names = skills !== undefined ? [...skills.skills.keys()] : [];
-          // 无参：列出可用技能（只读，busy 时即时）
+          // 无参：打开交互式技能选择器（只读，busy 时即时）
           if (trimmed === '') {
-            pushItem({
-              kind: 'note',
-              text: names.length > 0 ? t('app.skill.list', { names: names.join('、') }) : t('app.skill.none'),
-            });
+            setSkillPickerOpen(true);
             break;
           }
           // 保留子命令：reload 强制全量重扫 skill 目录（优先于同名 skill 激活）
@@ -2596,6 +2600,20 @@ export function App({
     void submit(text, { recordHistory: false, silent: true });
   };
 
+  // SkillPicker 选择确认：关闭弹层并激活选中的技能（复用 skillInjectRef 路径）
+  const applySkillSelection = useCallback((name: string | null) => {
+    setSkillPickerOpen(false);
+    if (name === null) return;
+    const skills = skillsRef.current;
+    const def = skills?.skills.get(name);
+    if (def === undefined) {
+      pushItem({ kind: 'note', text: t('app.skill.unknown', { name, names: t('app.skill.noneShort') }) });
+      return;
+    }
+    pushItem({ kind: 'note', text: t('app.skill.activated', { name: def.name }) });
+    skillInjectRef.current?.(renderSkillActivation(def, ''));
+  }, [pushItem, skillsRef]);
+
   // 后台任务终态：busy 时通知留在管理器待投递队列，由 runAgent 在回合边界 flush 进 messages
   // （模型下一回合即可见，不等整个循环结束）；空闲时直接取出提交触发新回合。
   // notifyOnComplete === false 时只提示不注入（丢弃待投递队列，防回合边界 flush 又注入）。
@@ -2809,6 +2827,24 @@ export function App({
       wrappedRows(t('app.history.title'), overlayInner) +
       Math.max(itemRows, historyPanelItems.length > 0 ? 1 : wrappedRows(t('app.history.empty'), overlayInner)) +
       wrappedRows(t('app.history.hint'), overlayInner);
+  } else if (skillPickerOpen) {
+    // 技能选择器（上界估算）：margin 1 + 边框 2 + 标题/搜索/页码/提示（折行）+ 条目行（名称列宽 + 描述）
+    const skillItems = skillsRef.current ? [...skillsRef.current.skills.values()] : [];
+    const nameColW = Math.min(Math.max(0, ...skillItems.map((s) => s.name.length)), 24);
+    const itemRows = skillItems.reduce((n, s) => {
+      const width = 2 + nameColW + 2 + displayWidth(s.description);
+      return n + (overlayInner === undefined ? 1 : Math.max(1, Math.ceil(width / overlayInner)));
+    }, 0);
+    promptRows =
+      1 +
+      2 +
+      wrappedRows(t('skillPicker.title'), overlayInner) +
+      1 + // 搜索行
+      Math.max(itemRows, skillItems.length > 0 ? 1 : wrappedRows(t('skillPicker.empty'), overlayInner)) +
+      (skillItems.length > 10
+        ? wrappedRows(t('sessionPicker.pageInfo', { start: 1, end: 10, total: skillItems.length }), overlayInner)
+        : 0) +
+      wrappedRows(t('skillPicker.hint'), overlayInner);
   } else if (sessionPickerOpen) {
     // 会话选择器：条目已在组件内按宽度截断成单行（见 SessionPicker 的标题截断 + wrap=truncate），
     // 所以条目行数直接等于可见条数，不必再按标题长度折算折行——这是本段比其他弹层短得多的原因。
@@ -2991,6 +3027,11 @@ export function App({
             setThinkPickerOpen(false);
             if (name !== null) applyThinkLevel(name);
           }}
+        />
+      ) : skillPickerOpen ? (
+        <SkillPicker
+          items={skillsRef.current ? [...skillsRef.current.skills.values()].map((s) => ({ name: s.name, description: s.description })) : []}
+          onSelect={applySkillSelection}
         />
       ) : historyPanelOpen ? (
         <HistoryPanel

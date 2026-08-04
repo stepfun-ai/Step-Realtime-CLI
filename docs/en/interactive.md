@@ -51,7 +51,7 @@ All 24 commands (the table below has 25 rows, because `/skill reload` is listed 
 | `/resume [id]` (alias `/sessions`) | With no argument, opens the interactive session picker; with an id, switches directly |
 | `/lang [zh\|en]` | With no argument, shows the current language; with an argument, switches the interface between Chinese and English and writes `language` back to `config.toml` |
 | `/mcp` | Check MCP server connection status and tool counts |
-| `/skill [name] [args]` | With no argument, lists available skills; with an argument, activates one manually |
+| `/skill [name] [args]` | With no argument, opens the interactive skill picker (type to filter, ↑↓ to select, Enter to activate, Esc to cancel); with an argument, activates one manually |
 | `/skill reload` | Force a rescan of the skill directories (changes to SKILL.md made mid-session take effect immediately; turn boundaries also detect them automatically) |
 | `/reload` | Hot-reload `config.toml` |
 | `/plugin` | Manage plugins: `install / list / enable / disable / remove / info` |
