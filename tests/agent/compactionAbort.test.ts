@@ -19,8 +19,8 @@ import type { ChatProvider } from '../../src/provider/types.js';
 function makeHistory(n = 20): StoredMessage[] {
   const out: StoredMessage[] = [];
   for (let i = 0; i < n; i++) {
-    out.push(stored({ role: 'user', content: `用户第 ${i} 条消息，内容足够长以便产生压缩价值。`.repeat(20) }, 'user'));
-    out.push(stored({ role: 'assistant', content: `助手第 ${i} 条回复，同样有一定长度。`.repeat(20) }, 'assistant'));
+    out.push(stored({ role: 'user', content: `用户第 ${i} 条消息，内容足够长以便产生压缩价值。`.repeat(20) }, { kind: 'user' }));
+    out.push(stored({ role: 'assistant', content: `助手第 ${i} 条回复，同样有一定长度。`.repeat(20) }, { kind: 'assistant' }));
   }
   return out;
 }

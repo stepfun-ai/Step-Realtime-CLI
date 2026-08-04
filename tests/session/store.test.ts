@@ -30,7 +30,7 @@ describe('workdirKey', () => {
 describe('SessionStore', () => {
   it('create → save → load 往返', () => {
     const s = store.create(cwd, 'step-3.7-flash');
-    s.messages.push(stored({ role: 'user', content: 'hi' }, 'user'));
+    s.messages.push(stored({ role: 'user', content: 'hi' }, { kind: 'user' }));
     store.save(s);
 
     const loaded = store.load(cwd, s.id);
@@ -45,7 +45,7 @@ describe('SessionStore', () => {
 
   it('fork 谱系：forkedFrom 随会话持久化', () => {
     const src = store.create(cwd, 'step-3.7-flash');
-    src.messages.push(stored({ role: 'user', content: 'hi' }, 'user'));
+    src.messages.push(stored({ role: 'user', content: 'hi' }, { kind: 'user' }));
     store.save(src);
 
     const forked = store.create(cwd, 'step-3.7-flash');
@@ -66,7 +66,7 @@ describe('SessionStore', () => {
 
   it('含 thinking 块（带 signature）的 assistant 消息 save/load 往返一致', () => {
     const s = store.create(cwd, 'step-3.7-flash');
-    s.messages.push(stored({ role: 'user', content: 'hi' }, 'user'));
+    s.messages.push(stored({ role: 'user', content: 'hi' }, { kind: 'user' }));
     s.messages.push(
       stored(
         {
@@ -76,7 +76,7 @@ describe('SessionStore', () => {
             { type: 'text', text: '答案' },
           ],
         } as unknown as Anthropic.MessageParam,
-        'assistant',
+        { kind: 'assistant' },
       ),
     );
     store.save(s);
@@ -152,7 +152,7 @@ describe('SessionStore', () => {
 
   it('rename 往返：设置自定义名、list 直通、空名清除回退 title、不刷新 updatedAt', () => {
     const s = store.create(cwd, 'm');
-    s.messages.push(stored({ role: 'user', content: '原始标题来源' }, 'user'));
+    s.messages.push(stored({ role: 'user', content: '原始标题来源' }, { kind: 'user' }));
     store.save(s);
     const before = store.load(cwd, s.id)!;
     expect(before.name).toBeUndefined();
@@ -227,7 +227,7 @@ describe('SessionStore', () => {
     store.save(a);
     await new Promise((r) => setTimeout(r, 5));
     const b = store.create(cwd, 'm');
-    b.messages.push(stored({ role: 'user', content: 'x' }, 'user'));
+    b.messages.push(stored({ role: 'user', content: 'x' }, { kind: 'user' }));
     store.save(b);
 
     const latest = store.latest(cwd);
@@ -242,7 +242,7 @@ describe('SessionStore', () => {
 
   it('save 自动写入 title（从首条 user 消息派生）', () => {
     const s = store.create(cwd, 'm');
-    s.messages.push(stored({ role: 'user', content: '第一条问题' }, 'user'));
+    s.messages.push(stored({ role: 'user', content: '第一条问题' }, { kind: 'user' }));
     store.save(s);
     expect(s.title).toBe('第一条问题');
     expect(store.load(cwd, s.id)!.title).toBe('第一条问题');
@@ -250,7 +250,7 @@ describe('SessionStore', () => {
 
   it('list 返回 title', () => {
     const s = store.create(cwd, 'm');
-    s.messages.push(stored({ role: 'user', content: '标题内容' }, 'user'));
+    s.messages.push(stored({ role: 'user', content: '标题内容' }, { kind: 'user' }));
     store.save(s);
     expect(store.list(cwd)[0]!.title).toBe('标题内容');
   });
@@ -267,7 +267,7 @@ describe('SessionStore', () => {
   it('delete 连同全量日志一起删除，不留孤儿 JSONL', () => {
     const s = store.create(cwd, 'm');
     store.save(s);
-    store.appendFull(cwd, s.id, [stored({ role: 'user', content: 'a' }, 'user')]);
+    store.appendFull(cwd, s.id, [stored({ role: 'user', content: 'a' }, { kind: 'user' })]);
     expect(store.loadFull(cwd, s.id)).toHaveLength(1);
     expect(store.delete(cwd, s.id)).toBe(true);
     expect(store.loadFull(cwd, s.id)).toHaveLength(0);
@@ -277,8 +277,8 @@ describe('SessionStore', () => {
 describe('SessionStore 全量历史日志（appendFull / loadFull）', () => {
   it('append-only + 按 id 去重，重复调用幂等', () => {
     const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: 'a' }, 'user');
-    const m2 = stored({ role: 'assistant', content: 'b' }, 'assistant');
+    const m1 = stored({ role: 'user', content: 'a' }, { kind: 'user' });
+    const m2 = stored({ role: 'assistant', content: 'b' }, { kind: 'assistant' });
     expect(store.appendFull(cwd, s.id, [m1])).toBe(1);
     // 再次追加 m1（已存在）+ m2（新） → 只写入 m2
     expect(store.appendFull(cwd, s.id, [m1, m2])).toBe(2 - 1);
@@ -288,7 +288,7 @@ describe('SessionStore 全量历史日志（appendFull / loadFull）', () => {
 
   it('压缩不影响已落盘全量日志：history 变短后仍可读回被压缩掉的行', () => {
     const s = store.create(cwd, 'm');
-    const msgs = ['1', '2', '3', '4'].map((t) => stored({ role: 'user', content: t }, 'user'));
+    const msgs = ['1', '2', '3', '4'].map((t) => stored({ role: 'user', content: t }, { kind: 'user' }));
     store.appendFull(cwd, s.id, msgs);
     // 模拟压缩后 history 只剩最后一条，再持久化一次
     store.appendFull(cwd, s.id, [msgs[3]!]);
@@ -310,7 +310,7 @@ describe('SessionStore 全量历史日志（appendFull / loadFull）', () => {
     const s = store.create(cwd, 'm');
     const start = performance.now();
     for (let i = 0; i < 1000; i++) {
-      store.appendFull(cwd, s.id, [stored({ role: 'user', content: `m${i}` }, 'user')]);
+      store.appendFull(cwd, s.id, [stored({ role: 'user', content: `m${i}` }, { kind: 'user' })]);
     }
     const elapsed = performance.now() - start;
     expect(store.loadFull(cwd, s.id)).toHaveLength(1000);
@@ -319,37 +319,7 @@ describe('SessionStore 全量历史日志（appendFull / loadFull）', () => {
   });
 });
 
-describe('SessionStore origin 对象化兼容', () => {
-  it('旧快照（字符串 origin）load 读入即归一化，list 兜底派生 title 不受影响', () => {
-    const s = store.create(cwd, 'm');
-    s.messages.push(stored({ role: 'user', content: '旧会话问题' }, 'user'));
-    store.save(s);
-    // 把落盘 JSON 改回旧字符串形态，模拟存量快照；删掉 title 强制走兜底派生
-    const file = join(base, workdirKey(cwd), `${s.id}.json`);
-    const raw = JSON.parse(readFileSync(file, 'utf8')) as { messages: { origin: unknown }[]; title?: string };
-    raw.messages[0]!.origin = 'user';
-    delete raw.title;
-    writeFileSync(file, JSON.stringify(raw), 'utf8');
-
-    const loaded = store.load(cwd, s.id)!;
-    expect(loaded.messages[0]!.origin).toEqual({ kind: 'user' });
-    // list 对无 title 旧快照现场派生：归一化后才认得出首条 user
-    expect(store.list(cwd)[0]!.title).toBe('旧会话问题');
-  });
-
-  it('旧全量日志（字符串 origin 行）loadFull 读入即归一化', () => {
-    const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: 'a' }, 'user');
-    store.save(s); // 建桶目录
-    // 手工造旧格式 JSONL（字符串 origin），模拟存量数据；appendFull 已改写 wire.jsonl，不再产生此文件
-    const file = join(base, workdirKey(cwd), `${s.id}.full.jsonl`);
-    writeFileSync(file, `${JSON.stringify({ ...m1, origin: 'tool' })}\n`, 'utf8');
-
-    const loaded = store.loadFull(cwd, s.id);
-    expect(loaded).toHaveLength(1);
-    expect(loaded[0]!.origin).toEqual({ kind: 'tool' });
-  });
-
+describe('SessionStore origin 对象形态', () => {
   it('对象 origin 落盘往返：盘上就是对象形态，载荷字段不丢', () => {
     const s = store.create(cwd, 'm');
     s.messages.push(
@@ -420,7 +390,7 @@ describe('SessionStore 图片引用式存储（offload / 不污染内存）', ()
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: b64 } },
         ],
       },
-      'user',
+      { kind: 'user' },
     );
   }
 
@@ -478,7 +448,7 @@ describe('SessionStore 图片引用式存储（offload / 不污染内存）', ()
 
 describe('deriveTitle', () => {
   it('从首条 user 消息（string content）派生，折叠空白', () => {
-    const msgs = [stored({ role: 'user', content: '  hello   world\nfoo  ' }, 'user')];
+    const msgs = [stored({ role: 'user', content: '  hello   world\nfoo  ' }, { kind: 'user' })];
     expect(deriveTitle(msgs)).toBe('hello world foo');
   });
 
@@ -492,7 +462,7 @@ describe('deriveTitle', () => {
             { type: 'text', text: 'part two' },
           ],
         },
-        'user',
+        { kind: 'user' },
       ),
     ];
     expect(deriveTitle(msgs)).toBe('part one part two');
@@ -500,42 +470,42 @@ describe('deriveTitle', () => {
 
   it('超过 50 字符截断加省略号', () => {
     const long = 'a'.repeat(60);
-    expect(deriveTitle([stored({ role: 'user', content: long }, 'user')])).toBe(`${'a'.repeat(50)}…`);
+    expect(deriveTitle([stored({ role: 'user', content: long }, { kind: 'user' })])).toBe(`${'a'.repeat(50)}…`);
   });
 
   it('取第一条 user 消息（跳过 assistant）', () => {
     const msgs = [
-      stored({ role: 'assistant', content: '你好' }, 'assistant'),
-      stored({ role: 'user', content: '真正的问题' }, 'user'),
+      stored({ role: 'assistant', content: '你好' }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '真正的问题' }, { kind: 'user' }),
     ];
     expect(deriveTitle(msgs)).toBe('真正的问题');
   });
 
   it('无 user 消息或纯空返回 undefined', () => {
-    expect(deriveTitle([stored({ role: 'assistant', content: 'hi' }, 'assistant')])).toBeUndefined();
+    expect(deriveTitle([stored({ role: 'assistant', content: 'hi' }, { kind: 'assistant' })])).toBeUndefined();
     expect(deriveTitle([])).toBeUndefined();
-    expect(deriveTitle([stored({ role: 'user', content: '   \n  ' }, 'user')])).toBeUndefined();
+    expect(deriveTitle([stored({ role: 'user', content: '   \n  ' }, { kind: 'user' })])).toBeUndefined();
   });
 });
 
 describe('derivePreview', () => {
   it('从首条 user 消息派生，折叠空白', () => {
-    const msgs = [stored({ role: 'user', content: '  hello   world\nfoo  ' }, 'user')];
+    const msgs = [stored({ role: 'user', content: '  hello   world\nfoo  ' }, { kind: 'user' })];
     expect(derivePreview(msgs)).toBe('hello world foo');
   });
 
   it('超过 200 字符截断加省略号（比标题留更多内容供搜索）', () => {
     const long = 'a'.repeat(250);
-    expect(derivePreview([stored({ role: 'user', content: long }, 'user')])).toBe(`${'a'.repeat(200)}…`);
+    expect(derivePreview([stored({ role: 'user', content: long }, { kind: 'user' })])).toBe(`${'a'.repeat(200)}…`);
   });
 
   it('200 字符以内不截断', () => {
     const exact = 'b'.repeat(200);
-    expect(derivePreview([stored({ role: 'user', content: exact }, 'user')])).toBe(exact);
+    expect(derivePreview([stored({ role: 'user', content: exact }, { kind: 'user' })])).toBe(exact);
   });
 
   it('无 user 消息或纯空返回 undefined', () => {
-    expect(derivePreview([stored({ role: 'assistant', content: 'hi' }, 'assistant')])).toBeUndefined();
+    expect(derivePreview([stored({ role: 'assistant', content: 'hi' }, { kind: 'assistant' })])).toBeUndefined();
     expect(derivePreview([])).toBeUndefined();
   });
 });

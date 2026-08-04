@@ -3,7 +3,7 @@
  * 环境自描述 manifest 打成一个 zip，供用户私下发给我们排查 bug。
  *
  * 设计取舍：
- * - 打包当前会话的 `<id>.json` + `<id>.full.jsonl`（会话本身就是 bug 复现脚本）。
+ * - 打包当前会话的 `<id>.json` + `<id>.wire.jsonl`（会话本身就是 bug 复现脚本）。
  * - config.toml / mcp.json 按 key 名确定性脱敏后纳入（provider/model/MCP 列表对排查关键）。
  * - errors.log 取自 logger 的内存环形缓冲 dump。
  * - manifest.json 只放元数据（OS/node/app 版本/model/时间线/文件清单/脱敏标记）。
@@ -101,20 +101,13 @@ export async function exportDebugBundle(opts: ExportDebugBundleOptions): Promise
   const zip = new AdmZip();
   const included: string[] = [];
 
-  // 1) 当前会话落盘产物：快照 + 全量历史。正文做 best-effort 脱敏（不保证完全）。
+  // 1) 当前会话落盘产物：快照 + 事件日志（wire.jsonl，会话状态机的事实源）。
+  // 正文做 best-effort 脱敏（不保证完全）。
   const paths = store.sessionPaths(cwd, sessionId);
   if (existsSync(paths.json)) {
     zip.addFile(`session/${sessionId}.json`, Buffer.from(redactSecrets(readFileSync(paths.json, 'utf8')), 'utf8'));
     included.push(`session/${sessionId}.json`);
   }
-  if (existsSync(paths.full)) {
-    zip.addFile(
-      `session/${sessionId}.full.jsonl`,
-      Buffer.from(redactSecrets(readFileSync(paths.full, 'utf8')), 'utf8'),
-    );
-    included.push(`session/${sessionId}.full.jsonl`);
-  }
-  // 事件日志（wire.jsonl）：会话状态机的事实源，调试复现同样需要
   if (existsSync(paths.wire)) {
     zip.addFile(
       `session/${sessionId}.wire.jsonl`,

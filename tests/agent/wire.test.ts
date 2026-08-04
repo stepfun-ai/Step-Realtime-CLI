@@ -24,7 +24,7 @@ function imageMsg(data: string): StoredMessage {
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
       ],
     },
-    'user',
+    { kind: 'user' },
   );
 }
 
@@ -46,7 +46,7 @@ afterEach(() => {
 
 describe('toWire', () => {
   it('无 opts 时纯投影，取内层 message', () => {
-    const msgs = [stored({ role: 'user', content: 'hi' }, 'user')];
+    const msgs = [stored({ role: 'user', content: 'hi' }, { kind: 'user' })];
     expect(toWire(msgs)).toEqual([{ role: 'user', content: 'hi' }]);
   });
 
@@ -81,8 +81,8 @@ describe('toWire', () => {
 
   it('无图消息不受影响', () => {
     const msgs = [
-      stored({ role: 'user', content: 'plain' }, 'user'),
-      stored({ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, 'assistant'),
+      stored({ role: 'user', content: 'plain' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { kind: 'assistant' }),
     ];
     const wire = toWire(msgs, { attachments, cwd });
     expect(wire[0]!.content).toBe('plain');

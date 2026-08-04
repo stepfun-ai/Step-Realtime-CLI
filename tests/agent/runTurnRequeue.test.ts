@@ -14,7 +14,7 @@ const rateLimitErr = (headers?: Headers): AnthropicSDK.APIError =>
   new AnthropicSDK.APIError(429, undefined, 'rate limited', headers);
 
 function sm(text: string): StoredMessage {
-  return stored({ role: 'user', content: text }, 'user');
+  return stored({ role: 'user', content: text }, { kind: 'user' });
 }
 
 const base = (

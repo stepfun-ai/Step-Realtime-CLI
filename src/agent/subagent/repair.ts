@@ -42,6 +42,6 @@ export function repairToolPairing(messages: StoredMessage[]): number {
     content: RESUME_INTERRUPT_TOOL_MSG,
     is_error: true,
   }));
-  messages.push(stored({ role: 'user', content: repair }, 'user'));
+  messages.push(stored({ role: 'user', content: repair }, { kind: 'user' }));
   return orphans.length;
 }

@@ -27,7 +27,7 @@ export type MessageOriginKind =
 
 /**
  * 结构化 origin：kind 是判别字段，其余为按需携带的载荷。
- * 读路径兼容旧字符串形态（`normalizeOrigin` 归一化为 `{ kind: <旧字符串> }`）。
+ * 内存与落盘一律为本对象形态（1.0 前破坏性清理：旧字符串形态不再归一化）。
  *
  * `startsPromptTurn` 语义：区分「唤醒新回合的注入」与「中途注入」。
  * true = 这条消息唤醒一个新的 prompt 回合（消耗 prompt 槽位，如 idle 时后台通知直接开轮）；
@@ -49,21 +49,6 @@ export interface MessageOrigin {
   agentId?: string;
   /** true = 唤醒新回合的注入；缺省 = 中途注入。 */
   startsPromptTurn?: boolean;
-}
-
-/**
- * origin 归一化：旧盘上字符串形态升级为 `{ kind }` 对象形态；已是对象的直通（同引用）。
- * 所有从盘读入 StoredMessage 的路径都应过一遍（normalizeMessage），保证内存态只有对象形态。
- */
-export function normalizeOrigin(origin: MessageOrigin | MessageOriginKind): MessageOrigin {
-  return typeof origin === 'string' ? { kind: origin } : origin;
-}
-
-/** 读路径归一化：字符串 origin 的消息换成对象形态副本，已是对象的原样返回（同引用）。 */
-export function normalizeMessage(m: StoredMessage): StoredMessage {
-  // 盘上旧数据 origin 是字符串，类型上不可达故需 as 展开
-  const raw = m.origin as MessageOrigin | MessageOriginKind;
-  return typeof raw === 'string' ? { ...m, origin: { kind: raw } } : m;
 }
 
 /**
@@ -96,7 +81,7 @@ export function isSystemAuthoredUser(origin: MessageOrigin): boolean {
 export interface StoredMessage {
   /** 内层 = 干净 wire 格式。 */
   message: Anthropic.MessageParam;
-  /** 来源标记（结构化对象；旧盘数据是字符串，读入时经 normalizeMessage 归一化）。 */
+  /** 来源标记（结构化对象形态，见 {@link MessageOrigin}）。 */
   origin: MessageOrigin;
   /** 稳定 id，供将来 append-only 持久化与 UI 时间线。 */
   id: string;
@@ -104,12 +89,12 @@ export interface StoredMessage {
   ts: string;
 }
 
-/** 包一条 storage 消息（生成 id/ts）。origin 接受对象或便捷字符串，落盘一律为对象形态。 */
+/** 包一条 storage 消息（生成 id/ts）。origin 只接受对象形态（如 `{ kind: 'user' }`）。 */
 export function stored(
   message: Anthropic.MessageParam,
-  origin: MessageOrigin | MessageOriginKind,
+  origin: MessageOrigin,
 ): StoredMessage {
-  return { message, origin: normalizeOrigin(origin), id: randomUUID(), ts: new Date().toISOString() };
+  return { message, origin, id: randomUUID(), ts: new Date().toISOString() };
 }
 
 /** tool_result 内嵌 content 数组的块类型（官方为 text/image 等，见 Anthropic.ToolResultBlockParam）。 */

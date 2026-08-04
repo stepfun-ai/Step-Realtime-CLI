@@ -6,7 +6,7 @@ import { collect, makeFakeProvider, textBlock } from '../helpers/fakeProvider.js
 
 /** 包一条 storage 消息（测试用）。 */
 function sm(message: Anthropic.MessageParam): StoredMessage {
-  return stored(message, 'user');
+  return stored(message, { kind: 'user' });
 }
 
 const baseOpts = (

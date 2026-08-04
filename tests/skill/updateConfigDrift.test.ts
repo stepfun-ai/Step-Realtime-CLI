@@ -60,7 +60,6 @@ describe('update-config skill 防漂移', () => {
       'STEP_CODE_PROVIDER',
       'STEP_CODE_MODEL',
       'STEP_CODE_BASE_URL',
-      'STEPFUN_API_KEY',
       'ANTHROPIC_API_KEY',
       'OPENAI_API_KEY',
     ]) {

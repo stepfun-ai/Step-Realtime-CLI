@@ -50,7 +50,7 @@ const UPDATE_CONFIG_BODY = `# update-config：step-code 自身配置的查询与
 | continuation | table | 无 | 输出截断自动续写配置（[continuation] 段） |
 
 顶层没有 api_key 键。密钥只能配在 [providers.<id>] 渠道或 [models.<别名>] 上，或由环境变量提供
-（STEP_CODE_API_KEY，或按 provider 类型的惯例变量：stepfun→STEPFUN_API_KEY、anthropic→ANTHROPIC_API_KEY、
+（STEP_CODE_API_KEY，或按 provider 类型的惯例变量：anthropic→ANTHROPIC_API_KEY、
 openai/openai_responses→OPENAI_API_KEY）。其他环境变量覆盖：STEP_CODE_PROVIDER、STEP_CODE_MODEL、
 STEP_CODE_BASE_URL。
 
@@ -126,7 +126,7 @@ STEP_CODE_BASE_URL。
 | [search.web] | table | 无 | 内容搜索专用段（url / key），覆盖通用段 |
 | [search.image] | table | 无 | 文搜图专用段（url / key），覆盖通用段 |
 
-endpoint 解析优先级：[search.web]/[search.image] → [search] → 主会话渠道。未配置时回退主会话渠道 base_url + api_key（向后兼容）。
+endpoint 解析优先级：[search.web]/[search.image] → [search] → 主会话渠道。未配置时回退主会话渠道 base_url + api_key（零配置默认策略：缺省回退主会话渠道）。
 
 ### [models.<别名>] 模型别名表（渠道与模型分离）
 

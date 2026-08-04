@@ -27,11 +27,12 @@ describe('resumeHint', () => {
 
   it('stream-json meta 结构包含 session resume hint', () => {
     const meta = resumeHintMeta('abc123');
-    expect(meta.role).toBe('meta');
     expect(meta.type).toBe('session.resume_hint');
     expect(meta.session_id).toBe('abc123');
     expect(meta.command).toBe('step -r abc123');
     expect(meta.content).toBe('To resume this session: step -r abc123');
+    // 只按 type 判别：不再携带 role 字段
+    expect('role' in meta).toBe(false);
     // 可 JSON 序列化为单行
     expect(JSON.stringify(meta)).not.toContain('\n');
   });

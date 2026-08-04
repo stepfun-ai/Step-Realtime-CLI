@@ -100,7 +100,7 @@ describe('stream-json 信封统一', () => {
   });
 
   it('协议版本号已定义', () => {
-    expect(STREAM_JSON_PROTOCOL_VERSION).toBe(1);
+    expect(STREAM_JSON_PROTOCOL_VERSION).toBe(2);
   });
 });
 

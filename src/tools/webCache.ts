@@ -67,12 +67,10 @@ export class WebResultCache {
   /** 当前总字节数（估算）。与 cache 同步维护，避免每次淘汰都重算全表。 */
   private totalBytes = 0;
 
-  constructor(limits: WebResultCacheLimits | number = {}) {
-    // 兼容旧签名 new WebResultCache(100)
-    const opts: WebResultCacheLimits = typeof limits === 'number' ? { maxSize: limits } : limits;
-    this.maxSize = opts.maxSize ?? DEFAULT_MAX_SIZE;
-    this.maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
-    this.maxEntryBytes = opts.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
+  constructor(limits: WebResultCacheLimits = {}) {
+    this.maxSize = limits.maxSize ?? DEFAULT_MAX_SIZE;
+    this.maxBytes = limits.maxBytes ?? DEFAULT_MAX_BYTES;
+    this.maxEntryBytes = limits.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
   }
 
   /**

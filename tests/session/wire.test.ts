@@ -30,7 +30,7 @@ afterEach(() => {
 describe('SessionStore 事件日志（appendWire / loadWire）', () => {
   it('首行必为 metadata 事件，随后按序追加', () => {
     const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: 'a' }, 'user');
+    const m1 = stored({ role: 'user', content: 'a' }, { kind: 'user' });
     store.appendWire(cwd, s.id, [
       { type: 'context.append_message', ts: TS, message: m1 },
       { type: 'permission.set_mode', ts: TS, mode: 'auto' },
@@ -50,7 +50,7 @@ describe('SessionStore 事件日志（appendWire / loadWire）', () => {
 
   it('append_message 事件按消息 id 去重（幂等），其余事件类型不去重', () => {
     const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: 'a' }, 'user');
+    const m1 = stored({ role: 'user', content: 'a' }, { kind: 'user' });
     expect(store.appendWire(cwd, s.id, [{ type: 'context.append_message', ts: TS, message: m1 }])).toBe(1);
     expect(
       store.appendWire(cwd, s.id, [
@@ -64,43 +64,36 @@ describe('SessionStore 事件日志（appendWire / loadWire）', () => {
     expect(events.filter((e) => e.type === 'turn.prompt')).toHaveLength(2);
   });
 
-  it('legacy 兼容：旧格式 full.jsonl 按 append_message 事件序列读入，与 wire 拼接时 legacy 在前', () => {
+  it('旧格式 full.jsonl 不再折算：loadWire 只读 wire.jsonl', () => {
     const s = store.create(cwd, 'm');
-    const legacy = stored({ role: 'user', content: '旧消息' }, 'user');
-    // 手工造一份旧格式日志（每行一条裸 StoredMessage，字符串 origin）
+    const legacy = stored({ role: 'user', content: '旧消息' }, { kind: 'user' });
     store.save(s); // 建桶目录
-    writeFileSync(
-      fullPath(s.id),
-      `${JSON.stringify({ ...legacy, origin: 'user' })}\n`,
-      'utf8',
-    );
-    const fresh = stored({ role: 'user', content: '新消息' }, 'user');
+    writeFileSync(fullPath(s.id), `${JSON.stringify(legacy)}\n`, 'utf8');
+    const fresh = stored({ role: 'user', content: '新消息' }, { kind: 'user' });
     store.appendWire(cwd, s.id, [{ type: 'context.append_message', ts: TS, message: fresh }]);
 
     const events = store.loadWire(cwd, s.id);
     expect(events.map((e) => e.type)).toEqual([
-      'context.append_message', // legacy 折算
       'metadata',
       'context.append_message',
     ]);
-    expect(events[0]!.type === 'context.append_message' && events[0]!.message.origin).toEqual({ kind: 'user' });
-    // loadFull 兼容口径：legacy + 新事件里的消息都能读到
-    expect(store.loadFull(cwd, s.id).map((m) => m.message.content)).toEqual(['旧消息', '新消息']);
+    // loadFull 口径一致：full.jsonl 里的旧消息不再出现
+    expect(store.loadFull(cwd, s.id).map((m) => m.message.content)).toEqual(['新消息']);
   });
 
   it('崩溃截断的尾行被容忍（跳过），已解析部分完整返回', () => {
     const s = store.create(cwd, 'm');
     store.appendWire(cwd, s.id, [
-      { type: 'context.append_message', ts: TS, message: stored({ role: 'user', content: 'a' }, 'user') },
+      { type: 'context.append_message', ts: TS, message: stored({ role: 'user', content: 'a' }, { kind: 'user' }) },
     ]);
     appendFileSync(wirePath(s.id), '{"type":"permission.set_mode","ts":"2026', 'utf8'); // 截断行
     const events = store.loadWire(cwd, s.id);
     expect(events.map((e) => e.type)).toEqual(['metadata', 'context.append_message']);
   });
 
-  it('appendFull 兼容 API 落到 wire.jsonl（不再写 full.jsonl），loadFull 读回一致', () => {
+  it('appendFull 落到 wire.jsonl（不再写 full.jsonl），loadFull 读回一致', () => {
     const s = store.create(cwd, 'm');
-    const m1 = stored({ role: 'user', content: 'a' }, 'user');
+    const m1 = stored({ role: 'user', content: 'a' }, { kind: 'user' });
     expect(store.appendFull(cwd, s.id, [m1])).toBe(1);
     expect(store.appendFull(cwd, s.id, [m1])).toBe(0); // 幂等
     expect(existsSync(fullPath(s.id))).toBe(false);
@@ -111,7 +104,7 @@ describe('SessionStore 事件日志（appendWire / loadWire）', () => {
   it('delete 连同 wire.jsonl 与任务持久化目录一起清理', () => {
     const s = store.create(cwd, 'm');
     store.save(s);
-    store.appendFull(cwd, s.id, [stored({ role: 'user', content: 'a' }, 'user')]);
+    store.appendFull(cwd, s.id, [stored({ role: 'user', content: 'a' }, { kind: 'user' })]);
     const tasksDir = store.tasksDirFor(cwd, s.id);
     mkdirSync(join(tasksDir, 'task-1'), { recursive: true });
     writeFileSync(join(tasksDir, 'task-1', 'meta.json'), '{}', 'utf8');
@@ -123,7 +116,7 @@ describe('SessionStore 事件日志（appendWire / loadWire）', () => {
 
   it('save 写入检查点游标 wireSeq（覆盖到事件日志第几条）', () => {
     const s = store.create(cwd, 'm');
-    s.messages.push(stored({ role: 'user', content: 'a' }, 'user'));
+    s.messages.push(stored({ role: 'user', content: 'a' }, { kind: 'user' }));
     store.appendFull(cwd, s.id, s.messages); // metadata + 1 条消息 = 2 条事件
     store.save(s);
     const raw = JSON.parse(readFileSync(join(base, workdirKey(cwd), `${s.id}.json`), 'utf8')) as {
