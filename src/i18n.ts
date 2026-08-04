@@ -175,6 +175,15 @@ const zh = {
   'thinkPicker.detail.medium': '均衡（推荐）',
   'thinkPicker.detail.high': '思考最深，难任务上可能占满输出预算',
   'thinkPicker.offDetail': '关闭 thinking 字段',
+
+  // --- 技能选择器（SkillPicker）与 /skill 命令 ---
+  'skillPicker.title': '选择要激活的技能（输入过滤 · ↑↓ 选择 · Enter 激活 · Esc 取消）',
+  'skillPicker.searchPrefix': '搜索：',
+  'skillPicker.searchPlaceholder': '输入过滤技能名或描述…',
+  'skillPicker.empty': '无匹配的技能（Esc 取消）',
+  'skillPicker.hint': '↑/↓ 选择 · 输入过滤 · Enter 激活 · Esc 取消',
+  'app.skill.unavailable': '技能不可用：{name}',
+
   'app.think.unavailable': '当前渠道未启用思考控制字段，思考深度不可用（在 config.toml 的 [thinking] 段设 enabled = true 可开启）。',
   'app.think.invalid': '未知思考深度档位：{name}（可用：{list}，或 off 关闭）',
   'app.think.switched': '思考深度已切换为：{level}（{detail}，下一轮请求生效）',
@@ -744,6 +753,15 @@ const en: Record<keyof typeof zh, string> = {
   'thinkPicker.detail.medium': 'balanced (recommended)',
   'thinkPicker.detail.high': 'deepest thinking; may consume the whole output budget on hard tasks',
   'thinkPicker.offDetail': 'disable the thinking field',
+
+  // --- 技能选择器（SkillPicker）与 /skill 命令 ---
+  'skillPicker.title': 'Select a skill to activate (type to filter · ↑↓ select · Enter activate · Esc cancel)',
+  'skillPicker.searchPrefix': 'Search: ',
+  'skillPicker.searchPlaceholder': 'type to filter skill name or description…',
+  'skillPicker.empty': 'No matching skills (Esc to cancel)',
+  'skillPicker.hint': '↑/↓ select · type to filter · Enter activate · Esc cancel',
+  'app.skill.unavailable': 'Skill unavailable: {name}',
+
   'app.think.unavailable': 'The current provider does not send thinking-control fields, so thinking level is unavailable (set enabled = true under [thinking] in config.toml to turn it on).',
   'app.think.invalid': 'Unknown thinking level: {name} (available: {list}, or off to disable)',
   'app.think.switched': 'Thinking level switched to: {level} ({detail}, takes effect next turn)',
