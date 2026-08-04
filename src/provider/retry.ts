@@ -61,6 +61,39 @@ export class EmptyResponseError extends Error {
 }
 
 /**
+ * 沿 err.cause 链收集所有字符串 code（含顶层）。
+ * undici（Node 内置 fetch）传输层失败时抛 TypeError('fetch failed')，真实的
+ * socket/DNS code 嵌在 err.cause（可能多级）；OpenAI 兼容通道用裸 fetch，这类
+ * 错误不经 SDK 包装，必须下钻 cause 链才能识别，否则会被误判为不可重试。
+ * 带循环保护，容错任意畸形对象。
+ */
+function causeChainCodes(err: unknown): string[] {
+  const codes: string[] = [];
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  while (cur !== null && typeof cur === 'object' && !seen.has(cur)) {
+    seen.add(cur);
+    const code = (cur as { code?: unknown }).code;
+    if (typeof code === 'string') codes.push(code);
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return codes;
+}
+
+/** 可重试的网络错误 code 集合：连接/超时类瞬时故障（含 undici 自定义 code 与瞬态 DNS）。 */
+const RETRYABLE_NET_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'EPIPE',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+/**
  * 判断一个错误是否值得重试。
  * 可重试：网络连接错误、超时、429（限流）、5xx（服务端）、空流/空响应。
  * 不可重试：4xx（除 429，通常是请求本身有问题，重试无益）。
@@ -77,9 +110,13 @@ export function isRetryableError(err: unknown): boolean {
   if (err instanceof Anthropic.APIError && typeof err.status === 'number') {
     return err.status === 429 || err.status >= 500;
   }
-  // 兜底：带 code 的网络错误
-  const code = (err as { code?: string } | undefined)?.code;
-  if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EPIPE') {
+  // 兜底：带 code 的网络错误（下钻 cause 链，覆盖 undici fetch 失败的嵌套形态）
+  if (causeChainCodes(err).some((c) => RETRYABLE_NET_CODES.has(c))) {
+    return true;
+  }
+  // undici 裸传输错误：fetch 只在网络层失败时抛这两种 TypeError，
+  // 即使 cause 链缺 code 也按可安全重放的瞬时故障处理
+  if (err instanceof TypeError && (err.message === 'fetch failed' || err.message === 'terminated')) {
     return true;
   }
   return false;
@@ -155,7 +192,16 @@ export function summarizeError(err: unknown): string {
     }
   }
   const typed = type !== undefined && !body.includes(type) ? `${type}: ${body}` : body;
-  return status !== undefined ? `HTTP ${status} · ${typed}` : typed;
+  let summary = status !== undefined ? `HTTP ${status} · ${typed}` : typed;
+  // undici 传输错误：把 cause 链上的真实 code 带上——否则一句「fetch failed」
+  // 无法区分 DNS 失败、连接重置还是超时，用户无从下手
+  if (status === undefined) {
+    const codes = causeChainCodes(err);
+    if (codes.length > 0 && !summary.includes(codes[0]!)) {
+      summary = `${summary} (${codes.join(' < ')})`;
+    }
+  }
+  return summary;
 }
 
 /**
