@@ -190,13 +190,13 @@ async function fetchWithSafeRedirects(url: string): Promise<PinnedFetchResult> {
 async function fetchAndExtract(url: string): Promise<FetchResult> {
   const { response, composedAgent } = await fetchWithSafeRedirects(url);
   try {
-    return await readResponse(response);
+    return await readResponse(response, url);
   } finally {
     await composedAgent.close();
   }
 }
 
-async function readResponse(response: Response): Promise<FetchResult> {
+async function readResponse(response: Response, url: string): Promise<FetchResult> {
   if (response.status >= 400) {
     await response.body?.cancel().catch(() => {});
     throw new Error(`HTTP ${response.status} ${response.statusText}`);
@@ -226,11 +226,42 @@ async function readResponse(response: Response): Promise<FetchResult> {
     return { content: body, kind: 'passthrough' };
   }
 
-  return { content: extractMainContent(body), kind: 'extracted' };
+  return { content: extractMainContent(body, url), kind: 'extracted' };
 }
 
-function extractMainContent(html: string): string {
+/**
+ * 站点适配：微信公众号（mp.weixin.qq.com）。
+ *
+ * 公众号文章的正文容器 `#js_content` 在首屏 HTML 里就带
+ * `style="visibility: hidden; opacity: 0;"`（微信靠后续 JS 揭开），Readability
+ * 据此判定该节点不可见、不纳入候选，最终只返回标题、作者和页头碎片（2026-08-04
+ * 实测：Readability 272 字 vs 正文 6632 字）。而「非空即成功」的短路逻辑又让
+ * 本可拿到正文的 fallback 永远走不到。
+ *
+ * 处理：仅对 mp.weixin.qq.com 主机、仅对 `#js_content` 一个节点删除 style
+ * 属性，再交给 Readability 主路径。不做全局 hidden 剥离——那会把隐藏导航、
+ * 弹层、广告文案一起提取出来。
+ */
+function isWeChatArticleUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase() === 'mp.weixin.qq.com';
+  } catch {
+    return false;
+  }
+}
+
+function extractMainContent(html: string, url?: string): string {
   const { document } = parseHTML(html);
+
+  // 微信页预处理：删掉正文容器的隐藏 style，并在 Readability 改写 DOM 前留存正文文本
+  let wechatRawText = '';
+  if (url !== undefined && isWeChatArticleUrl(url)) {
+    const contentNode = document.querySelector('#js_content');
+    if (contentNode !== null) {
+      contentNode.removeAttribute('style');
+      wechatRawText = (contentNode.textContent ?? '').trim();
+    }
+  }
 
   // 优先用 Readability 提取
   try {
@@ -240,13 +271,23 @@ function extractMainContent(html: string): string {
     const article = reader.parse();
     if (article !== null) {
       const text = (article.textContent ?? '').trim();
-      if (text.length > 0) {
+      // 微信页：Readability 仍可能只抓到页头碎片（远短于正文容器），异常短时回退到
+      // #js_content 直取，防微信改 DOM 形态后再次只返回标题作者
+      const suspiciouslyShort =
+        wechatRawText.length > 0 && text.length < wechatRawText.length / 3;
+      if (text.length > 0 && !suspiciouslyShort) {
         const title = (article.title ?? '').trim();
         return title.length > 0 ? `# ${title}\n\n${text}` : text;
       }
     }
   } catch {
     // Readability 失败时走 fallback
+  }
+
+  // 微信页回退：Readability 失败或结果异常短，直接取 #js_content 文本
+  if (wechatRawText.length > 0) {
+    const titleText = (document.querySelector('title')?.textContent ?? '').trim();
+    return titleText.length > 0 ? `# ${titleText}\n\n${wechatRawText}` : wechatRawText;
   }
 
   // Fallback：取 <article> / <main> / <body> 的文本
