@@ -31,7 +31,8 @@
   - **旧格式会话不再保证能恢复**。会话恢复改为以事件日志为唯一事实源：缺少恢复游标的旧快照，其消息历史在恢复时会被丢弃（会话本身还在，但内容为空）；恢复过程出错会直接报错，不再悄悄退回旧读取方式假装打得开。
   - **环境变量 `STEPFUN_API_KEY` 不再识别**。阶跃渠道的 API key 只认 `STEP_CODE_API_KEY`，或写在配置文件 `[providers.<id>]` / `[models.<别名>]` 下；`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` 不受影响。
   - **`[models.<别名>]` 的 `provider` 写法收紧**：必须指向 `[providers.<id>]` 里声明的自定义渠道，或干脆省略以继承顶层 provider。直接写内置预设名（如 `provider = "stepfun"`）的别名会被视为无效，展开时不生效。
-  - **`--output-format stream-json` 的 `session.resume_hint` 事件移除了 `role` 字段**，消费方只按 `type` 判别即可。
+  - **`--output-format stream-json` 的 `session.resume_hint` 事件移除了 `role` 字段**，消费方只按 `type` 判别即可。协议版本 `STREAM_JSON_PROTOCOL_VERSION` 相应从 1 升到 2（删字段属不兼容变更，递增规则见 stream-json 文档）。
+  - **会话列表不再为缺字段的旧快照现场补全元信息**。此前列表页会对缺 `title` / `preview` / `messageCount` 的旧快照现场从消息里折算，现在以快照字段为准：缺标题就显示无标题，缺计数就显示 0。新保存的会话不受影响。
 
 ### Changed
 
