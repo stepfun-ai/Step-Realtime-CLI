@@ -474,20 +474,19 @@ export class SessionStore {
       const name = entry.name;
       try {
         const data = JSON.parse(readFileSync(join(dir, name), 'utf8')) as SessionData;
-        const messages = data.messages ?? [];
         metas.push({
           id: data.id,
           cwd: data.cwd,
           model: data.model,
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
-          messageCount: data.messageCount ?? messages.length,
+          // 元信息以快照字段为准。save 时必写 messageCount 并派生 title/preview，
+          // 缺字段的旧快照不现场折算（1.0 前不为旧格式留兼容分支），按缺失直通
+          messageCount: data.messageCount ?? 0,
           // 自定义名直通（重命名不经过 save，list 是改名后唯一的读取口径）
           name: data.name,
-          // 有 title 用 title；快照无 title 时现场从 messages 派生兜底
-          title: data.title ?? deriveTitle(messages),
-          // preview 供选择器搜索；快照无 preview 时现场派生兜底
-          preview: data.preview ?? derivePreview(messages),
+          title: data.title,
+          preview: data.preview,
         });
       } catch {
         // 跳过损坏文件

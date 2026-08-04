@@ -36,7 +36,7 @@ for line in proc.stdout:
 
 ## 版本与兼容
 
-`STREAM_JSON_PROTOCOL_VERSION` 当前为 **1**。
+`STREAM_JSON_PROTOCOL_VERSION` 当前为 **2**（v2 起 `session.resume_hint` 的 meta 信封不再带 `role` 字段，只认 `type` 判别）。
 
 递增规则明确划两类：
 
