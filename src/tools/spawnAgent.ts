@@ -65,7 +65,7 @@ export const spawnAgentTool: ToolDef<z.infer<typeof schema>> = {
     '派生之后：那块范围就交给它了。不要并行重做它正在做的搜索和读取，也不要中途放弃自己接管——两者都会抵消委派本身省下的上下文。\n' +
     '\n' +
     '返回串带子会话 id，需要在它已有工作基础上继续时用 resume=<id> 续跑（不新建会话、不占派生配额）。\n' +
-    '一次要并行几个独立子任务，在同一轮里发多个 spawn_agent（全为只读 explore 时并行执行）；带依赖的多阶段编排或大批量同构 fan-out 改用 workflow 工具。',
+    '一次要并行几个独立子任务，在同一轮里发多个 spawn_agent（全为只读 explore 时并行执行）；带依赖的多阶段编排或大批量同构 fan-out 改用 dynamic_workflow 工具。',
   schema,
   // 只读 explore 无本地副作用（可并行）；general 可写必须独占（自然串行）
   access: (input) => ((input.subagent_type ?? 'general') === 'explore' ? { kind: 'none' } : { kind: 'all' }),

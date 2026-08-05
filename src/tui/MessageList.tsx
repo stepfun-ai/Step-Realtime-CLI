@@ -49,7 +49,7 @@ export function ThinkingPreview({ text, maxLines = THINKING_PREVIEW_LINES }: { t
  *   非末尾的 assistant 即时定稿——长正文流完进入工具执行期后不再被窗口化压整轮，
  *   「已隐藏 N 行」随定稿释放，全文立即进 scrollback。
  * - busy 时 status === 'running' 的 tool 条目还会被 tool_end 更新；
- *   workflow 面板的所有推进（onWorkflowStep / wf- 子 agent 事件）都经 activeWorkflowRef
+ *   dynamic_workflow 阶段面板的推进（onWorkflowStep 的 phase 事件）经 activeWorkflowRef
  *   门控，tool_end 时该引用同步出栈，因此 status 离开 running 后面板即冻结，可安全定稿。
  */
 export function countSettledItems(items: DisplayItem[], busy: boolean): number {
@@ -66,7 +66,7 @@ export function countSettledItems(items: DisplayItem[], busy: boolean): number {
   if (tail >= 0 && items[tail]!.kind === 'assistant') {
     settled = tail;
   }
-  // 运行中的工具（含 workflow 面板运行中）：后续还有 tool_end / 步骤事件更新
+  // 运行中的工具（含 dynamic_workflow 阶段面板运行中）：后续还有 tool_end / phase 事件更新
   for (let i = 0; i < items.length; i++) {
     const it = items[i]!;
     if (it.kind === 'tool' && it.status === 'running') {

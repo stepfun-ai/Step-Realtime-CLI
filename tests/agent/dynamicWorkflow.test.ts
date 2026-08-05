@@ -7,7 +7,7 @@ import { Journal } from '../../src/agent/dynamicWorkflow/journal.js';
 import { ScriptStore } from '../../src/agent/dynamicWorkflow/scriptStore.js';
 import type { BackgroundManager } from '../../src/agent/background/manager.js';
 import type { RunSubagentFn } from '../../src/agent/subagent/types.js';
-import type { WorkflowStepEvent } from '../../src/agent/workflow.js';
+import type { WorkflowStepEvent } from '../../src/agent/events.js';
 import { dynamicWorkflowTool } from '../../src/tools/dynamicWorkflow.js';
 
 const T = 30_000;

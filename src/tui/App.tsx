@@ -99,7 +99,7 @@ import { computeBacktrack, truncateItemsAtLastUser } from './backtrack.js';
 import { StatusBar } from './StatusBar.js';
 import { TodoPanel, allTodosDone } from './TodoPanel.js';
 import { WorkingStatus } from './WorkingStatus.js';
-import { applyStepEvent, applySubagentEvent, parseDynamicWorkflowInput, parseWorkflowInput, parseWfSid } from './WorkflowPanel.js';
+import { applyDynamicPhaseEvent, parseDynamicWorkflowInput } from './DynamicWorkflowPanel.js';
 import { WelcomeBox } from './WelcomeBox.js';
 import type { SessionData, SessionMeta, SessionStore } from '../session/store.js';
 import { exportDebugBundle } from '../session/debugBundle.js';
@@ -1135,10 +1135,9 @@ export function App({
       setItems((prev) => [...prev, { kind: 'thinking', text: thinkingText }]);
     }
     if (ev.type === 'thinking_end') return;
-    // workflow 工具调用跟踪：start 入栈 / end 出栈，供 onWorkflowStep 与 wf- 子 agent 事件定位面板。
-    // dynamic_workflow 同走此通道（phase 阶段事件经 onWorkflowStep 推进动态面板）。
-    if (ev.type === 'tool_start' && (ev.name === 'workflow' || ev.name === 'dynamic_workflow')) activeWorkflowRef.current.push(ev.id);
-    if (ev.type === 'tool_end' && (ev.name === 'workflow' || ev.name === 'dynamic_workflow')) {
+    // dynamic_workflow 工具调用跟踪：start 入栈 / end 出栈，供 onWorkflowStep 的 phase 事件定位动态面板。
+    if (ev.type === 'tool_start' && ev.name === 'dynamic_workflow') activeWorkflowRef.current.push(ev.id);
+    if (ev.type === 'tool_end' && ev.name === 'dynamic_workflow') {
       activeWorkflowRef.current = activeWorkflowRef.current.filter((id) => id !== ev.id);
     }
     // 本轮流式正文字符累加（WorkingStatus 用来估 output token）。thinking 在上方分支单独累加；
@@ -1162,14 +1161,10 @@ export function App({
             status: 'running',
             startedAt: Date.now(),
           };
-          // workflow 工具：从 input.steps 装配步骤面板初始状态（全部 pending）；
-          // dynamic_workflow：无 steps，装配动态阶段面板（空序列，phase 事件逐个追加）。
-          if (ev.name === 'workflow') {
-            const wf = parseWorkflowInput(ev.input);
-            if (wf !== null) item.workflow = wf;
-          } else if (ev.name === 'dynamic_workflow') {
+          // dynamic_workflow 工具：装配动态阶段面板（空序列，phase 事件逐个追加）。
+          if (ev.name === 'dynamic_workflow') {
             const wf = parseDynamicWorkflowInput(ev.input);
-            if (wf !== null) item.workflow = wf;
+            if (wf !== null) item.dynamicWorkflow = wf;
           }
           next.push(item);
           // 工具调用的 JSON 参数也是模型 output 的一部分（服务端计入 output_tokens），
@@ -2461,22 +2456,9 @@ export function App({
         parentSessionId: sessionRef.current.id,
         skills: skillsRef.current, // 子 agent 共享 skill（取当前注册表，支持 reload 后即时生效）
         onEvent: (id, ev) => {
-          // 按 id 路由子 agent 进度事件（start 建条目 / tool 计数 / end 标完成）
+          // 按 id 路由子 agent 进度事件（start 建条目 / tool 计数 / end 标完成）。
+          // dynamic_workflow 的子 agent（dwf- 前缀）也走此常规 AgentGroup 路由，不进阶段面板。
           const sid = id ?? 'main';
-          // wf- 前缀 = workflow 步骤派生的子 agent：归进步骤面板对应步骤，不进 AgentGroup
-          const wfRef = parseWfSid(sid);
-          if (wfRef !== null) {
-            const toolId = activeWorkflowRef.current[activeWorkflowRef.current.length - 1];
-            if (toolId === undefined) return;
-            setItems((prev) =>
-              prev.map((it) =>
-                it.kind === 'tool' && it.id === toolId && it.workflow !== undefined
-                  ? { ...it, workflow: applySubagentEvent(it.workflow, wfRef, sid, ev) }
-                  : it,
-              ),
-            );
-            return;
-          }
           setSubagents((prev) => {
             const updated = [...prev];
             if (ev.kind === 'start') {
@@ -2529,14 +2511,14 @@ export function App({
             cron: cron.current ?? undefined,
             askUser: askUserQuestion,
             subagentMaxConcurrent: configRef.current.subagent.maxConcurrent,
-            // workflow 步骤进度：推进最近一个运行中的 workflow 工具条目的步骤面板
+            // dynamic_workflow phase 进度：推进最近一个运行中的 dynamic_workflow 工具条目的动态阶段面板
             onWorkflowStep: (info) => {
               const toolId = activeWorkflowRef.current[activeWorkflowRef.current.length - 1];
               if (toolId === undefined) return;
               setItems((prev) =>
                 prev.map((it) =>
-                  it.kind === 'tool' && it.id === toolId && it.workflow !== undefined
-                    ? { ...it, workflow: applyStepEvent(it.workflow, info) }
+                  it.kind === 'tool' && it.id === toolId && it.dynamicWorkflow !== undefined
+                    ? { ...it, dynamicWorkflow: applyDynamicPhaseEvent(it.dynamicWorkflow, info) }
                     : it,
                 ),
               );

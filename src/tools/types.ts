@@ -55,10 +55,10 @@ export interface ToolContext {
   attachments?: import('../session/attachments.js').AttachmentStore;
   /** 向用户提问回调（组合根注入，前台阻塞收集答案）。缺失表示当前上下文不支持提问（如子 agent 无 UI）。 */
   askUser?(req: import('./askUser.js').AskUserRequest): Promise<import('./askUser.js').QuestionAnswers>;
-  /** workflow 与并行子 agent 的并发上限（来自 config.subagent.maxConcurrent）。 */
+  /** 并行子 agent 与编排原语的并发上限（来自 config.subagent.maxConcurrent）。 */
   subagentMaxConcurrent?: number;
-  /** workflow 步骤进度回调（组合根注入，供 TUI 步骤面板实时更新）。缺失表示无 UI 消费方。 */
-  onWorkflowStep?: (info: import('../agent/workflow.js').WorkflowStepEvent) => void;
+  /** 编排步骤进度回调（组合根注入，供 TUI 步骤面板实时更新）。缺失表示无 UI 消费方。 */
+  onWorkflowStep?: (info: import('../agent/events.js').WorkflowStepEvent) => void;
   /**
    * 当前模型的能力标记（来自模型别名 [models.<别名>] capabilities，如 image_in）。
    * 裸模型 / 未命中别名时为 undefined。供 read_media 等多模态工具做能力门控。

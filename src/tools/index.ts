@@ -22,7 +22,6 @@ import { fail, type ToolContext, type ToolDef, type ToolResult } from './types.j
 import type { ToolAccess } from './access.js';
 import { webFetchTool } from './webFetch.js';
 import { webSearchTool } from './webSearch.js';
-import { workflowTool } from './workflow.js';
 import { writeFileTool } from './write.js';
 
 /** 全部工具，按注册顺序。 */
@@ -54,7 +53,6 @@ const ALL_TOOLS: ToolDef<any>[] = [
   cronListTool,
   cronDeleteTool,
   toolSearchTool,
-  workflowTool,
   dynamicWorkflowTool,
 ];
 
