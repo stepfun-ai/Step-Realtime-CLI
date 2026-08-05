@@ -1055,7 +1055,9 @@ export function App({
       return;
     }
     // 图片以占位符文本形式在输入框内，用户可直接用退格/删除键编辑移除，无需特殊分支。
-    if (meta.meta && key === 'v' && !busyRef.current) {
+    // busy 时也允许贴图：attachClipboardImage 只往输入框草稿追加占位符，不触碰在跑回合；
+    // 提交走 busy 入队路径（占位符随文本入队，drain 时 extractImageContent 统一解析成图）。
+    if (meta.meta && key === 'v') {
       attachClipboardImage();
       return;
     }
@@ -2321,7 +2323,9 @@ export function App({
       }
       // 发送缓冲队列：busy 时入队（FIFO），回合结束自动逐条发送
       if (busyRef.current) {
-        if (text === '') return; // 图片输入 busy 时暂不入队（简化）
+        // text 是占位符还原后的全文：纯图时占位符文本非空，会继续走到下方入队（drain 时解析成图）。
+        // 这里仅挡「彻底空」的提交（既无文字也无图占位符，正常进不来，防御性早退）。
+        if (text === '') return;
         // 系统合成注入（后台通知信封 / cron prompt / skill 正文 / goal 续跑文本）先分流，
         // 下面四条真人输入的处理对它一条都不适用：
         // 1. 不解析斜杠——正文以 `/` 开头会被误判成命令即时执行；
