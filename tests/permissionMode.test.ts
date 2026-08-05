@@ -150,7 +150,7 @@ function makeCfg(overrides: Partial<StepCodeConfig> = {}): StepCodeConfig {
     model: 'step-3.7-flash',
     maxContextSize: 262_144,
     maxTokens: 65_536,
-    subagent: { maxPerSession: 10, maxDepth: 1, maxSteps: 100, maxConcurrent: 4 },
+    subagent: { maxDepth: 1, maxSteps: 100, maxConcurrent: 4 },
     compaction: { triggerRatio: 0.85, reservedTokens: 32_000 },
     thinking: { enabled: false, levels: { low: 1024, medium: 4096, high: 32_000 } },
     ...overrides,
