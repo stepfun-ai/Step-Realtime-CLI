@@ -2,6 +2,7 @@ import AnthropicSDK from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import { runAgent } from '../../src/agent/loop.js';
 import { stored, type StoredMessage } from '../../src/agent/message.js';
+import type { WireEvent } from '../../src/agent/wirelog.js';
 import {
   EmptyResponseError,
   isEmptyStreamError,
@@ -317,5 +318,73 @@ describe('空响应诊断上下文（替代无证据的「瞬时故障」归因�
     // 两条建议都不出现
     expect(err!.message).not.toContain('重发无用');
     expect(err!.message).not.toContain('这不是预算问题');
+  });
+});
+
+describe('turn.issue 落盘：请求级异常在 wire 留踪迹（事后可排查）', () => {
+  it('空响应重试：wire 落 turn.issue(kind=empty)，带诊断上下文', async () => {
+    const wire: WireEvent[] = [];
+    const { provider } = makeFakeProvider([
+      { textChunks: [], finalContent: [] }, // 空响应 → EmptyResponseError → 重试
+      { textChunks: ['好了'], finalContent: [textBlock('好了')] },
+    ]);
+    await collect(
+      runAgent({
+        provider,
+        system: 'sys',
+        ctx: { cwd: process.cwd() },
+        messages: [sm('问')],
+        onWireEvent: (e) => wire.push(e),
+      }),
+    );
+    const issue = wire.find((e) => e.type === 'turn.issue');
+    expect(issue).toBeDefined();
+    if (issue?.type === 'turn.issue') {
+      expect(issue.kind).toBe('empty'); // 空响应触发的重试归类为 empty
+      expect(issue.attempt).toBe(1);
+      expect(typeof issue.delayMs).toBe('number');
+      // 空响应诊断上下文：stopReason（end_turn）落盘
+      expect(issue.stopReason).toBe('end_turn');
+    }
+  });
+
+  it('断连重试（terminated）：wire 落 turn.issue(kind=retry)', async () => {
+    const wire: WireEvent[] = [];
+    const terminated = () => Object.assign(new TypeError('terminated'), { cause: { code: 'ECONNRESET' } });
+    const { provider } = makeFakeProvider([
+      { throw: terminated() },
+      { textChunks: ['恢复'], finalContent: [textBlock('恢复')] },
+    ]);
+    await collect(
+      runAgent({
+        provider,
+        system: 'sys',
+        ctx: { cwd: process.cwd() },
+        messages: [sm('问')],
+        onWireEvent: (e) => wire.push(e),
+      }),
+    );
+    const issue = wire.find((e) => e.type === 'turn.issue');
+    expect(issue).toBeDefined();
+    if (issue?.type === 'turn.issue') {
+      expect(issue.kind).toBe('retry'); // 非空响应的普通重试
+      expect(issue.attempt).toBe(1);
+    }
+  });
+
+  it('turn.issue 不参与 resume 状态迁移（重放后消息数不变）', async () => {
+    const { replayWireEvents } = await import('../../src/agent/wirelog.js');
+    const base = replayWireEvents([]);
+    const withIssue = replayWireEvents([
+      {
+        type: 'turn.issue',
+        ts: new Date().toISOString(),
+        kind: 'empty',
+        message: 'x',
+        stopReason: 'end_turn',
+      },
+    ]);
+    expect(withIssue.messages).toEqual(base.messages);
+    expect(withIssue.turnCount).toBe(base.turnCount);
   });
 });
