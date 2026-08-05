@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
-import { ModelPicker, type ModelPickerItem } from '../../src/tui/ModelPicker.js';
+import { buildModelPickerItems, ModelPicker, type ModelPickerItem } from '../../src/tui/ModelPicker.js';
 
 const delay = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
 
@@ -344,5 +344,36 @@ describe('ModelPicker initialChannel 预选', () => {
     stdin.write('\r');
     await delay();
     expect(onSelect).toHaveBeenCalledWith('alpha');
+  });
+});
+
+describe('buildModelPickerItems（「当前」按别名判定）', () => {
+  // 同 id 多别名：step37 / step37-plan 都指向 step-3.7-flash，仅 provider 不同。
+  const dupModels = {
+    step37: { model: 'step-3.7-flash', provider: 'stepfun' },
+    'step37-plan': { model: 'step-3.7-flash', provider: 'stepfun-plan' },
+    step35: { model: 'step-3.5-flash-2603', provider: 'stepfun' },
+  };
+
+  it('同 id 多别名时只有激活别名标当前，不是全部', () => {
+    const items = buildModelPickerItems(dupModels, 'step37-plan', 'stepfun');
+    expect(items.find((m) => m.alias === 'step37-plan')?.current).toBe(true);
+    expect(items.find((m) => m.alias === 'step37')?.current).toBe(false);
+    expect(items.filter((m) => m.current)).toHaveLength(1);
+  });
+
+  it('裸 id 直切（currentAlias=null）时无任何别名标当前', () => {
+    const items = buildModelPickerItems(dupModels, null, 'stepfun');
+    expect(items.every((m) => !m.current)).toBe(true);
+  });
+
+  it('label 取 displayName ?? 别名，channel 取 entry.provider ?? 顶层 provider', () => {
+    const models = {
+      a: { model: 'm-a' },                              // 无 displayName / provider：全回落
+      b: { model: 'm-b', displayName: 'B 显示名', provider: 'gw' },
+    };
+    const items = buildModelPickerItems(models, 'b', 'stepfun');
+    expect(items.find((m) => m.alias === 'a')).toMatchObject({ label: 'a', channel: 'stepfun' });
+    expect(items.find((m) => m.alias === 'b')).toMatchObject({ label: 'B 显示名', channel: 'gw', current: true });
   });
 });
