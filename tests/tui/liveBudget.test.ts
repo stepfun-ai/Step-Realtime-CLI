@@ -111,8 +111,8 @@ describe('matchSlashCommands 斜杠命令匹配', () => {
     // se → resume（sessions 别名前缀命中，排前）、usage（子序列 s→e，排后）
     // 前缀命中优先于子序列命中，这个顺序是本用例要钉住的语义
     expect(matchSlashCommands('/se').map((c) => c.name)).toEqual(['resume', 'usage']);
-    // re → reflect（前缀）、resume（前缀）、reload（前缀），provider 的 e 在位置 6 超出跨度限制
-    expect(matchSlashCommands('/re').map((c) => c.name)).toEqual(['reflect', 'resume', 'reload']);
+    // re → restore/reflect/resume/reload（均前缀命中，按注册序：restore 注册在 history 后、reflect 前）
+    expect(matchSlashCommands('/re').map((c) => c.name)).toEqual(['restore', 'reflect', 'resume', 'reload']);
     // pl → plan（前缀）、plugin（前缀），两个都前缀命中按注册序
     expect(matchSlashCommands('/pl').map((c) => c.name)).toEqual(['plan', 'plugin']);
   });

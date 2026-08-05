@@ -23,6 +23,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'new', describe: 'cmd.new' },
   { name: 'compact', describe: 'cmd.compact' },
   { name: 'history', aliases: ['undo'], describe: 'cmd.history' },
+  { name: 'restore', describe: 'cmd.restore' },
   { name: 'reflect', describe: 'cmd.reflect' },
   { name: 'export-debug-zip', describe: 'cmd.export-debug-zip' },
   { name: 'usage', describe: 'cmd.usage' },

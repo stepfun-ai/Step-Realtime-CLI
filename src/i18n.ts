@@ -201,6 +201,9 @@ const zh = {
   'app.undo.none': '本会话还没有可回顾的输入（压缩点之前的历史不可回退）',
   'app.undo.invalid': '无效的轮数：{arg}（用法：/history [正整数]）',
   'app.undo.done': '已撤销 {count} 轮对话（上下文与任务清单/计划模式已回滚；代码改动不受影响）',
+  'app.restore.done': '已恢复 {path}（来自文件 checkpoint）',
+  'app.restore.failed': '恢复失败：{reason}',
+  'app.restore.usage': '用法：/restore <文件路径>（回滚 edit_file/write_file 最近一次的改动）',
 
   // --- TODO 面板（TodoPanel）---
   'todo.title': '任务清单',
@@ -509,6 +512,7 @@ const zh = {
   'cmd.new': '开始新会话（清空上下文并新建会话记录）',
   'cmd.compact': '压缩上下文：把较早对话总结为摘要以腾出窗口',
   'cmd.history': '回顾本会话的输入历史并回退到指定轮（回滚上下文与任务清单/计划模式，代码改动不受影响）：/history [N]',
+  'cmd.restore': '回滚 edit_file/write_file 对文件的最近一次改动（文件级 checkpoint）：/restore <文件路径>',
   'cmd.reflect': '回顾完整对话历史，沉淀可复用的方法论经验（打印到终端）',
   'cmd.export-debug-zip': '导出调试 zip（发给我们排查 bug，请勿公开分享）',
   'cmd.usage': '查看本会话的 token 与缓存命中统计：/usage（加 --all 汇总本目录全部会话）',
@@ -781,6 +785,9 @@ const en: Record<keyof typeof zh, string> = {
   'app.undo.none': 'No inputs to review in this session yet (history before a compaction point cannot be undone)',
   'app.undo.invalid': 'Invalid count: {arg} (usage: /history [positive integer])',
   'app.undo.done': 'Undid {count} turn(s) (context and todo list/plan mode rolled back; code changes are not reverted)',
+  'app.restore.done': 'Restored {path} (from file checkpoint)',
+  'app.restore.failed': 'Restore failed: {reason}',
+  'app.restore.usage': 'Usage: /restore <file path> (reverts the most recent edit_file/write_file change)',
 
   'todo.title': 'Tasks',
   'todo.more': '… +{count} more',
@@ -1063,6 +1070,7 @@ const en: Record<keyof typeof zh, string> = {
   'cmd.new': 'Start a new session (clear context, create a new session record)',
   'cmd.compact': 'Compact context: summarize earlier conversation to free up window',
   'cmd.history': 'Review inputs of this session and backtrack to a turn (rolls back context and todo/plan state; code changes are not reverted): /history [N]',
+  'cmd.restore': 'Revert the most recent edit_file/write_file change to a file (file-level checkpoint): /restore <file path>',
   'cmd.reflect': 'Review full conversation history and distill reusable methodology (prints to terminal)',
   'cmd.export-debug-zip': 'Export a debug zip (send to us for troubleshooting; do not share publicly)',
   'cmd.usage': 'Show token and cache-hit stats for this session: /usage (--all aggregates every session in this directory)',

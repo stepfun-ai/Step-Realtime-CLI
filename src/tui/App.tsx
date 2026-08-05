@@ -39,6 +39,8 @@ import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilities
 import type { ToolContext } from '../tools/types.js';
 import type { TodoItem } from '../tools/types.js';
 import { clearDynamicTools } from '../tools/index.js';
+import { restoreFile } from '../tools/checkpoint.js';
+import { resolvePath as resolveToolPath } from '../tools/fsutil.js';
 import { AgentGroup, agentGroupRows, formatAgentGroupSummary, formatDetachedHandoff } from './AgentGroup.js';
 import { ExpandViewer, collectExpandable } from './ExpandViewer.js';
 import { TasksViewer } from './TasksViewer.js';
@@ -2022,6 +2024,23 @@ export function App({
             break;
           }
           performUndo(n);
+          break;
+        }
+        case 'restore': {
+          // 文件级 checkpoint 回滚：edit_file/write_file 写前已备份原内容（tools/checkpoint.ts），
+          // 这里按 cwd 找到该文件最近备份并写回。与对话级 /history（只回退对话、不动文件）互补。
+          const arg = args.trim();
+          if (arg === '') {
+            pushItem({ kind: 'note', text: t('app.restore.usage') });
+            break;
+          }
+          const abs = resolveToolPath(ctx.cwd, arg);
+          const res = restoreFile(ctx.cwd, abs);
+          if (res.ok) {
+            pushItem({ kind: 'note', text: t('app.restore.done', { path: arg }) });
+          } else {
+            pushItem({ kind: 'error', text: t('app.restore.failed', { reason: res.reason }) });
+          }
           break;
         }
         case 'reflect': {
