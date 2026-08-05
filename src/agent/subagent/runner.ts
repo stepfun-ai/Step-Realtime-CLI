@@ -42,8 +42,6 @@ export interface SubagentRunnerDeps {
   hooks: LoopHooks;
   /** 嵌套深度上限（来自 config.subagent.maxDepth，父=0）。 */
   maxDepth: number;
-  /** 单会话累计派生上限（来自 config.subagent.maxPerSession）。 */
-  maxPerSession: number;
   /** 每个子 agent 内部步数的全局默认（来自 config.subagent.maxSteps）；agent 定义可覆盖。 */
   maxStepsDefault: number;
   /** 压缩阈值：子 agent 也需要循环内压缩兜底（否则放宽步数后会撑爆上下文）。 */
@@ -54,7 +52,7 @@ export interface SubagentRunnerDeps {
   compactionProvider?: ChatProvider;
   /** 用户原话保真预算覆盖（来自 config.compaction.userMessage*）；省略 = 用 compact.ts 默认。 */
   userMessageBudget?: { maxTokens?: number; headTokens?: number };
-  /** 会话级共享计数器（外置于 runner 实例，跨轮累计）。只做配额计数，不承担 id 生成。 */
+  /** 会话级共享计数器（外置于 runner 实例，跨轮累计）。只做 UI 序号与展示计数，不承担配额拦截。 */
   sessionCounter: SubagentSessionCounter;
   /** 子会话持久层（组合根注入）：每次派生落盘独立会话（快照 + 全量日志 + 活跃锁）。 */
   subagentStore: SubagentStore;
@@ -75,6 +73,8 @@ interface ResolvedBinding {
   model?: string;
   capabilities?: readonly string[];
   maxContextSize?: number;
+  /** 渠道名（如 stepfun / openai），空响应诊断上下文用；fallback 路径为 undefined。 */
+  providerName?: string;
 }
 
 /** 组合根用它造 runSubagent 闭包。注册表按 cwd 构建一次。 */
@@ -106,6 +106,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         model: resolved.model,
         capabilities: resolved.capabilities,
         maxContextSize: resolved.maxContextSize,
+        providerName: resolved.provider,
       };
     }
     try {
@@ -116,6 +117,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         model: resolved.model,
         capabilities: resolved.capabilities,
         maxContextSize: resolved.maxContextSize,
+        providerName: resolved.provider,
       };
     } catch {
       return fallback;
@@ -177,13 +179,6 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         };
       }
 
-      // 会话级数量上限：合法请求才计入配额（深度超限 / 未知类型不占额）
-      if (deps.sessionCounter.spawned >= deps.maxPerSession) {
-        return {
-          summary: `已达单会话子 agent 数量上限（${deps.maxPerSession}）。请自己完成剩余任务，不要再派生子 agent。`,
-          isError: true,
-        };
-      }
       deps.sessionCounter.spawned += 1;
 
       // 起步即建立子会话身份：UUID id + 活跃锁 + 状态 running。
@@ -296,6 +291,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       const run = async (): Promise<void> => {
         for await (const ev of runAgent({
           provider: binding.provider,
+          providerName: binding.providerName ?? deps.config?.provider,
           system,
           ctx,
           messages,

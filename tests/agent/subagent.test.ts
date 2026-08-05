@@ -95,7 +95,6 @@ const deps = (
   cwd: process.cwd(),
   hooks: {},
   maxDepth: 1,
-  maxPerSession: 10,
   maxStepsDefault: 30,
   compaction: { maxContextSize: 1_000_000, triggerRatio: 0.85, reservedTokens: 32000 },
   sessionCounter: { spawned: 0 },
@@ -134,18 +133,6 @@ describe('createSubagentRunner', () => {
     expect(streamCalls()).toBe(0);
   });
 
-  it('会话数量已达上限 → 拒绝且不调用 provider', async () => {
-    const { provider, streamCalls } = makeFakeProvider([]);
-    const counter = { spawned: 3 };
-    const run = createSubagentRunner(
-      deps(provider, undefined, { maxPerSession: 3, sessionCounter: counter }),
-    );
-    const r = await run({ subagentType: 'general', prompt: 'x', depth: 0 });
-    expect(r.isError).toBe(true);
-    expect(r.summary).toContain('数量上限');
-    expect(streamCalls()).toBe(0);
-  });
-
   it('每次成功派生递增会话计数器', async () => {
     const { provider } = makeFakeProvider([{ textChunks: [], finalContent: [textBlock(LONG)] }]);
     const counter = { spawned: 0 };
@@ -154,7 +141,7 @@ describe('createSubagentRunner', () => {
     expect(counter.spawned).toBe(1);
   });
 
-  it('未知类型 / 深度超限不占用配额', async () => {
+  it('未知类型 / 深度超限不递增计数器', async () => {
     const { provider } = makeFakeProvider([]);
     const counter = { spawned: 0 };
     const run = createSubagentRunner(deps(provider, undefined, { sessionCounter: counter }));
@@ -567,7 +554,7 @@ describe('SubagentStore', () => {
 });
 
 describe('resume：按 id 恢复子会话', () => {
-  it('续跑：历史回灌 + 新 prompt 追加、首条 prompt 不重复、不占配额、续接点无孤儿 tool_result', async () => {
+  it('续跑：历史回灌 + 新 prompt 追加、首条 prompt 不重复、计数器不增、续接点无孤儿 tool_result', async () => {
     const { provider, streamParams } = makeFakeProvider([
       { textChunks: [], finalContent: [toolUseBlock('c1', 'nonexistent_tool', {})] },
       { textChunks: [], finalContent: [textBlock(LONG)] },
@@ -583,7 +570,7 @@ describe('resume：按 id 恢复子会话', () => {
     const r2 = await run({ subagentType: 'general', prompt: '继续干活', depth: 0, resume: r1.sessionId });
     expect(r2.isError).toBe(false);
     expect(r2.sessionId).toBe(r1.sessionId); // 同一子会话，不新建
-    expect(counter.spawned).toBe(1); // resume 不是新派生，不占配额
+    expect(counter.spawned).toBe(1); // resume 不是新派生，计数器不增
 
     const snap = d.subagentStore.loadSnapshot(d.cwd, r1.sessionId!)!;
     expect(snap.status).toBe('done');
@@ -600,21 +587,17 @@ describe('resume：按 id 恢复子会话', () => {
     expect(JSON.stringify(streamParams()[2]!.messages)).toContain('继续干活');
   });
 
-  it('配额已满仍可 resume（resume 不检查也不增加配额）', async () => {
+  it('resume 不递增计数器（resume 不是新派生）', async () => {
     const { provider } = makeFakeProvider([
       { textChunks: [], finalContent: [textBlock(LONG)] },
       { textChunks: [], finalContent: [textBlock(LONG)] }, // resume 轮
     ]);
     const counter = { spawned: 0 };
-    const d = deps(provider, undefined, { sessionCounter: counter, maxPerSession: 1 });
+    const d = deps(provider, undefined, { sessionCounter: counter });
     const run = createSubagentRunner(d);
     const r1 = await run({ subagentType: 'general', prompt: '任务', depth: 0 });
     expect(counter.spawned).toBe(1);
-    // 配额已满：新派生被拒
-    const rejected = await run({ subagentType: 'general', prompt: '新任务', depth: 0 });
-    expect(rejected.isError).toBe(true);
-    expect(rejected.summary).toContain('数量上限');
-    // 但 resume 放行
+    // resume 放行且不增计数
     const r2 = await run({ subagentType: 'general', prompt: '续', depth: 0, resume: r1.sessionId });
     expect(r2.isError).toBe(false);
     expect(counter.spawned).toBe(1);
