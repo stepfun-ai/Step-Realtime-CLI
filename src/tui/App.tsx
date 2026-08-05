@@ -1151,7 +1151,14 @@ export function App({
         case 'retry': {
           // agent 流事件：构成消息边界（重试后正文另开条目，不得续接到失败尝试上）
           // B 方案：吐字后断连（hadPartial）先撤回残文气泡，只留重发的完整版，屏幕不出重复开头。
-          const base = ev.hadPartial === true ? removePartialAssistant(next) : next;
+          // 撤回时同步扣减 turnOutputCharsRef：残文已从屏幕移除，token 估算不应再算它，
+          // 否则 retry 延迟窗口（busy 仍 true、计数不清零）里状态栏 tok 数虚高。
+          const base = ev.hadPartial === true
+            ? removePartialAssistant(next, (removedChars) => {
+                turnOutputCharsRef.current = Math.max(0, turnOutputCharsRef.current - removedChars);
+                setTurnOutputChars(turnOutputCharsRef.current);
+              })
+            : next;
           base.push({ kind: 'note', text: ev.message, boundary: true });
           return base;
         }
