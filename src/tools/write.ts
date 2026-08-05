@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { backupBeforeWrite } from './checkpoint.js';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { resolvePath } from './fsutil.js';
@@ -19,6 +20,8 @@ export const writeFileTool: ToolDef<z.infer<typeof schema>> = {
     const abs = resolvePath(ctx.cwd, input.path);
     try {
       mkdirSync(dirname(abs), { recursive: true });
+      // 文件级 checkpoint：覆盖写前备份原始内容（已存在时），供 /restore 回滚
+      backupBeforeWrite(ctx.cwd, abs, 'write_file');
       writeFileSync(abs, input.content, 'utf8');
     } catch (e) {
       return fail(`写入失败：${(e as Error).message}`);
