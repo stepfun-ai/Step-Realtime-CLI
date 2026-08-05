@@ -5,24 +5,24 @@ import { render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MessageItem, MessageList, ThinkingPreview, appendStreamText, countSettledItems, removePartialAssistant } from '../../src/tui/MessageList.js';
 import type { DisplayItem } from '../../src/tui/types.js';
-import type { WorkflowPanelState } from '../../src/tui/WorkflowPanel.js';
+import type { DynamicWorkflowPanelState } from '../../src/tui/DynamicWorkflowPanel.js';
 
 const user = (text: string): DisplayItem => ({ kind: 'user', text });
 const assistant = (text: string): DisplayItem => ({ kind: 'assistant', text });
 const note = (text: string): DisplayItem => ({ kind: 'note', text });
 const thinking = (text: string): DisplayItem => ({ kind: 'thinking', text });
-const tool = (id: string, status: 'running' | 'ok' | 'error', workflow?: WorkflowPanelState): DisplayItem => ({
+const tool = (id: string, status: 'running' | 'ok' | 'error', dynamicWorkflow?: DynamicWorkflowPanelState): DisplayItem => ({
   kind: 'tool',
   id,
   name: 'bash',
   input: {},
   status,
   startedAt: Date.now(),
-  ...(workflow !== undefined ? { workflow } : {}),
+  ...(dynamicWorkflow !== undefined ? { dynamicWorkflow } : {}),
 });
-const wfState = (stepStatus: 'pending' | 'running' | 'done'): WorkflowPanelState => ({
-  name: 'wf',
-  steps: [{ kind: 'agent', label: 's1', status: stepStatus, members: [] }],
+const dwfState = (phaseStatus: 'running' | 'done'): DynamicWorkflowPanelState => ({
+  name: 'dwf',
+  phases: [{ title: 'p1', status: phaseStatus }],
 });
 
 describe('countSettledItems 定稿判定', () => {
@@ -52,13 +52,13 @@ describe('countSettledItems 定稿判定', () => {
     expect(countSettledItems(items, true)).toBe(1);
   });
 
-  it('busy 时 workflow 面板运行中的工具条目留动态区', () => {
-    const items = [user('u1'), tool('t1', 'running', wfState('running'))];
+  it('busy 时 dynamic_workflow 面板运行中的工具条目留动态区', () => {
+    const items = [user('u1'), tool('t1', 'running', dwfState('running'))];
     expect(countSettledItems(items, true)).toBe(1);
   });
 
-  it('busy 时终态工具（含 workflow 已完成）可以定稿', () => {
-    const items = [user('u1'), tool('t1', 'ok', wfState('done')), tool('t2', 'error')];
+  it('busy 时终态工具（含 dynamic_workflow 已完成）可以定稿', () => {
+    const items = [user('u1'), tool('t1', 'ok', dwfState('done')), tool('t2', 'error')];
     expect(countSettledItems(items, true)).toBe(items.length);
   });
 

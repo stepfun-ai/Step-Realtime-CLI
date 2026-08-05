@@ -288,7 +288,11 @@ describe('预检判据的口径', () => {
   });
 
   it('无真实基准时补上框架开销：tools schema 计入后越过阈值', async () => {
-    // 触发线 7650；bigHistory 估算约几百，单靠它不过线，加上全量 tools schema 才过线
+    // 触发线 = maxContextSize×0.85。本用例依赖「全量 tools schema + bigHistory」越过触发线，
+    // 而 tools schema 大小随工具表增减变化（2026-08-05 删 workflow 工具后实测 7231 tok、
+    // bigHistory 260 tok、sys 1 tok，合计 7492）。maxContextSize=8000 → 触发线 6800：
+    // 6800 < 7492（越线），且清空工具后仅 261 ≪ 6800（对照用例不过线）。
+    // 若未来工具表大幅增删导致此用例失败，按上面实测口径重算 maxContextSize。
     const { provider, streamParams } = makeFakeProvider([
       { textChunks: [], finalContent: [textBlock('摘要')] },
       { textChunks: ['答复'], finalContent: [textBlock('答复')] },
@@ -299,7 +303,7 @@ describe('预检判据的口径', () => {
       runAgent({
         ...baseOpts(provider, messages),
         // 不传 allowedTools = 全量工具，其 schema 是框架开销的主要来源
-        compaction: { maxContextSize: 9000, triggerRatio: 0.85, reservedTokens: 10 },
+        compaction: { maxContextSize: 8000, triggerRatio: 0.85, reservedTokens: 10 },
         compactionModel: 'summary-model',
       }),
     );
@@ -318,7 +322,7 @@ describe('预检判据的口径', () => {
       runAgent({
         ...baseOpts(provider, messages),
         allowedTools: [],
-        compaction: { maxContextSize: 9000, triggerRatio: 0.85, reservedTokens: 10 },
+        compaction: { maxContextSize: 8000, triggerRatio: 0.85, reservedTokens: 10 },
         compactionModel: 'summary-model',
       }),
     );

@@ -41,6 +41,20 @@ export type AgentEvent =
   /** cause：原始错误对象（内部元数据，UI 不消费），供子 agent 运行器识别 429 做重排队判定。 */
   | { type: 'error'; message: string; cause?: unknown };
 
+/** 编排步骤进度事件（onWorkflowStep 回调参数，供 UI 步骤面板推进）。
+ * dynamic_workflow 的 phase 事件是哨兵值 `index: -1, total: 0`——阶段在运行时才知道、
+ * 无法预先编号，UI 应走「按 title 追加」的动态分支而非按 index 定位。
+ *（本类型原在 src/agent/workflow.ts，随声明式 workflow 删除迁至此处：dynamic_workflow 仍在用。） */
+export interface WorkflowStepEvent {
+  index: number;
+  total: number;
+  /** 事件类型。dynamic_workflow 的阶段切换为 'phase'；其余 kind 来自已删除的声明式 workflow。 */
+  kind: string;
+  status: 'start' | 'done';
+  /** phase 事件的阶段标题（dynamic_workflow 脚本内 phase(title) 发出；其余 kind 无此字段）。 */
+  title?: string;
+}
+
 /** 子 agent 进度事件（独立通道，经 runner 的 onEvent 上抛，带 id 区分并行子 agent）。 */
 export type SubagentProgressEvent =
   | { kind: 'start'; subagentType: string; description: string }

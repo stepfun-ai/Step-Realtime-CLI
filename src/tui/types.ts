@@ -13,8 +13,8 @@ export type DisplayItem =
       result?: string;
       /** 工具开始时间戳（tool_start 时埋入），用于 running 态显示已运行秒数。 */
       startedAt?: number;
-      /** workflow 工具的步骤面板状态（tool_start 时从 input.steps 装配，onWorkflowStep/子 agent 事件推进）。 */
-      workflow?: import('./WorkflowPanel.js').WorkflowPanelState;
+      /** dynamic_workflow 的动态阶段面板状态（tool_start 时造空序列，phase 事件逐个追加阶段）。 */
+      dynamicWorkflow?: import('./DynamicWorkflowPanel.js').DynamicWorkflowPanelState;
     }
   | {
       kind: 'note';
