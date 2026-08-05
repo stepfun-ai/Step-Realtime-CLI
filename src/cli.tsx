@@ -45,7 +45,7 @@ import { runDoctorConfig } from './config/doctor.js';
 import { setLocale, t } from './i18n.js';
 import { discoverPlugins, defaultPluginsDir } from './plugin/manager.js';
 import { pluginsStatePath, readPluginsState } from './plugin/manage.js';
-import { buildSkillRegistry, diffSkillRegistries, fingerprintSkillRoots, skillListing, type SkillRegistry, type SkillRegistryDiff } from './skill/registry.js';
+import { buildSkillRegistry, diffSkillRegistries, fingerprintSkillRoots, scanSkillRootsOnce, skillListing, type SkillRegistry, type SkillRegistryDiff } from './skill/registry.js';
 import { McpManager, mcpInputSchemaToZod, type McpServerConfig } from './mcp/manager.js';
 import { registerDynamicTool } from './tools/index.js';
 import { createProvider } from './provider/factory.js';
@@ -329,10 +329,13 @@ const pluginSkillDirs = plugins.flatMap((p) => p.skillDirs);
 // disabled_skills 按名排除（合并后统一过滤，任何来源生效）。
 // skillsRef 持有当前注册表：reload（/skill reload 或 turn 边界指纹检测）后整体换引用，
 // system prompt 的清单部分随 composeSystem() 在每次调用时重建，无需重启进程。
+// 启动期一次性扫描（scanSkillRootsOnce）：同一轮 readdirSync 同时产出注册表与指纹，
+// 省掉原先 buildSkillRegistry 与 fingerprintSkillRoots 各扫一遍的重复 fs。
+const __bootScan = scanSkillRootsOnce(cwd, pluginSkillDirs, config.extraSkillDirs, config.disabledSkills);
 const skillsRef: { current: SkillRegistry } = {
-  current: buildSkillRegistry(cwd, pluginSkillDirs, config.extraSkillDirs, config.disabledSkills),
+  current: __bootScan.registry,
 };
-let skillFingerprint = fingerprintSkillRoots(cwd, pluginSkillDirs, config.extraSkillDirs);
+let skillFingerprint = __bootScan.fingerprint;
 /**
  * 重扫 skill 目录：指纹未变且非强制时返回 null（零成本 fast path）；
  * 有变化（或强制）时全量重建注册表并返回 diff（缓存 + 失效 + 用到时重扫）。
