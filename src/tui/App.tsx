@@ -60,7 +60,7 @@ import type { McpManager } from '../mcp/manager.js';
 import { formatElapsed } from './elapsed.js';
 import { STATUS_BAR_ROWS } from './LiveViewport.js';
 import { computeLiveBudget, logRenderBudget, displayWidth, wrappedRows } from './liveBudget.js';
-import { MessageItem, MessageList, ThinkingPreview, THINKING_PREVIEW_LINES, appendStreamText, countSettledItems } from './MessageList.js';
+import { MessageItem, MessageList, ThinkingPreview, THINKING_PREVIEW_LINES, appendStreamText, countSettledItems, removePartialAssistant } from './MessageList.js';
 import { ModelPicker, type ModelPickerItem } from './ModelPicker.js';
 import { ProviderWizard, type ProviderWizardResult } from './ProviderWizard.js';
 import { ProviderManager, type ProviderManagerRow } from './ProviderManager.js';
@@ -1148,10 +1148,13 @@ export function App({
           // todo_list 改了 todos.current（ref），触发 TodoPanel 重渲
           if (ev.name === 'todo_list') setTodoTick((t) => t + 1);
           break;
-        case 'retry':
+        case 'retry': {
           // agent 流事件：构成消息边界（重试后正文另开条目，不得续接到失败尝试上）
-          next.push({ kind: 'note', text: ev.message, boundary: true });
-          break;
+          // B 方案：吐字后断连（hadPartial）先撤回残文气泡，只留重发的完整版，屏幕不出重复开头。
+          const base = ev.hadPartial === true ? removePartialAssistant(next) : next;
+          base.push({ kind: 'note', text: ev.message, boundary: true });
+          return base;
+        }
         case 'notice':
           // agent 流事件：构成消息边界（压缩/溢出等通知后的正文属于新一轮消息）
           next.push({ kind: 'note', text: ev.message, boundary: true });
@@ -2369,7 +2372,6 @@ export function App({
         config: configRef.current, // 让子 agent 可解析角色 model 别名、跨渠道构造 provider
         hooks,
         maxDepth: configRef.current.subagent.maxDepth,
-        maxPerSession: configRef.current.subagent.maxPerSession,
         maxStepsDefault: configRef.current.subagent.maxSteps,
         compaction: {
           maxContextSize,
@@ -2473,6 +2475,7 @@ export function App({
           signal: controller.signal,
           hooks,
           model,
+          providerName: providerNameRef.current,
           // 会话级思考深度覆盖（/think）：undefined 跟随构造默认，'off' → null 抑制，档位 → budget 覆盖
           thinking: thinkStreamParam(thinkOverride, thinkLevelsOf(configRef.current.thinking)),
           compaction: {

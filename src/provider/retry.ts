@@ -47,6 +47,8 @@ export interface EmptyResponseContext {
   maxTokens?: number;
   /** 模型名，多渠道场景下用于定位是哪个模型的行为。 */
   model?: string;
+  /** 渠道名，多渠道场景下用于定位是哪条通道的行为。 */
+  provider?: string;
 }
 
 export class EmptyResponseError extends Error {
@@ -57,6 +59,20 @@ export class EmptyResponseError extends Error {
     super(message);
     this.name = 'EmptyResponseError';
     if (context !== undefined) this.context = context;
+  }
+}
+
+/**
+ * 流式空闲看门狗超时：超过 STREAM_IDLE_TIMEOUT_MS 连一个字节都没收到，判定上游病态并中止。
+ * 归可重试——假死多为网关/代理半开连接或上游静默断连，重发换一个连接往往能恢复；
+ * 与 ECONNRESET 同属「传输层瞬断」家族，只是触发方式从「对端 RST」变成「对端彻底静默」。
+ * 独立成类型（而非裸 Error）：裸 Error 无 code、非 APIError、非 TypeError，
+ * isRetryableError 接不住，会把这类瞬时假死也推成用户必须手动重发的硬错误（实测确认）。
+ */
+export class StreamIdleTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StreamIdleTimeoutError';
   }
 }
 
@@ -105,6 +121,10 @@ export function isRetryableError(err: unknown): boolean {
   // 空流/空响应：对端在产出任何内容前结束了生成，多为瞬时故障；
   // 配合 runTurn「未吐字才重试」守卫，归可重试是安全的。
   if (err instanceof EmptyResponseError || isEmptyStreamError(err)) {
+    return true;
+  }
+  // 流式假死看门狗：与空响应同属「传输/上游异常」家族，重发换连接可恢复
+  if (err instanceof StreamIdleTimeoutError) {
     return true;
   }
   if (err instanceof Anthropic.APIError && typeof err.status === 'number') {

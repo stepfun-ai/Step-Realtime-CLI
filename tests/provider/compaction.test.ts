@@ -21,7 +21,7 @@ function baseConfig(overrides: Partial<StepCodeConfig> = {}): StepCodeConfig {
     model: 'step-3.7-flash',
     maxContextSize: 1_000_000,
     maxTokens: 8192,
-    subagent: { maxPerSession: 10, maxDepth: 1, maxSteps: 100, maxConcurrent: 4 },
+    subagent: { maxDepth: 1, maxSteps: 100, maxConcurrent: 4 },
     compaction: { triggerRatio: 0.85, reservedTokens: 32_000 },
     ...overrides,
   };

@@ -102,6 +102,8 @@ export interface RunAgentOptions {
   model?: string;
   /** thinking 覆盖（三态：undefined 构造默认 / 对象覆盖 / null 抑制），透传到每回合的 provider.stream。 */
   thinking?: { budgetTokens?: number } | null;
+  /** 渠道名（如 stepfun / openai / anthropic），用于空响应诊断上下文。 */
+  providerName?: string;
   /** 压缩阈值。省略 = 不在循环内自动压缩（也不做溢出兜底压缩）。 */
   compaction?: CompactionThresholds;
   /**
@@ -254,7 +256,7 @@ async function maybeCompact(
  * 自身不含回合内逻辑（那些在 runTurn），负责多回合编排、终止事件、循环内压缩与溢出兜底。
  */
 export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEvent> {
-  const { provider, system, ctx, messages, signal, model, thinking, compaction, maxAutoContinues = 0 } = opts;
+  const { provider, system, ctx, messages, signal, model, thinking, providerName, compaction, maxAutoContinues = 0 } = opts;
   const safeMaxAutoContinues = maxAutoContinues ?? 0;
   // 能力门控的工具卸载：模型未声明对应能力（如 image_in）时，门控工具（如 read_media）
   // 不进 tools 数组也不进执行白名单——模型看不到就不会尝试调用；工具内运行时检查保留为兜底。
@@ -389,7 +391,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
     // 就要带完整 schema 进请求，不能在循环外取一次快照复用
     const tools = toAnthropicTools(allowedTools);
     const lenBefore = messages.length;
-    const turn = runTurn({ provider, system, tools, ctx, messages, hooks, signal, allowedTools: allowedSet, model, thinking });
+    const turn = runTurn({ provider, system, tools, ctx, messages, hooks, signal, allowedTools: allowedSet, model, thinking, providerName });
     let step = await turn.next();
     while (!step.done) {
       yield step.value;

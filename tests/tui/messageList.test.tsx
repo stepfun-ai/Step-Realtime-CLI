@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { Box, Static, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { MessageItem, MessageList, ThinkingPreview, appendStreamText, countSettledItems } from '../../src/tui/MessageList.js';
+import { MessageItem, MessageList, ThinkingPreview, appendStreamText, countSettledItems, removePartialAssistant } from '../../src/tui/MessageList.js';
 import type { DisplayItem } from '../../src/tui/types.js';
 import type { WorkflowPanelState } from '../../src/tui/WorkflowPanel.js';
 
@@ -124,6 +124,42 @@ describe('appendStreamText 流式正文追加', () => {
 
   it('空列表：新建 assistant 条目', () => {
     expect(appendStreamText([], '开头')).toEqual([assistant('开头')]);
+  });
+});
+
+describe('removePartialAssistant 撤回残文气泡（B 方案）', () => {
+  it('末尾是 assistant 残文：移除该条目', () => {
+    const out = removePartialAssistant([user('u1'), assistant('写了一半')]);
+    expect(out).toEqual([user('u1')]);
+  });
+
+  it('残文后挂透明 note：连残文带透明 note 一并撤', () => {
+    // 队列回执等 UI 提示挂在残文之后，撤回残文时一并清掉（它们属于这次失败的尝试）
+    const out = removePartialAssistant([assistant('残文'), note('已加入发送队列'), note('另一条提示')]);
+    expect(out).toEqual([]);
+  });
+
+  it('末尾是 boundary note：不撤（残文已被后续内容封口，防误删历史）', () => {
+    const items = [assistant('残文'), { kind: 'note' as const, text: '重试中', boundary: true }];
+    const out = removePartialAssistant(items);
+    expect(out).toEqual(items);
+  });
+
+  it('末尾是工具：不撤（assistant 残文后已进入工具执行，残文属已定稿内容）', () => {
+    const items = [assistant('a1'), tool('t1', 'ok')];
+    const out = removePartialAssistant(items);
+    expect(out).toEqual(items);
+  });
+
+  it('历史 assistant + 当前残文：只撤末尾残文，历史完整保留', () => {
+    const out = removePartialAssistant([user('u1'), assistant('完整回复'), user('u2'), assistant('写了一半')]);
+    expect(out).toEqual([user('u1'), assistant('完整回复'), user('u2')]);
+  });
+
+  it('空列表 / 末尾无 assistant：原样返回（无残文可撤）', () => {
+    expect(removePartialAssistant([])).toEqual([]);
+    const items = [user('u1'), note('提示')];
+    expect(removePartialAssistant(items)).toEqual(items);
   });
 });
 

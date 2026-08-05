@@ -104,19 +104,73 @@ describe('runAgent 空流/空响应重试', () => {
     expect(events.at(-1)!.type).toBe('turn_done');
   });
 
-  it('已流出正文后出错仍不重试：正文重复展示的代价才是真的（守卫口径收窄到正文）', async () => {
+  it('已流出正文后连接中断（terminated）→ 整轮重试：partial 仅在 UI 未落盘，重发不重复（主流 CLI 标准做法）', async () => {
+    // 2026-08-05 行为反转：旧守卫「吐字即放弃」会把长回合中途的网络瞬断变成用户必须手动重发的硬错误。
+    // 主流 CLI 参考实现均不做断点续写（流式单向、partial 无法原子回滚），
+    // 一致采用「整轮丢弃 partial 重试」。partial 正文只在 UI 的 DisplayItem，不进 messages 历史
+    // （runTurn 仅在流成功后才 messages.push），故重发不会造成历史重复；UI 靠 retry 事件的
+    // boundary note 隔离，重试正文另开 assistant 条目，不续接残文。
+    const terminated = () => Object.assign(new TypeError('terminated'), { cause: { code: 'ECONNRESET' } });
     const { provider, streamCalls } = makeFakeProvider([
-      // 先吐正文，再在 finalMessage 阶段抛可重试错误
-      { textChunks: ['已经写了一半'], finalContent: [], stopReason: 'end_turn' },
-      { textChunks: ['不该被调用'], finalContent: [textBlock('不该被调用')] },
+      // 先吐正文，再在 finalMessage 阶段连接中断（terminated）
+      { textChunks: ['已经写了一半'], throwAfterChunks: terminated(), finalContent: [] },
+      { textChunks: ['完整重发的回复'], finalContent: [textBlock('完整重发的回复')] },
+    ]);
+    const messages: StoredMessage[] = [sm('问')];
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages }),
+    );
+
+    // 吐字后断连 → 仍自动重试（不再直接 error），第二次成功
+    expect(streamCalls()).toBe(2);
+    const retryEv = events.find((e) => e.type === 'retry');
+    expect(retryEv).toBeDefined();
+    // B 方案：吐字后断连的 retry 必须带 hadPartial 标记，UI 据此撤回残文气泡（只留重发完整版）
+    expect((retryEv as { hadPartial?: boolean }).hadPartial).toBe(true);
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    // 正文事件仍包含 partial（第一次）与重发（第二次）——撤回是 UI 层行为，runTurn 事件流不变
+    expect(events.filter((e) => e.type === 'text')).toEqual([
+      { type: 'text', text: '已经写了一半' },
+      { type: 'text', text: '完整重发的回复' },
+    ]);
+    expect(events.at(-1)!.type).toBe('turn_done');
+    // 历史只落盘成功的完整回复，partial 不进 messages（重发不会历史重复）
+    const assistant = messages.find((m) => m.origin.kind === 'assistant');
+    expect(assistant!.message.content).toEqual([{ type: 'text', text: '完整重发的回复' }]);
+  });
+
+  it('未吐字连接期断连 → retry 不带 hadPartial（无残文可撤）', async () => {
+    // 连接期失败（第一个 delta 都没产出）：屏幕无残文，retry 不应标 hadPartial，
+    // UI 只提示重试、不做撤回。B 方案的撤回仅针对吐字后的残文。
+    const terminated = () => Object.assign(new TypeError('terminated'), { cause: { code: 'ECONNRESET' } });
+    const { provider, streamCalls } = makeFakeProvider([
+      { throw: terminated() },
+      { textChunks: ['恢复'], finalContent: [textBlock('恢复')] },
     ]);
     const events = await collect(
       runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
     );
+    expect(streamCalls()).toBe(2);
+    const retryEv = events.find((e) => e.type === 'retry');
+    expect(retryEv).toBeDefined();
+    expect((retryEv as { hadPartial?: boolean }).hadPartial).toBe(false);
+  });
 
-    // 正文已进屏幕 → 不重试，直接报错，避免同一段话出现两遍
-    expect(streamCalls()).toBe(1);
-    expect(events.some((e) => e.type === 'retry')).toBe(false);
+  it('吐字后重试耗尽 → 仍报错退出（重试有上限，非无限重发）', async () => {
+    const terminated = () => Object.assign(new TypeError('terminated'), { cause: { code: 'ECONNRESET' } });
+    const { provider, streamCalls } = makeFakeProvider(
+      Array.from({ length: RETRY_MAX_ATTEMPTS }, () => ({
+        textChunks: ['写了一半'],
+        throwAfterChunks: terminated(),
+        finalContent: [],
+      })),
+    );
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
+    );
+
+    expect(streamCalls()).toBe(RETRY_MAX_ATTEMPTS);
+    expect(events.filter((e) => e.type === 'retry')).toHaveLength(RETRY_MAX_ATTEMPTS - 1);
     expect(events.some((e) => e.type === 'error')).toBe(true);
   });
 

@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { StreamIdleTimeoutError } from './retry.js';
 import { mapStepChatFinishReason } from './step/stepCommon.js';
 
 /**
@@ -75,8 +76,13 @@ function toolResultText(block: Anthropic.ToolResultBlockParam): string {
  * 把 Anthropic 请求（system + messages）翻译成 OpenAI Chat 的 messages 数组：
  * - system 非空 → messages[0] 的 {role:'system'}。
  * - user 消息：string 内容原样；数组内容里 tool_result 块各自展开为一条 {role:'tool'} 消息，
- *   其余文本块合并成一条 {role:'user'}（顺序：先文本 user，再各 tool——但 Anthropic 里
- *   tool_result 恒独占 user 消息，故实践中不会混排）。
+ *   其余文本块合并成一条 {role:'user'}。混合消息（tool_result + 文本）的发出顺序是
+ *   **tool 在前、文本 user 在后**——某些严格网关要求 tool 消息紧跟
+ *   assistant(tool_calls)，中间插一条 user 文本即 400「tool_calls must be followed by
+ *   tool messages」。混合消息真实存在：normalizeHistory 会把合成的 tool_result 前插进
+ *   紧随其后的带文本 user 消息；工具执行期间的插话也会被合并成同一条 user。
+ *   （这是为不受控外部行为——服务端严格性——存在的容错，不要按「Anthropic 里
+ *   tool_result 恒独占 user 消息」的内部假设改回文本在前。）
  * - assistant 消息：text 块合并为 content，tool_use 块展开为 tool_calls；thinking 块忽略
  *   （OpenAI 不接受回传 reasoning）。
  */
@@ -95,17 +101,19 @@ export function messagesToOpenAi(
     const blocks = msg.content;
     if (msg.role === 'user') {
       // tool_result 块各自成一条 tool 消息；其余文本另组一条 user 消息。
+      // 顺序必须 tool 在前、文本在后：严格网关要求 tool 消息紧跟 assistant(tool_calls)，
+      // 文本在前会让整形层（normalizeHistory）修好的配对在 wire 上重新断开（实测严格网关 400）。
       const toolResults = blocks.filter(
         (b): b is Anthropic.ToolResultBlockParam => b.type === 'tool_result',
       );
       const nonToolText = blocksToText(
         blocks.filter((b) => b.type !== 'tool_result') as Anthropic.ContentBlockParam[],
       );
-      if (nonToolText.length > 0 || toolResults.length === 0) {
-        out.push({ role: 'user', content: nonToolText });
-      }
       for (const tr of toolResults) {
         out.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: toolResultText(tr) });
+      }
+      if (nonToolText.length > 0 || toolResults.length === 0) {
+        out.push({ role: 'user', content: nonToolText });
       }
       continue;
     }
@@ -131,6 +139,13 @@ export function messagesToOpenAi(
   return out;
 }
 
+/**
+ * 单条流允许累积的最大字符数（text + thinking + 工具 arguments 合计）。
+ * 32M 字符 ≈ 64MB UTF-16 驻留，约为合法最大输出的两个数量级之外，
+ * 同时把单条在途流的内存损害限制在堆的 2% 量级（对照 2026-08-04 的 4GB OOM 事故）。
+ */
+export const MAX_ACCUMULATED_CHARS = 32 * 1024 * 1024;
+
 // ============ 响应侧累积：OpenAI delta → Anthropic.Message ============
 
 /** 累积一次工具调用的增量（arguments 分片拼接）。 */
@@ -143,6 +158,12 @@ interface ToolCallAccumulator {
 /**
  * 累积 OpenAI Chat 流式响应（或非流式的一次性 message），产出 Anthropic.Message 形状。
  * 消费方只读 content / usage / stop_reason，故只需精确还原这三者。
+ *
+ * 累积量有硬上限（{@link MAX_ACCUMULATED_CHARS}）：在途流持有本实例，text/thinking/
+ * arguments 全是强引用，无上限时上游失控（网关/代理层帧洪流）会把老年代线性撑爆——
+ * 2026-08-04 实测事故：两个子 agent 的流 15 分钟未结束，堆涨到 4GB 触发 V8 OOM。
+ * 合法输出远在限下（max_tokens 有界，思考实测最多百万字符级），超限即视为上游异常，
+ * 抛错走既有错误路径，比重试更对（对洪流重试只是再淹一次）。
  */
 export class OpenAiChatAccumulator {
   private text = '';
@@ -150,18 +171,29 @@ export class OpenAiChatAccumulator {
   private readonly toolCalls = new Map<number, ToolCallAccumulator>();
   private finishReason: string | null = null;
   private usage: Anthropic.Usage | undefined;
+  /** 已累积的总字符数（text + thinking + 工具 arguments），对照预算熔断。 */
+  private accumulatedChars = 0;
 
   /** 追加文本到 thinking 段（非主 completion 的归痕，debug bundle 需要留痕）。 */
   addThinking(text: string): void {
-    if (typeof text === 'string' && text.length > 0) this.thinking += text;
+    if (typeof text === 'string' && text.length > 0) {
+      this.thinking += text;
+      this.charge(text.length);
+    }
   }
 
   /** 累积一个 choices[0].delta（流式）。 */
   addDelta(delta: OpenAiStreamDelta): void {
-    if (typeof delta.content === 'string') this.text += delta.content;
+    if (typeof delta.content === 'string') {
+      this.text += delta.content;
+      this.charge(delta.content.length);
+    }
     // 思考：reasoning_content 与 reasoning 同值，取任一非空者（避免重复累加）
     const reasoning = delta.reasoning_content ?? delta.reasoning;
-    if (typeof reasoning === 'string') this.thinking += reasoning;
+    if (typeof reasoning === 'string') {
+      this.thinking += reasoning;
+      this.charge(reasoning.length);
+    }
     if (Array.isArray(delta.tool_calls)) {
       for (const tc of delta.tool_calls) {
         const index = typeof tc.index === 'number' ? tc.index : 0;
@@ -171,10 +203,24 @@ export class OpenAiChatAccumulator {
           if (typeof tc.function.name === 'string' && tc.function.name.length > 0) {
             acc.name = tc.function.name;
           }
-          if (typeof tc.function.arguments === 'string') acc.arguments += tc.function.arguments;
+          if (typeof tc.function.arguments === 'string') {
+            acc.arguments += tc.function.arguments;
+            this.charge(tc.function.arguments.length);
+          }
         }
         this.toolCalls.set(index, acc);
       }
+    }
+  }
+
+  /** 计入累积量并熔断：超出预算说明上游在灌入远超合法输出的内容，直接抛错中止本条流。 */
+  private charge(chars: number): void {
+    this.accumulatedChars += chars;
+    if (this.accumulatedChars > MAX_ACCUMULATED_CHARS) {
+      throw new Error(
+        `流式响应累积超过 ${MAX_ACCUMULATED_CHARS} 字符（合法输出远低于此），` +
+          `判定上游异常并中止，防止内存被单条流撑爆。`,
+      );
     }
   }
 
@@ -297,15 +343,28 @@ export interface OpenAiStreamChunk {
  * 把一个字节流（fetch response.body）按 SSE `data:` 行解析成 JSON 对象序列。
  * 逐行累积，遇到 `data: [DONE]` 结束；忽略空行、注释行与非 data 行。
  * 纯粹按 SSE 文本协议解析，不依赖任何 SDK。
+ *
+ * 空闲看门狗包在**字节层**而不是解析后的事件层：网关的 SSE 注释心跳（`: keep-alive`）
+ * 也算活着的信号，只在「连心跳都没有」时才判死——避免长思考任务被心跳保活期间误杀。
  */
 export async function* parseSseStream(
   stream: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>,
+  options?: { idleTimeoutMs?: number; onIdle?: () => void },
 ): AsyncGenerator<unknown> {
   const decoder = new TextDecoder();
   let buffer = '';
-  const iterable = toAsyncIterable(stream);
+  const iterable = withStreamIdleWatchdog(
+    toAsyncIterable(stream),
+    options?.idleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS,
+    options?.onIdle,
+  );
   for await (const chunk of iterable) {
     buffer += decoder.decode(chunk, { stream: true });
+    // 行缓冲护栏：上游若持续灌入无换行的数据，buffer 会绕过 accumulator 的预算无界增长
+    // （同 2026-08-04 堆爆事故的外部条件）。正常 SSE 行最大也就单帧 JSON，远低于此限。
+    if (buffer.length > MAX_ACCUMULATED_CHARS) {
+      throw new Error('SSE 行缓冲超限：上游持续发送无换行数据，判定上游异常并中止。');
+    }
     let nlIndex: number;
     // SSE 事件以换行分隔；这里按行解析 data: 前缀（OpenAI 每条 data 独占一行）
     while ((nlIndex = buffer.indexOf('\n')) !== -1) {
@@ -347,6 +406,50 @@ function toAsyncIterable(
       }
     },
   };
+}
+
+/**
+ * 流式空闲看门狗的超时（毫秒）：超过该时长连一个字节都没收到，判定流已病态并中止。
+ * 为什么需要：fetch 层面的 timeout 只覆盖初始响应，管不到 streaming body——上游静默断连
+ * 或经代理半死不活时，一条流可以无限挂住（2026-08-04 事故：两条子 agent 的流 15 分钟
+ * 未结束，堆被灌到 4GB）。取值放宽到 2 分钟：长思考任务首帧前的静默真实存在（实测
+ * router 单请求 111~149s），字节层计时意味着心跳帧会重置计时，只有彻底静默才触发。
+ */
+export const STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+/**
+ * 给任意 AsyncIterable 包一层空闲看门狗：每收到一个元素重置计时，超过 timeoutMs
+ * 没有任何元素即抛错中止。onIdle 回调用于让调用方同时 abort 底层 fetch——Response
+ * 持有的 socket/TLS 缓冲区在 V8 堆之外，不显式 abort 是堆外内存泄漏。
+ */
+export async function* withStreamIdleWatchdog<T>(
+  iterable: AsyncIterable<T>,
+  timeoutMs: number,
+  onIdle?: () => void,
+): AsyncGenerator<T> {
+  const it = iterable[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          onIdle?.();
+          reject(
+            new StreamIdleTimeoutError(`流式响应超过 ${Math.round(timeoutMs / 1000)}s 没有任何数据，判定上游异常并中止。`),
+          );
+        }, timeoutMs);
+      });
+      try {
+        const result = await Promise.race([it.next(), idle]);
+        if (result.done === true) return;
+        yield result.value;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    }
+  } finally {
+    await it.return?.();
+  }
 }
 
 // ============ 错误包装 ============
