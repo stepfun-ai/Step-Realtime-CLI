@@ -48,7 +48,7 @@ export type AgentEvent =
 export interface WorkflowStepEvent {
   index: number;
   total: number;
-  /** 事件类型。dynamic_workflow 的阶段切换为 'phase'；其余 kind 来自已删除的声明式 workflow。 */
+  /** 事件类型。dynamic_workflow 的阶段切换为 'phase'；历史上声明式 workflow（已删除）也用其余 kind 值。 */
   kind: string;
   status: 'start' | 'done';
   /** phase 事件的阶段标题（dynamic_workflow 脚本内 phase(title) 发出；其余 kind 无此字段）。 */

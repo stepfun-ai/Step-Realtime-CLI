@@ -17,7 +17,7 @@ Step Code is a terminal coding agent CLI built around an agent loop: the model u
 
 Key capabilities:
 - **Permission tiers + plan mode**: enforce "say what you'll change before changing it"
-- **Sub-agents, declarative workflows, and JS dynamic workflows**: split large tasks and run them in parallel
+- **Sub-agents and JS dynamic workflows**: split large tasks and run them in parallel
 - **Autonomous goals**: keep driving one objective across turns
 - **Context compaction + session persistence**: resume days later with full history
 - **Skills, plugins, and MCP**: lazily loaded external capabilities on demand
@@ -51,7 +51,7 @@ English documentation lives under [`docs/en/`](./docs/en/); the Chinese original
 | [Configuration](./docs/en/configuration.md) | Every config.toml field, multi-protocol providers and model aliases, environment variables, data directories |
 | [Interactive use](./docs/en/interactive.md) | TUI layout, slash commands, keybindings, the three permission tiers, plan mode, switching model and provider |
 | [Tools](./docs/en/tools.md) | Parameters and behavioral limits of every built-in tool, parallel execution and result feedback |
-| [Sub-agents and automation](./docs/en/agents.md) | spawn_agent, workflows, autonomous goals, scheduled tasks, background tasks |
+| [Sub-agents and automation](./docs/en/agents.md) | spawn_agent, dynamic_workflow, autonomous goals, scheduled tasks, background tasks |
 | [Session management](./docs/en/sessions.md) | Persistence, resuming, forking, context compaction, review, non-interactive output |
 | [Skills, plugins, and MCP](./docs/en/skills-and-mcp.md) | SKILL.md format, loading precedence, plugins, MCP integration |
 | [Hooks](./docs/en/hooks.md) | Running shell commands at five lifecycle events |
