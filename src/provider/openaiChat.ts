@@ -105,11 +105,19 @@ export class OpenAiChatProvider implements ChatProvider {
 
     // Anthropic 风格的事件流：for await 吐 content_block_delta（text_delta/thinking_delta）。
     async function* iterate(): AsyncGenerator<Anthropic.MessageStreamEvent> {
+      // 本地 AbortController 汇流两个中止源：用户 Esc（params.signal）与流空闲看门狗。
+      // 看门狗触发时必须 abort fetch——Response 持有的 socket/TLS 缓冲在 V8 堆外，不取消是堆外泄漏。
+      const controller = new AbortController();
+      const parentSignal = params.signal;
+      if (parentSignal !== undefined) {
+        if (parentSignal.aborted) controller.abort(parentSignal.reason);
+        else parentSignal.addEventListener('abort', () => controller.abort(parentSignal.reason), { once: true });
+      }
       const res = await fetchImpl(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        ...(params.signal !== undefined ? { signal: params.signal } : {}),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -173,7 +181,7 @@ export class OpenAiChatProvider implements ChatProvider {
         if (chunk.usage !== undefined && chunk.usage !== null) accumulator.setUsage(chunk.usage);
       }
 
-      for await (const raw of parseSseStream(res.body)) {
+      for await (const raw of parseSseStream(res.body, { onIdle: () => controller.abort() })) {
         const chunk = raw as OpenAiStreamChunk;
 
         if (!decided) {

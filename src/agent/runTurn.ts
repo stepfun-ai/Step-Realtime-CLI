@@ -64,6 +64,8 @@ export interface RunTurnOptions {
   model?: string;
   /** thinking 覆盖（三态：undefined 构造默认 / 对象覆盖 / null 抑制），透传给 provider.stream。 */
   thinking?: { budgetTokens?: number } | null;
+  /** 渠道名（如 stepfun / openai / anthropic），用于空响应诊断上下文。 */
+  providerName?: string;
 }
 
 /** 用户主动取消时回灌给模型的 tool_result 文案（区别于系统错误，避免模型自动重试）。 */
@@ -126,6 +128,7 @@ function errorMessageWithAdvice(err: unknown): string {
  */
 function emptyResponseDiagnostics(ctx: EmptyResponseContext): string | undefined {
   const parts: string[] = [];
+  if (ctx.provider !== undefined && ctx.provider !== '') parts.push(t('error.emptyStream.provider', { provider: ctx.provider }));
   if (ctx.model !== undefined && ctx.model !== '') parts.push(t('error.emptyStream.model', { model: ctx.model }));
   if (ctx.hadReasoning !== undefined) {
     parts.push(ctx.hadReasoning ? t('error.emptyStream.hadReasoning') : t('error.emptyStream.noReasoning'));
@@ -225,7 +228,7 @@ interface PreparedToolCall {
 export async function* runTurn(
   opts: RunTurnOptions,
 ): AsyncGenerator<AgentEvent, TurnOutcome> {
-  const { provider, system, tools, ctx, messages, hooks, signal, allowedTools, model, thinking } = opts;
+  const { provider, system, tools, ctx, messages, hooks, signal, allowedTools, model, thinking, providerName } = opts;
 
   if (signal?.aborted) return { stopReason: 'aborted' };
 
@@ -279,7 +282,7 @@ export async function* runTurn(
       //   重试无意义——预算组合不变必然复现）。不抛错，落 final 走下方 max_tokens 分支，
       //   携带 thinkingExhausted 标记让 loop 给「调 max_tokens / 降档」的确定性提示。
       // - 其余（end_turn 等）：真正的服务端瞬时空响应，抛 EmptyResponseError 走重试。
-      //   emittedText 守卫仍优先：已流出思考时不重试，避免重复展示。
+      //   emittedText 只标记正文；空响应诊断见下（hadReasoning 区分思考型空响应）。
       if (isEmptyResponse(msg)) {
         if (msg.stop_reason === 'max_tokens') {
           final = msg;
@@ -294,6 +297,7 @@ export async function* runTurn(
           outputTokens: msg.usage?.output_tokens ?? 0,
           maxTokens: provider.maxTokens,
           model: msg.model,
+          provider: providerName,
         });
       }
       final = msg;
@@ -304,16 +308,25 @@ export async function* runTurn(
       if (!emittedText && isContextOverflowError(e)) {
         return { stopReason: 'overflow' };
       }
-      if (emittedText || !isRetryableError(e) || attempt >= RETRY_MAX_ATTEMPTS) {
+      if (!isRetryableError(e) || attempt >= RETRY_MAX_ATTEMPTS) {
         yield { type: 'error', message: errorMessageWithAdvice(e), cause: e };
         return { stopReason: 'error' };
       }
+      // 吐字后断连（emittedText）：同样整轮重试。partial 正文只在 UI 的 DisplayItem，
+      // 未落盘 messages（见下方 messages.push 仅在流成功后执行），故重发不会造成历史重复。
+      // UI 侧靠 retry 事件的 boundary note 隔离：重试后正文另开 assistant 条目，不续接残文。
+      // 这与主流 CLI 的「丢弃 partial 整轮重试」一致——流式单向、partial 无法原子回滚，
+      // 业界普遍不做断点续写，整轮丢弃重试是标准做法。
       const delay = computeRetryDelay(attempt, e);
       yield {
         type: 'retry',
         attempt,
         delayMs: delay,
-        message: t('turn.retry', { delay: Math.round(delay), attempt, max: RETRY_MAX_ATTEMPTS - 1 }),
+        // 吐字后断连（emittedText）：屏幕上有残文，标记 hadPartial 让 UI 撤回残文气泡（B 方案）。
+        hadPartial: emittedText,
+        message: emittedText
+          ? t('turn.retryAfterPartial', { delay: Math.round(delay), attempt, max: RETRY_MAX_ATTEMPTS - 1 })
+          : t('turn.retry', { delay: Math.round(delay), attempt, max: RETRY_MAX_ATTEMPTS - 1 }),
       };
       try {
         await abortableSleep(delay, signal);

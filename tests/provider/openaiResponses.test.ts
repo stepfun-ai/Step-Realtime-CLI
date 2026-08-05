@@ -237,6 +237,29 @@ describe('messagesToResponsesInput', () => {
     ]);
     expect(input).toEqual([{ type: 'function_call_output', call_id: 'c1', output: 'ab' }]);
   });
+
+  it('混合 user 消息（文本 + tool_result）→ function_call_output 在前、user 文本在后', () => {
+    // 与 messagesToOpenAi 同一顺序约定：整形层会把合成/迟到的 tool_result 与插话文本
+    // 合进同一条 user 消息，输出项先发出能保持「调用紧邻结果」的 input 形态。
+    const input = messagesToResponsesInput('', [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'c1', name: 't', input: {} }],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '补充一句' },
+          { type: 'tool_result', tool_use_id: 'c1', content: '结果' },
+        ],
+      },
+    ]);
+    expect(input).toEqual([
+      { type: 'function_call', name: 't', call_id: 'c1', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'c1', output: '结果' },
+      { role: 'user', content: '补充一句' },
+    ]);
+  });
 });
 
 describe('OpenAiResponsesProvider', () => {

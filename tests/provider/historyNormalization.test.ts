@@ -210,7 +210,7 @@ describe('factory 装配', () => {
     model: 'step-3.7-flash',
     maxContextSize: 1_000_000,
     maxTokens: 8192,
-    subagent: { maxPerSession: 10, maxDepth: 1, maxSteps: 100, maxConcurrent: 4 } as const,
+    subagent: { maxDepth: 1, maxSteps: 100, maxConcurrent: 4 } as const,
     compaction: { triggerRatio: 0.85, reservedTokens: 32_000 } as const,
   };
 

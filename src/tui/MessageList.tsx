@@ -106,6 +106,31 @@ export function appendStreamText(items: DisplayItem[], text: string): DisplayIte
 }
 
 /**
+ * 撤回本次失败尝试的残文气泡（B 方案：retry 收到 hadPartial 时调用）。
+ *
+ * 定位规则与 appendStreamText 完全镜像：有效末尾是 assistant（中间只隔着透明 note，
+ * 即 boundary !== true 的 UI 侧提示）时，移除该 assistant 与其后的透明 note；
+ * 末尾是 boundary note / tool / thinking 等说明残文已被后续内容「封口」，不撤（防误删历史）。
+ *
+ * 安全性：busy 期间正在流式的末尾 assistant 留在动态区（countSettledItems 不把它计入
+ * settled），未进 <Static> 的 append-only scrollback，故物理移除不会破坏已冻结的终端历史。
+ */
+export function removePartialAssistant(items: DisplayItem[]): DisplayItem[] {
+  const next = [...items];
+  let i = next.length - 1;
+  // 越过末尾连续的透明 note（它们挂在残文之后，一并撤）
+  while (i >= 0) {
+    const it = next[i]!;
+    if (it.kind === 'note' && it.boundary !== true) i -= 1;
+    else break;
+  }
+  if (i >= 0 && next[i]!.kind === 'assistant') {
+    next.splice(i);
+  }
+  return next;
+}
+
+/**
  * 渲染单条会话条目。Static 区（定稿历史）与动态区（在途尾部）共用这个组件，
  * 保证条目定稿前后渲染输出逐像素一致。key 由调用方挂在根节点上。
  */

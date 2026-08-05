@@ -13,7 +13,12 @@ export type AgentEvent =
   | { type: 'thinking_end' }
   | { type: 'tool_start'; id: string; name: string; input: unknown }
   | { type: 'tool_end'; id: string; name: string; result: string; isError: boolean }
-  | { type: 'retry'; attempt: number; delayMs: number; message: string }
+  /**
+   * 重试。hadPartial 为 true 表示本次失败尝试已吐过正文（屏幕上有残文条目），
+   * UI 据此在重试前移除该残文（B 方案：撤回气泡，只留重发的完整版）；
+   * 缺省/false 表示未吐字（连接期失败），无残文可撤，仅提示重试。
+   */
+  | { type: 'retry'; attempt: number; delayMs: number; message: string; hadPartial?: boolean }
   | { type: 'aborted' }
   /** goal 等自主续接：本 run 结束，inject 为下一轮注入文本。 */
   | { type: 'continuation'; inject: string }
