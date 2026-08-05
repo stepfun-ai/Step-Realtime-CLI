@@ -5,7 +5,7 @@
 
 # Sub-agents and automation
 
-This page covers the four mechanisms that let the model work in parallel, on a schedule, or continuously on your behalf: sub-agents, workflows, autonomous goals, and cron jobs, plus the background task management that supports them.
+This page covers the mechanisms that let the model work in parallel, on a schedule, or continuously on your behalf: sub-agents, dynamic_workflow, autonomous goals, and cron jobs, plus the background task management that supports them.
 
 ## Sub-agents (spawn_agent)
 
@@ -105,28 +105,18 @@ The access surface of `spawn_agent` depends on the type: `explore` declares no s
 
 Parallel sub-agents are additionally bound by the concurrency limit of `[subagent].max_concurrent` (default 4); anything beyond it queues for a free slot. A sub-agent that fails due to rate limiting (429) does not hold a slot idle: it goes back to the end of the queue for a delayed retry, and the TUI reports the number of requeues. Permission confirmations always happen serially (multiple approvals never pop up interleaved). All of this is handled automatically by the model; you do not need to control it explicitly.
 
-## Workflows (workflow)
+## Orchestration (spawn_agent and dynamic_workflow)
 
-Orchestration stronger than a single sub-agent: with the `workflow` tool, the model declaratively arranges several sub-agents into a pipeline. Intermediate results live in runtime state and do not occupy the main session context; the main session receives only the final report (the result of the last step). The TUI has a step panel that shows orchestration progress live.
+Orchestration stronger than a single sub-agent is now handled by two tools:
 
-Four step types:
+- `spawn_agent` — the model spawns one or more sub-agents and coordinates the results.
+- `dynamic_workflow` — the model writes a JavaScript orchestration script on the spot and runs it in a quickjs sandbox; see [JS dynamic workflows](#js-dynamic-workflows-dynamic_workflow) below.
 
-| Step | Key fields | Behavior |
-|------|----------|------|
-| `agent` | `prompt`, `as` | Spawns one sub-agent to run a single subtask |
-| `parallel` | `tasks[]`, `as` | Runs a group of **different** subtasks in parallel and concatenates the results |
-| `fanout` | `items[]`, `prompt`, `as` | Spawns one sub-agent per list item (data parallelism), using `{{item}}` as the placeholder in `prompt` |
-| `synthesize` | `from[]`, `prompt`, `as` | Hands the results of the named variables to one sub-agent as source material to synthesize into a report |
-
-Each step names its result with `as`, and later steps reference it as `{{name}}`; the `args` passed in at call time are referenced as `{{args.xxx}}`. Every step can specify a role with `subagentType`, defaulting to `general`.
-
-Guardrails: the concurrency of `parallel` and `fanout` is bound by `[subagent].max_concurrent`; the total number of agents across the whole workflow is bound by `max_agents` (default 50), and subtasks that hit the limit are skipped and marked as such in the results rather than silently dropped. A whole workflow also supports `run_in_background`, putting the orchestration in the background while the main session continues (see [Background tasks](#background-tasks)).
-
-This suits multi-stage tasks: for example, "research 5 directions in parallel, produce a summary for each, and finally aggregate into a comparison report" takes just two steps, `fanout` plus `synthesize`.
+The old declarative `workflow` tool (step templates) has been removed; for multi-stage orchestration use `dynamic_workflow` or coordinate sub-agents via `spawn_agent`.
 
 ## JS dynamic workflows (dynamic_workflow)
 
-The second form of orchestration alongside declarative workflows: the `dynamic_workflow` tool lets the model write a JavaScript orchestration script on the spot and execute it in a quickjs sandbox. The division of labor is that structured, repeated tasks use declarative templates, while one-off exploratory orchestration uses dynamic scripts.
+The `dynamic_workflow` tool lets the model write a JavaScript orchestration script on the spot and execute it in a quickjs sandbox. Multi-stage tasks are handled through script primitives; single-sub-agent work is left to `spawn_agent`.
 
 The script world has zero capabilities: files, network, processes, and environment variables simply do not exist inside it, and the only things available are the primitives injected below. Control flow is not a primitive: `if`, `for`, `.map`, and early `return` are written as plain JS, which is the expressiveness you buy by taking the script route.
 
@@ -302,9 +292,9 @@ Triggers missed while offline are **coalesced into a single catch-up fire** on r
 
 ## Background tasks
 
-The `bash` tool supports `run_in_background`: long commands (builds, tests, servers) move to the background while the main session continues. The same parameter is available on three other tools as well: `spawn_agent` (the whole sub-agent to the background), `workflow`, and `dynamic_workflow` (the whole orchestration to the background), so a time-consuming orchestration does not have to occupy the main session while you wait. It comes with `task_list` / `task_output` / `task_stop` for management, and the status bar has a `bg:N` badge showing the number of background tasks in progress.
+The `bash` tool supports `run_in_background`: long commands (builds, tests, servers) move to the background while the main session continues. The same parameter is available on two other tools as well: `spawn_agent` (the whole sub-agent to the background) and `dynamic_workflow` (the whole orchestration to the background), so a time-consuming orchestration does not have to occupy the main session while you wait. It comes with `task_list` / `task_output` / `task_stop` for management, and the status bar has a `bg:N` badge showing the number of background tasks in progress.
 
-The background mode of the three spawning tools shares one **v1 limitation**: `task_stop` only marks the task as `killed` and does not truly abort sub-agents that are already running. They keep running until they finish on their own; their results simply are no longer fed back. Truly stopping them requires interrupting the whole turn.
+The background mode of the two spawning tools shares one **v1 limitation**: `task_stop` only marks the task as `killed` and does not truly abort sub-agents that are already running. They keep running until they finish on their own; their results simply are no longer fed back. Truly stopping them requires interrupting the whole turn.
 
 | Tool | Parameters | Description |
 |------|------|------|

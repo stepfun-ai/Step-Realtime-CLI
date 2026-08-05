@@ -42,7 +42,6 @@ Listed in registration order. The "See" column points to the page with the full 
 | `cron_list` | List scheduled tasks | [Sub-agents and automation](./agents.md) |
 | `cron_delete` | Delete a scheduled task | [Sub-agents and automation](./agents.md) |
 | `tool_search` | Search for and lazily load external tools (such as MCP tools) | [Skills, plugins, and MCP](./skills-and-mcp.md) |
-| `workflow` | Declaratively orchestrate multiple sub-agents | [Sub-agents and automation](./agents.md) |
 | `dynamic_workflow` | Orchestrate sub-agents dynamically with a JS script written on the spot | [Sub-agents and automation](./agents.md) |
 
 Tools provided by MCP servers are registered dynamically once `tool_search` finds them, so they are not in this table; on a name collision the built-in tool wins.
