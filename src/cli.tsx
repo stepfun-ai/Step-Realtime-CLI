@@ -53,6 +53,7 @@ import { resolveCompactionBinding } from './provider/compaction.js';
 import type { ChatProvider } from './provider/types.js';
 import { SessionStore, deriveTitle, type SessionData } from './session/store.js';
 import { resumeHintMeta, resumeHintText } from './session/resumeHint.js';
+import { aggregateModelUsage, cacheHitRate, totalInput } from './session/usageReport.js';
 import {
   subagentTextLine,
   toSubagentStreamEvent,
@@ -897,5 +898,19 @@ if (opts.reflect === true) {
   await tui.waitUntilExit();
   if (exitInfo?.hasContent === true) {
     process.stderr.write(`\n${resumeHintText(exitInfo.id)}\n`);
+    // 退出时打印本场 token 汇总（一行）：读 wire 事件聚合 model.usage，
+    // 让用户不跑 /usage 也能看到本场消耗与缓存命中率。无任何 model.usage 时不打印。
+    try {
+      const report = aggregateModelUsage(store.loadWire(cwd, exitInfo.id));
+      if (report.total.turns > 0) {
+        const hit = cacheHitRate(report.total);
+        const hitText = hit !== null ? ` · 缓存命中 ${Math.round(hit * 100)}%` : '';
+        process.stderr.write(
+          `本次会话：${report.total.turns} 轮 · 输入 ${totalInput(report.total)} tok · 输出 ${report.total.output} tok${hitText}\n`,
+        );
+      }
+    } catch {
+      // 汇总失败（wire 缺失/损坏）不阻塞退出流程
+    }
   }
 }
