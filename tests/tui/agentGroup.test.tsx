@@ -2,6 +2,17 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { AgentGroup, agentGroupRows, formatAgentGroupSummary, formatDetachedHandoff, type SubagentProgress } from '../../src/tui/AgentGroup.js';
+import { I18N_TABLES } from '../../src/i18n.js';
+
+// 期望串从中文 i18n 表按键构造，避免硬编码文案：改措辞或新增 locale 时测试随字典走，不静默失效。
+// 这些断言测的是「渲染逻辑/结构」（计数、树形、状态符），不是中文措辞本身，故引用字典而非字面量。
+const zh = I18N_TABLES.zh;
+/** 模板变量替换，与 src/i18n.ts 的 t() 行为一致（{key} → 值）。 */
+function fmt(key: string, vars?: Record<string, string | number>): string {
+  let s = zh[key] ?? key;
+  if (vars) for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(String(v));
+  return s;
+}
 
 describe('AgentGroup 面板', () => {
   it('多个并行子 agent 显示并行计数与各状态', () => {
@@ -15,7 +26,7 @@ describe('AgentGroup 面板', () => {
       }),
     );
     const out = lastFrame() ?? '';
-    expect(out).toContain('并行子 agent');
+    expect(out).toContain('并行子 agent'); // manyRunning 前缀无变量，字面比对结构关键词
     expect(out).toContain('3 个');
     expect(out).toContain('统计 b.txt');
     expect(out).toContain('grep');
@@ -30,7 +41,7 @@ describe('AgentGroup 面板', () => {
         ],
       }),
     );
-    expect(lastFrame() ?? '').toContain('并行子 agent 完成');
+    expect(lastFrame() ?? '').toContain('并行子 agent 完成'); // manyDone 无变量前缀（「：N 个」为变量段）
   });
 
   it('单个子 agent 显示「子 agent 运行中」（不含并行/蜂群措辞）', () => {
@@ -40,7 +51,7 @@ describe('AgentGroup 面板', () => {
       }),
     );
     const out = lastFrame() ?? '';
-    expect(out).toContain('子 agent 运行中');
+    expect(out).toContain(fmt('agentGroup.header.singleRunning'));
     expect(out).not.toContain('蜂群');
     expect(out).not.toContain('并行');
   });
@@ -72,9 +83,9 @@ describe('AgentGroup 面板', () => {
       }),
     );
     const out = lastFrame() ?? '';
-    expect(out).toContain('3 tools · 5s ·');
-    expect(out).toContain('1 tools · 5s ·');
-    expect(out).not.toContain('tok ·');
+    expect(out).toContain('3 tools · 5s');
+    expect(out).toContain('1 tools · 5s');
+    expect(out).not.toContain('tok');
   });
 
   it('终态行显示定格时长（endedAt − startedAt），不随渲染时刻跳动', () => {
@@ -85,7 +96,7 @@ describe('AgentGroup 面板', () => {
         ],
       }),
     );
-    expect(lastFrame() ?? '').toContain('2 tools · 45s · 2.5k tok · ✓');
+    expect(lastFrame() ?? '').toContain('2 tools · 45s · 2.5k tok ●');
   });
 });
 
@@ -202,9 +213,9 @@ describe('formatAgentGroupSummary（全终态冻结进历史的摘要）', () =>
     ]);
     const lines = text.split('\n');
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toContain('并行子 agent 完成：2 个');
-    expect(lines[1]).toContain('├─ explore · 统计 a.txt · 3 tools · 3s · ✓ 完成');
-    expect(lines[2]).toContain('└─ coder · 改 b.ts · 5 tools · 3s · ✓ 完成');
+    expect(lines[0]).toContain(fmt('agentGroup.header.manyDone', { total: 2, failed: '' }));
+    expect(lines[1]).toContain(`├─ explore · 统计 a.txt · 3 tools · 3s · ✓ ${zh['agentGroup.status.done']}`);
+    expect(lines[2]).toContain(`└─ coder · 改 b.ts · 5 tools · 3s · ✓ ${zh['agentGroup.status.done']}`);
   });
 
   it('含失败：头部带失败计数，失败行用 ✗', () => {
@@ -212,23 +223,23 @@ describe('formatAgentGroupSummary（全终态冻结进历史的摘要）', () =>
       { id: '1', type: 'explore', description: 'a', status: 'done', toolCount: 1, startedAt: 0, endedAt: 1000 },
       { id: '2', type: 'explore', description: 'b', status: 'error', toolCount: 2, startedAt: 0, endedAt: 1000 },
     ]);
-    expect(text).toContain('并行子 agent 完成：2 个（1 失败）');
-    expect(text).toContain('✗ 失败');
+    expect(text).toContain(fmt('agentGroup.header.manyDone', { total: 2, failed: fmt('agentGroup.failedSuffix', { count: 1 }) }));
+    expect(text).toContain(`✗ ${zh['agentGroup.status.error']}`);
   });
 
   it('单个子 agent：用单数头部，无并行措辞', () => {
     const text = formatAgentGroupSummary([
       { id: '1', type: 'explore', description: '搜索', status: 'done', toolCount: 4, startedAt: 0, endedAt: 3000 },
     ]);
-    expect(text).toContain('✓ 子 agent 已完成');
+    expect(text).toContain(`✓ ${fmt('agentGroup.header.singleDone', { failed: '' })}`);
     expect(text).not.toContain('并行');
-    expect(text).toContain('└─ explore · 搜索 · 4 tools · 3s · ✓ 完成');
+    expect(text).toContain(`└─ explore · 搜索 · 4 tools · 3s · ✓ ${zh['agentGroup.status.done']}`);
   });
 
   it('摘要带定格时长与最终 tokens（可回看的定稿记录）', () => {
     const text = formatAgentGroupSummary([
       { id: '1', type: 'explore', description: '统计 a.txt', status: 'done', toolCount: 14, startedAt: 0, endedAt: 148_000, tokens: 107_000 },
     ]);
-    expect(text).toContain('14 tools · 2m 28s · 107k tok · ✓ 完成');
+    expect(text).toContain(`14 tools · 2m 28s · 107k tok · ✓ ${zh['agentGroup.status.done']}`);
   });
 });
