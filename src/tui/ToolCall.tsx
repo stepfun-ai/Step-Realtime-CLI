@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import type { DisplayItem } from './types.js';
 import { useSpinnerFrame, BRAILLE_FRAMES } from './useSpinnerFrame.js';
-import { WorkflowPanel } from './WorkflowPanel.js';
+import { DynamicWorkflowPanel } from './DynamicWorkflowPanel.js';
 import { t } from '../i18n.js';
 
 /** 工具入参的单行摘要（折叠态标题行与 ExpandViewer 条目标题共用口径）。 */
@@ -115,19 +115,18 @@ export function ToolCall({
   const lines = result !== undefined && result !== '' ? result.split('\n') : [];
   const hasBody = lines.length > 0 && item.status !== 'running';
 
-  // workflow 工具：运行中升级为步骤面板（编排结构 + 当前步高亮 + 组内子 agent 归属），
+  // dynamic_workflow 工具：运行中升级为动态阶段面板（phase 阶段序列 + 当前阶段高亮），
   // 完成后坍缩回一行摘要，结果体仍走原有折叠/Ctrl+O 机制。
-  const wf = item.workflow;
-  if (wf !== undefined) {
-    const agents = wf.steps.reduce((n, s) => n + s.members.length, 0);
+  const dwf = item.dynamicWorkflow;
+  if (dwf !== undefined) {
     return (
       <Box flexDirection="column">
         <Text>
           <Text color={mark.color}>{mark.symbol} </Text>
-          <Text color="cyan">{running ? t('workflow.title', { name: wf.name }) : t('workflow.summary', { name: wf.name, steps: wf.steps.length, agents })}</Text>
+          <Text color="cyan">{running ? t('dynamicWorkflow.title', { name: dwf.name }) : t('dynamicWorkflow.summary', { name: dwf.name, phases: dwf.phases.length })}</Text>
           {elapsedSec !== null ? <Text color="gray">{t('toolCall.elapsed', { s: elapsedSec })}</Text> : null}
         </Text>
-        {running ? <WorkflowPanel state={wf} /> : null}
+        {running ? <DynamicWorkflowPanel state={dwf} /> : null}
         {hasBody ? <ResultBody lines={lines} isError={item.status === 'error'} expanded={expanded} /> : null}
       </Box>
     );

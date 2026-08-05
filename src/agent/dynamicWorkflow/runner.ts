@@ -2,7 +2,7 @@ import AjvModule from 'ajv';
 import type { ValidateFunction } from 'ajv';
 import type { QuickJSHandle } from 'quickjs-emscripten';
 import type { RunSubagentFn, SpawnSubagentRequest } from '../subagent/types.js';
-import type { WorkflowStepEvent } from '../workflow.js';
+import type { WorkflowStepEvent } from '../events.js';
 import { Journal } from './journal.js';
 import { LogBuffer, injectPrimitives, type BudgetFn, type PhaseFn, type SpawnAgentFn } from './primitives.js';
 import { DEFAULT_WALL_CLOCK_MS, DETERMINISM_PRELUDE, DynamicWorkflowSandbox, SandboxInterrupt } from './sandbox.js';

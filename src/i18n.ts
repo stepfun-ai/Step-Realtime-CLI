@@ -126,12 +126,9 @@ const zh = {
   'agentGroup.backgroundHint': '（Ctrl+B 转后台运行）',
   'agentGroup.detachedHandoff': '⏻ {count} 个子 agent 转入后台继续运行（bg 徽章可见，/tasks 查看进度，完成后通知）',
 
-  // --- workflow 步骤面板（WorkflowPanel / ToolCall）---
-  'workflow.title': 'workflow「{name}」',
-  'workflow.summary': 'workflow「{name}」 {steps} 步 · {agents} 个子 agent',
-  'workflow.step.parallelTasks': '{count} 个并行任务',
-  'workflow.step.progress': '（{done}/{total} 完成）',
-  'workflow.step.runningInfo': '（运行中 · {count} tools）',
+  // --- dynamic_workflow 动态阶段面板（DynamicWorkflowPanel / ToolCall）---
+  'dynamicWorkflow.title': 'dynamic_workflow「{name}」',
+  'dynamicWorkflow.summary': 'dynamic_workflow「{name}」 {phases} 个阶段',
 
   // --- 会话选择器（SessionPicker）与相对时间 ---
   'time.justNow': '刚刚',
@@ -715,11 +712,8 @@ const en: Record<keyof typeof zh, string> = {
   'agentGroup.backgroundHint': '(Ctrl+B to run in background)',
   'agentGroup.detachedHandoff': '⏻ {count} subagent(s) moved to background (see bg badge, /tasks for progress, notified on completion)',
 
-  'workflow.title': 'workflow "{name}"',
-  'workflow.summary': 'workflow "{name}" · {steps} steps · {agents} subagents',
-  'workflow.step.parallelTasks': '{count} parallel tasks',
-  'workflow.step.progress': ' ({done}/{total} done)',
-  'workflow.step.runningInfo': ' (running · {count} tools)',
+  'dynamicWorkflow.title': 'dynamic_workflow "{name}"',
+  'dynamicWorkflow.summary': 'dynamic_workflow "{name}" · {phases} phases',
 
   'time.justNow': 'just now',
   'time.minutesAgo': '{count} min ago',
