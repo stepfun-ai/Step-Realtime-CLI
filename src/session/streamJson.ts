@@ -107,8 +107,12 @@ export function toSubagentStreamEvent(
  *
  * 非 Error 抛出物（字符串、对象）一律 String 化，保证 message 恒为字符串。
  */
-export function errorEventFromThrown(e: unknown): { type: 'error'; message: string } {
-  return { type: 'error', message: e instanceof Error ? e.message : String(e) };
+export function errorEventFromThrown(e: unknown): { type: 'error'; message: string; cause?: unknown } {
+  // 保留 cause（对内元数据）：循环兜底路径的异常也要让子 agent runner 能识别 429 做重排队——
+  // 此前只留 message，runner 拿不到 status，兜底异常无法触发重排队。runTurn 正常路径的
+  // error 事件本就带 cause（runTurn.ts 的 cause: e），这里对齐。
+  // 对外 stream-json 输出仍由 agentEventLine 剥离 cause（防 headers/认证泄漏），不受影响。
+  return { type: 'error', message: e instanceof Error ? e.message : String(e), cause: e };
 }
 
 /**
