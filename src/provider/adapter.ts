@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { resolveCapability, type CapabilityOverride } from './capability-registry.js';
+import { capabilitiesToOverride, resolveCapability, type CapabilityOverride } from './capability-registry.js';
 import {
   applyReprojectionLevel,
   degradeMessages,
@@ -122,9 +122,21 @@ export class StepfunAdapter implements StepProvider {
       });
   }
 
-  /** 查本次请求模型的能力声明（model 覆盖优先，其次构造默认）。 */
+  /** 运行时动态能力覆盖（子 agent 跨渠道时由 runner 注入）。 */
+  private runtimeOverrides: CapabilityOverride | undefined;
+
+  /** 查本次请求模型的能力声明（model 覆盖优先，其次构造默认，最终 runtimeOverrides 最优先）。 */
   private capability(model?: string) {
-    return resolveCapability(this.name, model ?? this.model, this.overrides);
+    const overrides: CapabilityOverride[] = [];
+    if (this.runtimeOverrides !== undefined) overrides.push(this.runtimeOverrides);
+    if (this.overrides !== undefined) overrides.push(...this.overrides);
+    return resolveCapability(this.name, model ?? this.model, overrides);
+  }
+
+  /** 动态注入子 agent 别名能力声明（runner 在 resolveBinding 后调用）。 */
+  setRuntimeCapabilities(capabilities: readonly string[] | undefined): void {
+    this.runtimeOverrides =
+      capabilities === undefined ? undefined : capabilitiesToOverride(this.name, this.model, capabilities);
   }
 
   /** 公共前置：投影 + 按能力主动降级。stream 与 send 共用。 */

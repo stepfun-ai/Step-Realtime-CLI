@@ -47,4 +47,9 @@ export interface ChatProvider {
      */
     thinking?: ThinkingParam | null;
   }): ReturnType<Anthropic['messages']['stream']>;
+  /**
+   * 动态注入运行时能力标记（子 agent 跨渠道/跨模型时，由 runner 在 resolveBinding 后调用）。
+   * 未实现者留空：默认行为是构造时能力声明不变。
+   */
+  setRuntimeCapabilities?(capabilities: readonly string[] | undefined): void;
 }

@@ -116,3 +116,21 @@ describe('CAPABILITY_KEYS', () => {
     ]);
   });
 });
+
+describe('resolveCapability 读取可观察性', () => {
+  // 根因对照：旧实现 key 只取 channel，子 agent 别名的 capabilities 注入后仍被静态表/父 model 覆盖，
+  // 导致 degrader 按父 model 能力剥图（独立洞二）。此处固化「别名能力声明可被 resolveCapability 读取」。
+  it('子 agent 别名能力声明可精确命中（channel + model）', () => {
+    const overrides: CapabilityOverride[] = [
+      { channel: 'stepfun', model: 'explore', capability: { image_in: true } },
+    ];
+    const cap = resolveCapability('stepfun', 'explore', overrides);
+    expect(cap.image_in).toBe(true);
+    expect(cap.source).toBe('override');
+  });
+
+  it('未传入子代理别名时回落默认（不因未声明而误判不支持）', () => {
+    const cap = resolveCapability('stepfun', 'unknown-model');
+    expect(cap.image_in).toBe(true);
+  });
+});
