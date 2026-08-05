@@ -114,8 +114,11 @@ export function appendStreamText(items: DisplayItem[], text: string): DisplayIte
  *
  * 安全性：busy 期间正在流式的末尾 assistant 留在动态区（countSettledItems 不把它计入
  * settled），未进 <Static> 的 append-only scrollback，故物理移除不会破坏已冻结的终端历史。
+ *
+ * onRemoved：撤回成功时回调被撤正文的字符数（仅 assistant.text，不含透明 note），
+ * 供 App 同步扣减 turnOutputCharsRef——否则 retry 延迟窗口里 token 估算仍算着被撤内容，虚高。
  */
-export function removePartialAssistant(items: DisplayItem[]): DisplayItem[] {
+export function removePartialAssistant(items: DisplayItem[], onRemoved?: (removedChars: number) => void): DisplayItem[] {
   const next = [...items];
   let i = next.length - 1;
   // 越过末尾连续的透明 note（它们挂在残文之后，一并撤）
@@ -125,6 +128,8 @@ export function removePartialAssistant(items: DisplayItem[]): DisplayItem[] {
     else break;
   }
   if (i >= 0 && next[i]!.kind === 'assistant') {
+    const removed = next[i] as Extract<DisplayItem, { kind: 'assistant' }>;
+    onRemoved?.(removed.text.length);
     next.splice(i);
   }
   return next;
