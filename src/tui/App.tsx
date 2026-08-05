@@ -162,6 +162,8 @@ export interface AppProps {
   reloadConfig: () => { config: StepCodeConfig } | { error: string };
   /** plugin 贡献的命令模板（组合根注入，name 已带 <pluginId>: 命名空间前缀）。 */
   pluginCommands?: PluginCommand[];
+  /** 启动期配置诊断的成品文案（组合根用 renderConfigDiagnostics 渲染；undefined = 配置无问题）。 */
+  configStartupNotice?: string;
   /** 退出（/exit、Ctrl+C 等触发 unmount）时上抛当前会话信息，供 main 打印 resume 提示。 */
   onExitInfo?: (sessionId: string, hasContent: boolean) => void;
 }
@@ -187,6 +189,7 @@ export function App({
   hookEngineRef,
   reloadConfig,
   pluginCommands,
+  configStartupNotice,
   onExitInfo,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
@@ -572,6 +575,13 @@ export function App({
   const pushItem = useCallback((item: DisplayItem) => {
     setItems((prev) => [...prev, item]);
   }, []);
+
+  // 启动期配置诊断：组合根已渲染成品文案，此处只在有内容时推一次 note。
+  // 依赖数组含 pushItem 满足 hooks 规则；实际只在挂载时生效（configStartupNotice 来自启动快照）。
+  useEffect(() => {
+    if (configStartupNotice === undefined) return;
+    pushItem({ kind: 'note', text: configStartupNotice });
+  }, [configStartupNotice, pushItem]);
 
   // busy 上升沿：记本回合起始时间 + 清零本轮产出字符数（供 WorkingStatus 显示 elapsed/token）。
   // 顺带复位思考指示：上轮若因非事件路径收尾（斜杠命令等）残留 active，新一轮不该继续显示「思考中」。

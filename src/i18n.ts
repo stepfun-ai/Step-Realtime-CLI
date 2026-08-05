@@ -461,6 +461,17 @@ const zh = {
   'app.agentsMd.truncated.header': 'AGENTS.md 超出总量预算（{budget} KB），以下内容未完整注入 system prompt（可调大 config.toml 的 agents_md_max_bytes）：',
   'app.agentsMd.truncated.line': '{path}（原始 {original} KB，仅注入前 {kept} KB）',
   'app.agentsMd.dropped.line': '{path}（原始 {original} KB，预算耗尽，整篇未注入）',
+  // --- 配置启动自检（结构化 warning 的展示层渲染；规则在 config/diagnostics.ts） ---
+  'app.config.warn.header': '配置文件有 {count} 处问题被忽略（config.toml 仍可用，但以下内容未生效）：',
+  'app.config.warn.unknownTopLevelKey': '未知顶层键 "{key}"，已忽略（可能是拼写错误）',
+  'app.config.warn.providerTypeInvalid': '[providers.{id}] 的 type 缺失或非法（应为 {allowed}），整条渠道已忽略',
+  'app.config.warn.aliasChannelMissing':
+    '[models.{alias}] 引用的渠道 "{channel}" 未在 [providers] 中声明，该别名已失效（会用顶层渠道发送裸模型名）',
+  'app.config.warn.aliasChannelIsPreset':
+    '[models.{alias}] 的 provider = "{channel}" 是协议名而非渠道 id，该别名已失效；请先声明 [providers.{channel}] 再引用',
+  'app.config.warn.aliasChannelInvalid': '[models.{alias}] 引用的渠道 [providers.{channel}] 因 type 非法被忽略，该别名连带失效',
+  'app.config.warn.hookEventInvalid': '[[hooks]] 第 {index} 条的 event 缺失或非法（应为 {allowed}），该条已忽略',
+  'app.config.ignoredBadFile': '配置文件解析失败，本次以内置默认配置运行（{path}）：\n{message}\n修好后重启生效；也可用 step doctor config 校验。',
   'app.agent.activityError': '错误:{message}',
 
   // --- /reload 配置热重载反馈 ---
@@ -1017,6 +1028,19 @@ const en: Record<keyof typeof zh, string> = {
   'app.agentsMd.truncated.header': 'AGENTS.md exceeds the total budget ({budget} KB); the following was not fully injected into the system prompt (raise agents_md_max_bytes in config.toml):',
   'app.agentsMd.truncated.line': '{path} (original {original} KB, only first {kept} KB injected)',
   'app.agentsMd.dropped.line': '{path} (original {original} KB, budget exhausted, entirely skipped)',
+  // --- Startup config self-check (rendering for structured warnings; rules live in config/diagnostics.ts) ---
+  'app.config.warn.header': '{count} problem(s) in your config file were ignored (config.toml still loaded, but the following had no effect):',
+  'app.config.warn.unknownTopLevelKey': 'Unknown top-level key "{key}", ignored (possible typo)',
+  'app.config.warn.providerTypeInvalid': '[providers.{id}] has a missing or invalid type (expected {allowed}); the whole channel was ignored',
+  'app.config.warn.aliasChannelMissing':
+    '[models.{alias}] references channel "{channel}", which is not declared under [providers]; this alias is inactive (the bare model name goes to the top-level channel)',
+  'app.config.warn.aliasChannelIsPreset':
+    '[models.{alias}] has provider = "{channel}", which is a protocol name, not a channel id; this alias is inactive — declare [providers.{channel}] first',
+  'app.config.warn.aliasChannelInvalid':
+    '[models.{alias}] references channel [providers.{channel}], which was ignored due to an invalid type; this alias is inactive as a result',
+  'app.config.warn.hookEventInvalid': '[[hooks]] entry #{index} has a missing or invalid event (expected {allowed}); the entry was ignored',
+  'app.config.ignoredBadFile':
+    'Failed to parse your config file; running with built-in defaults this session ({path}):\n{message}\nFix it and restart to take effect; you can also validate with step doctor config.',
   'app.agent.activityError': 'error:{message}',
 
   // --- /reload config hot-reload feedback ---
