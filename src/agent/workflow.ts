@@ -55,10 +55,14 @@ export interface WorkflowDef {
   maxAgents?: number;
 }
 
-/** 步骤进度事件（onStep 回调参数，供 UI 步骤面板推进当前步）。 */
+/** 步骤进度事件（onStep 回调参数，供 UI 步骤面板推进当前步）。
+ * workflow（静态）步骤用 index/total 定位（index 从 0 起、total 为步骤总数）；
+ * dynamic_workflow 的 phase 事件是哨兵值 `index: -1, total: 0`——阶段在运行时才知道、
+ * 无法预先编号，UI 应走「按 title 追加」的动态分支而非按 index 定位。 */
 export interface WorkflowStepEvent {
   index: number;
   total: number;
+  /** 步骤/事件类型。workflow 为步骤 kind（agent/parallel/fanout/synthesize）；dynamic_workflow 的阶段切换为 'phase'。 */
   kind: string;
   status: 'start' | 'done';
   /** phase 事件的阶段标题（dynamic_workflow 脚本内 phase(title) 发出；其余 kind 无此字段）。 */
