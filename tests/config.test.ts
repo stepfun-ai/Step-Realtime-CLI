@@ -80,7 +80,6 @@ describe('loadConfig', () => {
   it('config 带 subagent 与 compaction 字段', () => {
     process.env['STEP_CODE_API_KEY'] = 'k';
     const cfg = loadConfig(dir);
-    expect(cfg.subagent.maxPerSession).toBeGreaterThanOrEqual(1);
     expect(cfg.subagent.maxDepth).toBeGreaterThanOrEqual(1);
     expect(cfg.subagent.maxSteps).toBeGreaterThanOrEqual(1);
     expect(cfg.compaction.triggerRatio).toBeGreaterThanOrEqual(0.5);
@@ -147,7 +146,6 @@ describe('loadConfig provider 解析', () => {
 describe('resolveSubagentLimits', () => {
   it('缺省 → 默认值', () => {
     expect(resolveSubagentLimits(undefined)).toEqual({
-      maxPerSession: 10,
       maxDepth: 1,
       maxSteps: 100,
       maxConcurrent: 4,
@@ -156,8 +154,7 @@ describe('resolveSubagentLimits', () => {
   });
 
   it('越界 → clamp 到边界（上限）', () => {
-    expect(resolveSubagentLimits({ max_per_session: 999, max_depth: 5, max_steps: 9999, max_concurrent: 999 })).toEqual({
-      maxPerSession: 50,
+    expect(resolveSubagentLimits({ max_depth: 5, max_steps: 9999, max_concurrent: 999 })).toEqual({
       maxDepth: 3,
       maxSteps: 1000,
       maxConcurrent: 16,
@@ -166,8 +163,7 @@ describe('resolveSubagentLimits', () => {
   });
 
   it('越界 → clamp 到边界（下限）', () => {
-    expect(resolveSubagentLimits({ max_per_session: 0, max_depth: 0, max_steps: -3, max_concurrent: 0 })).toEqual({
-      maxPerSession: 1,
+    expect(resolveSubagentLimits({ max_depth: 0, max_steps: -3, max_concurrent: 0 })).toEqual({
       maxDepth: 1,
       maxSteps: 1,
       maxConcurrent: 1,
@@ -176,19 +172,17 @@ describe('resolveSubagentLimits', () => {
   });
 
   it('小数四舍五入', () => {
-    expect(resolveSubagentLimits({ max_per_session: 12.6 }).maxPerSession).toBe(13);
+    expect(resolveSubagentLimits({ max_depth: 1.6 }).maxDepth).toBe(2);
   });
 
   it('非法类型 / 非对象 → 默认值', () => {
     expect(resolveSubagentLimits({ max_depth: 'x' })).toEqual({
-      maxPerSession: 10,
       maxDepth: 1,
       maxSteps: 100,
       maxConcurrent: 4,
       retention: { deleteWithParent: true, maxSessions: 0, ttlDays: 0 },
     });
     expect(resolveSubagentLimits('not-object')).toEqual({
-      maxPerSession: 10,
       maxDepth: 1,
       maxSteps: 100,
       maxConcurrent: 4,

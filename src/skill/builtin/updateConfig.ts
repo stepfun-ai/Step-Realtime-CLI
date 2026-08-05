@@ -58,7 +58,6 @@ STEP_CODE_BASE_URL。
 
 | 键 | 类型 | 默认值 | clamp | 说明 |
 |---|---|---|---|---|
-| max_per_session | number | 10 | [1, 50] | 单会话累计最多派生的子 agent 数 |
 | max_depth | number | 1 | [1, 3] | 嵌套深度上限（父=0），硬顶 3 防 fork-bomb |
 | max_steps | number | 100 | [1, 1000] | 每个子 agent 内部最大往返轮数全局默认 |
 | max_concurrent | number | 4 | [1, 16] | 并行子 agent 并发上限 |

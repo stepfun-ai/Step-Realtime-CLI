@@ -8,11 +8,9 @@ import type { Locale } from '../i18n.js';
 
 /**
  * 子 agent 限制。设计三件套：可配 + 硬编码默认 + clamp 上限。
- * 深度用 clamp[1,2] 封顶防 fork-bomb；并发维度不设——step-code 顺序执行，无并发概念。
+ * 深度用 clamp 封顶防 fork-bomb；并发维度不设——step-code 顺序执行，无并发概念。
  */
 export interface SubagentLimits {
-  /** 单个会话累计最多派生的子 agent 数（会话级计数器，超限拒绝）。 */
-  maxPerSession: number;
   /** 嵌套深度上限（父=0）。硬顶封 2。 */
   maxDepth: number;
   /** 每个子 agent 内部最大 模型↔工具 往返轮数的全局默认；agent 定义的 maxSteps 可覆盖。 */
@@ -337,9 +335,6 @@ function envValue(name: string | undefined): string | undefined {
 }
 
 // 子 agent 限制的默认值与 clamp 边界（默认克制、上限封顶）。
-const SUBAGENT_MAX_PER_SESSION_DEFAULT = 10;
-const SUBAGENT_MAX_PER_SESSION_MIN = 1;
-const SUBAGENT_MAX_PER_SESSION_MAX = 50;
 const SUBAGENT_MAX_DEPTH_DEFAULT = 1;
 const SUBAGENT_MAX_DEPTH_MIN = 1;
 const SUBAGENT_MAX_DEPTH_MAX = 3; // 硬顶封 3：防 fork-bomb，配置无法突破；默认 1，显式配置才放宽嵌套
@@ -509,12 +504,6 @@ function clampFloat(value: unknown, min: number, max: number, dflt: number): num
 export function resolveSubagentLimits(raw: unknown): SubagentLimits {
   const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   return {
-    maxPerSession: clampInt(
-      t['max_per_session'],
-      SUBAGENT_MAX_PER_SESSION_MIN,
-      SUBAGENT_MAX_PER_SESSION_MAX,
-      SUBAGENT_MAX_PER_SESSION_DEFAULT,
-    ),
     maxDepth: clampInt(
       t['max_depth'],
       SUBAGENT_MAX_DEPTH_MIN,

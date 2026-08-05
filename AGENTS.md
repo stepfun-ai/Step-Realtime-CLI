@@ -126,7 +126,7 @@ tests/                    # vitest 单元 + 集成测试
 - 每次改完跑 `pnpm typecheck`（tsc 严格模式全开）与 `pnpm test`（vitest）
 - 新增工具：在 `src/tools/` 下写单文件（zod schema + execute，返回 `ok()`/`fail()`），再注册进 `src/tools/index.ts` 的 `ALL_TOOLS`；工具报错返回 `fail()` 不抛异常（循环会回灌给模型自纠）
 - 权限判定改 `agent/permission/mode.ts` 的 `decide`；斜杠命令改 `tui/commands.ts` 注册表 + `App` 分发；横切逻辑走 `agent/hooks.ts` 的 `LoopHooks` 缝，不要塞进 `runTurn` 核心
-- 子 agent：角色定义在 `agent/subagent/registry.ts`（内置）或 `.step-code/agents/*.md`（frontmatter：description/tools/model/maxSteps + 正文=system prompt）；派生走 `spawn_agent` 工具 → `runSubagent`。递归防护双保险：子 agent 工具集永不含 spawn_agent + `ToolContext.depth` 上限。限制走 `~/.step-code/config.toml` 的 `[subagent]` 段（`max_depth` / `max_per_session` / `max_steps`，「可配 + 默认 + clamp」，见 `config.ts` 的 `resolveSubagentLimits`）
+- 子 agent：角色定义在 `agent/subagent/registry.ts`（内置）或 `.step-code/agents/*.md`（frontmatter：description/tools/model/maxSteps + 正文=system prompt）；派生走 `spawn_agent` 工具 → `runSubagent`。递归防护双保险：子 agent 工具集永不含 spawn_agent + `ToolContext.depth` 上限。限制走 `~/.step-code/config.toml` 的 `[subagent]` 段（`max_depth` / `max_steps` / `max_concurrent`，「可配 + 默认 + clamp」，见 `config.ts` 的 `resolveSubagentLimits`）
 - 跨平台优先：文件操作用 `node:fs` 原生 API 而非 shell；bash 工具在 Windows 下已封装 Git Bash 探测
 - 跨平台路径拼接：只要处理的是 Windows 风格路径（包括只在 `process.platform === 'win32'` 分支内使用的函数、以及被 mock 成 `'win32'` 的单测），必须显式用 `path.win32`（或 `path.posix`），禁止直接使用默认的 `path.join`。默认 `join` 在 POSIX 机器上会把反斜杠当成普通字符，拼出 `D:\Tools\Git/bin/bash.exe` 这类混合分隔符，导致路径匹配失败。
 - pnpm 配置改动写在 `pnpm-workspace.yaml`（pnpm 10+ 不再读 package.json 的 `pnpm` 字段）

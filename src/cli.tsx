@@ -711,7 +711,6 @@ async function runPrint(prompt: string): Promise<void> {
       config, // 非交互分支同样要解析子 agent 别名、跨渠道
       hooks,
       maxDepth: config.subagent.maxDepth,
-      maxPerSession: config.subagent.maxPerSession,
       maxStepsDefault: config.subagent.maxSteps,
       compaction: {
         maxContextSize: config.maxContextSize,
@@ -742,6 +741,7 @@ async function runPrint(prompt: string): Promise<void> {
 
   const runOnce = (): ReturnType<typeof runAgent> => runAgent({
     provider,
+    providerName: config.provider,
     // SessionStart hook 注入的上下文拼在 system 尾部（仅本轮生效）
     system: hookContext !== '' ? `${composeSystem()}\n\n${hookContext}` : composeSystem(),
     ctx: subCtx,
