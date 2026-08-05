@@ -113,12 +113,22 @@ describe('read_media', () => {
     expect(r.content).toContain('region');
   });
 
-  it('capabilities 无 image_in → 能力门控报错', async () => {
+  it('capabilities 显式声明不含 image_in → 能力门控报错', async () => {
     writePng('small.png', await pngBytes(100, 80));
-    const r = await executeTool('read_media', { path: 'small.png' }, { cwd: dir });
+    const r = await executeTool('read_media', { path: 'small.png' }, { cwd: dir, capabilities: ['thinking'] });
     expect(r.isError).toBe(true);
     expect(r.content).toContain('image_in');
     expect(r.content).toContain('/model');
+  });
+
+  it('capabilities 为 undefined → 不拒绝，正常构造 images（由 degrader 兜底）', async () => {
+    const bytes = await pngBytes(100, 80);
+    writePng('small.png', bytes);
+    // ctx 无 capabilities 字段（undefined）：工具应正常返回 images，不报错。
+    const r = await executeTool('read_media', { path: 'small.png' }, { cwd: dir });
+    expect(r.isError).toBe(false);
+    expect(r.images).toHaveLength(1);
+    expect(r.images![0]!.mediaType).toBe('image/png');
   });
 
   it('非图片文件 → 报错', async () => {

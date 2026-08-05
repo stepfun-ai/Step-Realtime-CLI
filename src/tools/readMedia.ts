@@ -75,7 +75,11 @@ export const readMediaTool: ToolDef<Input> = {
   schema,
   access: (input, ctx) => ({ kind: 'read', path: resolvePath(ctx.cwd, input.path) }),
   async execute(input, ctx) {
-    if (!ctx.capabilities?.includes('image_in')) {
+    // capabilities 为 undefined 时**不拒绝**：让工具正常构造 images，由 degrader 按
+    // 能力表兜底（未声明 image_in 的模型会被剥成占位文本）。比静默拒绝更诚实——
+    // 模型至少能看到图片、尝试理解，理解不了时错误会回灌给模型自纠。
+    // 只有显式声明了 capabilities 且不含 image_in 时才拒绝。
+    if (ctx.capabilities !== undefined && !ctx.capabilities.includes('image_in')) {
       return fail('当前模型不支持图片输入（capabilities 无 image_in），请 /model 切换到支持图片的模型。');
     }
 
