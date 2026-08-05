@@ -62,6 +62,7 @@ import { STATUS_BAR_ROWS } from './LiveViewport.js';
 import { computeLiveBudget, logRenderBudget, displayWidth, wrappedRows } from './liveBudget.js';
 import { MessageItem, MessageList, ThinkingPreview, THINKING_PREVIEW_LINES, appendStreamText, countSettledItems, removePartialAssistant } from './MessageList.js';
 import { ModelPicker, type ModelPickerItem } from './ModelPicker.js';
+import { StreamBuffer } from './streamBuffer.js';
 import { ProviderWizard, type ProviderWizardResult } from './ProviderWizard.js';
 import { ProviderManager, type ProviderManagerRow } from './ProviderManager.js';
 import { resolveProviderTarget } from './providerSwitch.js';
@@ -1206,6 +1207,11 @@ export function App({
       return next;
     });
   }, []);
+
+  // 流式渲染节流缓冲：高频 text/thinking_delta/usage 合帧（50ms），结构事件立即 flush。
+  // useState 惰性初始化保证只创建一次（applyEvent 引用稳定，useCallback 空依赖）；
+  // 同一 buffer 跨回合复用，drain() 在回合收尾清空缓冲，不把上一回合残篇带进下一回合。
+  const [streamBuffer] = useState(() => new StreamBuffer(applyEvent));
 
   const buildHooks = useCallback(
     (): LoopHooks & { resetStopContinuation?: () => void } => {
@@ -2512,11 +2518,16 @@ export function App({
           // 循环内非消息事件（压缩应用、通知送达）落盘到事件日志
           onWireEvent: appendWireEvent,
         })) {
-          applyEvent(ev);
+          // 流式节流：高频 text/thinking_delta/usage 经 StreamBuffer 合帧（50ms 一帧），
+          // 结构事件立即 flush+消费。避免一个 delta 一次 Ink 全帧重绘。
+          streamBuffer.ingest(ev);
         }
       } catch (e) {
+        streamBuffer.drain();
         applyEvent({ type: 'error', message: (e as Error).message });
       } finally {
+        // 回合收尾强制吐净缓冲（最后一帧不丢）：turn_done 之后也可能有 turn 边界注入的 delta
+        streamBuffer.drain();
         abortRef.current = null;
         setBusy(false);
         busyRef.current = false;
@@ -2529,7 +2540,7 @@ export function App({
         turnEndRef.current();
       }
     },
-    [agentsMd, appendWireEvent, applyEvent, askUserQuestion, buildHooks, ctx, handleSlash, hookEngineRef, maxContextSize, model, persist, pluginCommandNames, pushItem, reloadSkills, skillConflictNote, skillsRef, subagentRegistry, systemPrefix, thinkOverride],
+    [agentsMd, appendWireEvent, applyEvent, askUserQuestion, buildHooks, ctx, handleSlash, hookEngineRef, maxContextSize, model, persist, pluginCommandNames, pushItem, reloadSkills, skillConflictNote, skillsRef, streamBuffer, subagentRegistry, systemPrefix, thinkOverride],
   );
 
   // 回合收尾统一入口：submit finally 与 /compact finally 共用。
