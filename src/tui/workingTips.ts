@@ -4,7 +4,7 @@ import { getLocale } from '../i18n.js';
 export const WORKING_TIPS: string[] = [
   '↑/↓ 回溯输入历史',
   '输入 / 唤起斜杠命令补全',
-  'Ctrl+O 展开工具输出',
+  'Ctrl+O 查看工具输出',
   '忙碌时继续输入会自动加入发送队列',
   '/plan 只读调查并产出计划，确认后再执行',
   '/goal 让 agent 持续朝一个目标推进',
@@ -20,7 +20,7 @@ export const WORKING_TIPS: string[] = [
 export const WORKING_TIPS_EN: string[] = [
   '↑/↓ to browse input history',
   'Type / to open slash command completion',
-  'Ctrl+O to expand tool output',
+  'Ctrl+O to view tool output',
   'Keep typing while busy — input joins the send queue',
   '/plan: read-only investigation, executes after your approval',
   '/goal keeps the agent pushing toward a goal',

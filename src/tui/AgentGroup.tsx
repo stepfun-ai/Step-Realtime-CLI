@@ -141,25 +141,18 @@ export function AgentGroup({ agents }: { agents: SubagentProgress[] }): React.Re
       {agents.map((a, i) => {
         const last = i === agents.length - 1;
         const branch = last ? '└─' : '├─';
-        const statusMark =
-          a.status === 'done' ? '✓' : a.status === 'error' ? '✗' : a.status === 'running' ? '⠶' : '○';
+        // 状态收敛为单字符圆点（●）：黄=运行中、绿=已完成、红=失败、灰=排队中。
+        // 替代原先的「符号 + 状态文字」（约 6-8 列），把行尾宽度让给 stats（tools/时长/tok），
+        // 缓解窄终端下 wrap="truncate" 从行尾裁掉 token 段的问题。
         const statusColor =
-          a.status === 'done' ? 'green' : a.status === 'error' ? 'red' : a.status === 'running' ? 'cyan' : 'gray';
-        const statusText =
-          a.status === 'done'
-            ? t('agentGroup.status.done')
-            : a.status === 'error'
-              ? t('agentGroup.status.error')
-              : a.status === 'running'
-                ? t('agentGroup.status.running')
-                : t('agentGroup.status.queued');
+          a.status === 'done' ? 'green' : a.status === 'error' ? 'red' : a.status === 'running' ? 'yellow' : 'gray';
         return (
           <Box key={i} flexDirection="column">
             {/* 长 description / activity 截断到一行，动态区高度预算按 1 行/条精确成立 */}
             <Text wrap="truncate">
               {branch} <Text color="white">{a.type}</Text>
-              <Text color="gray"> · {a.description} · {formatSubagentStats(a, Date.now())} · </Text>
-              <Text color={statusColor}>{statusMark} {statusText}</Text>
+              <Text color="gray"> · {a.description} · {formatSubagentStats(a, Date.now())} </Text>
+              <Text color={statusColor}>●</Text>
             </Text>
             {a.status === 'running' && a.activity !== undefined && a.activity !== '' ? (
               <Text color="gray" wrap="truncate">    {a.activity}</Text>

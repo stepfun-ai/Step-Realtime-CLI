@@ -36,13 +36,13 @@ describe('ToolCall 折叠/展开', () => {
     unmount();
   });
 
-  it('成功且有输出，折叠态只显示「N 行输出 · Ctrl+O 展开」提示，不显示正文', () => {
+  it('成功且有输出，折叠态只显示「N 行输出 · Ctrl+O 查看」提示，不显示正文', () => {
     const { lastFrame } = render(
       React.createElement(ToolCall, { item: toolItem({ result: bigResult }), expanded: false }),
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('12 行输出');
-    expect(frame).toContain('Ctrl+O 展开');
+    expect(frame).toContain('Ctrl+O 查看');
     expect(frame).not.toContain('line7'); // 正文未展开
   });
 
@@ -87,8 +87,8 @@ describe('ToolCall 折叠/展开', () => {
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('line1');
-    expect(frame).toContain('还有'); // 「… 还有 N 行 · Ctrl+O 展开」
-    expect(frame).toContain('Ctrl+O 展开');
+    expect(frame).toContain('还有'); // 「… 还有 N 行 · Ctrl+O 查看」
+    expect(frame).toContain('Ctrl+O 查看');
   });
 
   it('无输出的工具不显示结果体', () => {
