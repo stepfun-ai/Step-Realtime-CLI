@@ -14,6 +14,27 @@ export interface ModelPickerItem {
   current: boolean;
 }
 
+/**
+ * 装配模型选择器候选清单（纯函数，便于测试钉住「当前」判定）。
+ *
+ * 「当前」按别名判定，不按真实模型 id：多个别名可指向同一 id（如 step37 / step37-plan 同为
+ * step-3.7-flash、仅 provider 不同），按 id 判定会把这些别名全部误标为当前。真正的「当前」
+ * 是当前激活的那个别名（currentAlias），唯一；裸 id 直切时 currentAlias 为 null，无别名标当前
+ *（此时用的是顶层默认 provider，不是任何别名的渠道绑定，标谁都不准确）。
+ */
+export function buildModelPickerItems(
+  models: Record<string, { model?: string; provider?: string; displayName?: string }>,
+  currentAlias: string | null,
+  defaultProvider: string,
+): ModelPickerItem[] {
+  return Object.entries(models).map(([alias, entry]) => ({
+    alias,
+    label: entry.displayName ?? alias,
+    channel: entry.provider ?? defaultProvider,
+    current: currentAlias !== null && alias === currentAlias,
+  }));
+}
+
 /** 每页展示的模型条数（对齐 SessionPicker）。 */
 const PAGE_SIZE = 10;
 
