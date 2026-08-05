@@ -13,11 +13,11 @@ describe('filterToolsByCapabilities（能力门控工具卸载）', () => {
     expect(filterToolsByCapabilities(ALL, ['thinking'])).toEqual(['read_file', 'bash', 'edit_file']);
   });
 
-  it('capabilities 为 undefined（裸模型/未命中别名）时门控工具一律卸载', () => {
-    expect(filterToolsByCapabilities(ALL, undefined)).toEqual(['read_file', 'bash', 'edit_file']);
+  it('capabilities 为 undefined（裸模型/未命中别名）时不卸载任何工具，保留门控工具', () => {
+    expect(filterToolsByCapabilities(ALL, undefined)).toEqual(ALL);
   });
 
-  it('capabilities 为空数组时门控工具卸载', () => {
+  it('capabilities 为空数组时门控工具卸载（明确声明但未包含所需能力）', () => {
     expect(filterToolsByCapabilities(ALL, [])).toEqual(['read_file', 'bash', 'edit_file']);
   });
 

@@ -11,15 +11,18 @@ export const CAPABILITY_GATED_TOOLS: Readonly<Record<string, string>> = {
 
 /**
  * 按模型能力过滤工具表。capabilities 为 undefined（裸模型/未命中别名）时，
- * 所有门控工具一律卸载——与 read_media 运行时检查的口径一致（无 image_in 即不可用）。
+ * **不卸载任何工具**——保留工具但由运行时检查兜底（如 read_media 内部按
+ * ctx.capabilities 报错），比静默卸载更诚实：模型至少能看到工具、尝试调用，
+ * 调用失败时错误会回灌给模型自纠。
  */
 export function filterToolsByCapabilities<T extends string>(
   tools: readonly T[],
   capabilities: readonly string[] | undefined,
 ): T[] {
+  if (capabilities === undefined) return tools as T[];
   return tools.filter((tool) => {
     const required = CAPABILITY_GATED_TOOLS[tool];
     if (required === undefined) return true;
-    return capabilities?.includes(required) === true;
+    return capabilities.includes(required);
   });
 }

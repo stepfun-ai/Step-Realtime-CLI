@@ -235,6 +235,15 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
     try {
       // 角色的模型绑定：命中别名则连 provider 一起换（跨渠道），未命中退回父 provider
       const binding = resolveBinding(agentDef.model);
+      // 子 agent 别名能力声明注入 provider：让 stepfun adapter 的 degrader 按别名 capabilities 决定剥不剥图片。
+      // 仅对子代理专属 provider 注入（binding.provider !== deps.provider），避免污染父 agent 的 adapter。
+      if (
+        binding.capabilities !== undefined &&
+        binding.provider !== deps.provider &&
+        typeof binding.provider.setRuntimeCapabilities === 'function'
+      ) {
+        binding.provider.setRuntimeCapabilities(binding.capabilities);
+      }
       // 工具集 = 角色白名单（或全部）∩ 已注册。仅当子 agent 还可再下探（depth+1 未达 maxDepth）时保留 spawn_agent，
       // 否则剔除（达深度上限后子 agent 不能再派生，防 fork-bomb）。
       const canSpawnDeeper = req.depth + 1 < deps.maxDepth;

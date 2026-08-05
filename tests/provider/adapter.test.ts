@@ -112,6 +112,22 @@ describe('StepfunAdapter.stream：投影 + 主动降级 + 透传', () => {
     });
     expect(inner.calls[0]!.messages[0]).toEqual({ role: 'user', content: '' });
   });
+
+  it('runtime capabilities 优先于构造时 overrides：runtime 开启可覆盖构造时关闭', () => {
+    const inner = new MockInner();
+    // 构造时 override image_in=false → 图片被主动降级
+    const adapter = makeAdapter(inner, [
+      { channel: 'stepfun', model: 'step-3.7-flash', capability: { image_in: false } },
+    ]);
+    adapter.stream({ system: 's', tools: [], messages: [{ role: 'user', content: [imageBlock] }] });
+    expect(JSON.stringify(inner.calls[0]!.messages)).toContain('[image omitted: model has no image input]');
+
+    // runtime 注入 image_in：覆盖构造时的 false → 图片原样透传
+    adapter.setRuntimeCapabilities(['image_in']);
+    adapter.stream({ system: 's', tools: [], messages: [{ role: 'user', content: [imageBlock] }] });
+    expect(JSON.stringify(inner.calls[1]!.messages)).toContain('image');
+    expect(JSON.stringify(inner.calls[1]!.messages)).not.toContain('[image omitted');
+  });
 });
 
 describe('StepfunAdapter.send：错误驱动重投影', () => {
