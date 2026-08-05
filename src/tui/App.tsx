@@ -528,7 +528,10 @@ export function App({
     // 权限模式与模型随会话落盘（会话级状态，恢复时读回）：从 ref 取当前值，
     // 避免闭包读到陈旧 state；切换点只需保证调用 persist 即生效。
     sessionRef.current.mode = modeRef.current;
-    sessionRef.current.model = modelRef.current;
+    // 会话 model 落盘存「别名 ?? 裸 id」而非真实 id：别名承载 provider/窗口/显示名整组绑定，
+    // 是当初选择的完整信息；resume 直接按它重建（applyModelAlias 自判别名/裸 id），不必反查。
+    // 反查在同 id 多别名（step37/step37-plan 同为 step-3.7-flash）时会任取其一、激活错 provider。
+    sessionRef.current.model = currentModelAliasRef.current ?? modelRef.current;
     // 思考深度与 plan 模式同为会话级状态：一律从 ref 取（state 会被 persist 的闭包读成陈旧值）
     sessionRef.current.thinkOverride = thinkOverrideRef.current;
     sessionRef.current.planMode = planModeRef.current;
@@ -1335,7 +1338,7 @@ export function App({
         setModel(arg);
         modelRef.current = arg;
         setModelLabel(arg);
-        sessionRef.current.model = arg;
+        // 会话 model 由 persist 统一落盘（别名 ?? 裸 id），此处不直接写，避免与 persist 口径分裂
         persist();
         persistPointer();
         pushItem({ kind: 'note', text: t('app.model.switched', { model: arg }) });
@@ -1355,8 +1358,7 @@ export function App({
       modelRef.current = resolved.model;
       setModelLabel(configRef.current.models?.[arg]?.displayName ?? resolved.model);
       setMaxContextSize(resolved.maxContextSize);
-      // 模型是会话级状态：切换即落盘（写会话 model 字段），恢复会话时读回并重建 provider
-      sessionRef.current.model = resolved.model;
+      // 模型是会话级状态：切换即落盘（会话 model 由 persist 统一写「别名 ?? 裸 id」），恢复时读回重建 provider
       persist();
       persistPointer();
       pushItem({ kind: 'note', text: t('app.model.aliasSwitched', { name: arg, model: resolved.model }) });
@@ -1531,13 +1533,12 @@ export function App({
       sessionApprovals.current.clear();
       // 恢复会话级 permission mode（旧快照无 mode 时保持当前，不强制回退）
       if (data.mode !== undefined) changeMode(data.mode);
-      // 恢复会话级模型：按存储的 model 重建 provider（applyModelAlias 内含 setModel + createProvider + 落盘）。
-      // model 存的是解析后的真实 id，用它反查别名；找不到别名则按 id 直切。
-      if (data.model !== '' && data.model !== modelRef.current) {
-        const alias = Object.keys(configRef.current.models ?? {}).find(
-          (a) => (configRef.current.models?.[a]?.model ?? a) === data.model,
-        );
-        applyModelAlias(alias ?? data.model, { persistDefault: false });
+      // 恢复会话级模型：会话 model 存的是「别名 ?? 裸 id」（persist 统一口径），直接交给
+      // applyModelAlias 自判——是别名走别名重建（含 provider/窗口/显示名整组绑定），是裸 id 走直切。
+      // 不再用「真实 id 反查别名」：同 id 多别名（step37/step37-plan）时反查会任取其一、激活错 provider。
+      // persistDefault=false：恢复旧会话是「回到那个现场」，不表达对未来新会话的偏好，不改全局默认指针。
+      if (data.model !== '') {
+        applyModelAlias(data.model, { persistDefault: false });
       }
       // 清空动态工具，避免上个会话 tool_search 加载的工具泄漏到恢复的会话
       clearDynamicTools();
@@ -2246,7 +2247,8 @@ export function App({
             if (plan.model !== modelRef.current) {
               setModel(plan.model);
               modelRef.current = plan.model;
-              sessionRef.current.model = plan.model;
+              // 会话 model 由 persist 统一落盘（别名 ?? 裸 id）：别名仍生效时 currentModelAliasRef 非空，
+              // persist 会写别名而非此处的真实 id，避免与 persist 口径分裂
               persist();
             }
             setModelLabel(plan.modelLabel);
