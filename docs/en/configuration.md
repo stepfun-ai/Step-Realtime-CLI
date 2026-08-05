@@ -489,4 +489,25 @@ Three warning classes (still exit code 0, listed one per line after the `ok:` li
 
 **Only doctor can find a misspelled top-level key**: `loadConfig` silently ignores any top-level key it does not recognize, so typing `permission_mode` as `permision_mode` neither errors nor takes effect, and the configuration looks written yet does nothing. One run of `step doctor config` exposes this class of problem.
 
+## Startup self-check
+
+`step` automatically validates `~/.step-code/config.toml` on startup — **you do not need to run `step doctor config` yourself**. A clean configuration produces zero output; problems are split by severity:
+
+| Level | Covers | Behavior |
+|------|------|------|
+| **Fatal** | TOML syntax error, top level is not a table | Reports the error and exits with code 1, with a repair hint (`step doctor config` to validate, or `STEP_CODE_IGNORE_BAD_CONFIG=1` to ignore the bad file and start with defaults) |
+| **Warning** | Unknown top-level key, invalid `[providers.<id>]` `type`, alias referencing an unavailable channel, invalid `[[hooks]]` entry | Warns without blocking startup |
+
+**Why the escape hatch is mandatory**: the configuration file lives in the home directory, and users routinely use step-code itself to modify it (the built-in `update-config` skill does exactly that). If a syntax error always caused an exit, you would deadlock: cannot start → cannot use step-code to fix step-code's configuration. With `STEP_CODE_IGNORE_BAD_CONFIG=1` the entire file is ignored, but the interface keeps telling you so (silently running on defaults is exactly what this feature eliminates).
+
+**Alias reference checks** cover three failure modes (shared by `step doctor config` and the startup self-check):
+
+| Mode | Example | Consequence |
+|------|------|------|
+| Referencing an undeclared channel id | `[models.k3] provider = "ch-typo"` (no `ch-typo` under `[providers]`) | The alias is deactivated; the bare model name goes to the top-level channel |
+| Referencing a protocol preset name | `[models.k3] provider = "anthropic"` (without declaring `[providers.anthropic]`) | The alias is deactivated; declare `[providers.anthropic]` first |
+| Referencing an ignored channel | `[models.k3] provider = "ch1"` (`[providers.ch1]` has an invalid `type`) | The alias is deactivated as a result; fix the channel, not the alias |
+
+**Warning presentation channels** split by run mode: interactive TUI shows a note in the transcript area (Ink owns the terminal, nothing goes to stderr/stdout); non-interactive (`-p` / `--output-format stream-json`) writes to stderr (stdout is the protocol channel and stays clean).
+
 It is also the "independent validation before overwriting" step in the change protocol of the built-in `update-config` skill, and the post-write validation entry point for configuration-writing operations such as `/provider add` and provider deletion (a validation failure rolls the change back).

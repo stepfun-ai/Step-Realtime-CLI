@@ -487,5 +487,26 @@ step doctor config ./my.toml    # 校验指定路径
 
 **拼错的顶层键只有 doctor 能发现**：`loadConfig` 对不认识的顶层键一律静默忽略，把 `permission_mode` 敲成 `permision_mode` 不会报错、也不会生效，配置看着写了却毫无作用。这类问题跑一次 `step doctor config` 即可暴露。
 
+## 启动自检
+
+`step` 启动时会自动校验 `~/.step-code/config.toml`，**不需要你主动跑 `step doctor config`**。正常配置下零输出；有问题时按严重级分流：
+
+| 级别 | 覆盖 | 行为 |
+|------|------|------|
+| **致命** | TOML 语法错误、顶层不是表 | 报错 + `exit 1`，并给出修复指引（`step doctor config` 校验 / `STEP_CODE_IGNORE_BAD_CONFIG=1` 忽略坏配置以默认配置启动） |
+| **警告** | 未知顶层键、渠道 `type` 非法、别名引用不可用渠道、`hooks` 非法条目 | 提示，不阻塞启动 |
+
+**为什么必须有逃生舱**：配置文件在 home 目录，而用户常用 step-code 自己修改它（内置 `update-config` skill 就是干这个的）。若语法错误一律 `exit`，就出现「起不来 → 无法用 step-code 修 step-code 的配置」的死锁。`STEP_CODE_IGNORE_BAD_CONFIG=1` 时整份配置不生效，但会在界面上持续告知（不能悄悄用默认配置跑）。
+
+**别名引用检查**覆盖三种成因（`step doctor config` 与启动自检共用同一份规则）：
+
+| 成因 | 示例 | 后果 |
+|------|------|------|
+| 引用未声明的渠道 id | `[models.k3] provider = "ch-typo"`（`[providers]` 里没有 `ch-typo`） | 别名整体失效，退回顶层渠道发送裸模型名 |
+| 引用协议预设名 | `[models.k3] provider = "anthropic"`（没声明 `[providers.anthropic]`） | 别名整体失效，需先声明 `[providers.anthropic]` 再引用 |
+| 引用被忽略的渠道 | `[models.k3] provider = "ch1"`（`[providers.ch1]` 的 `type` 非法） | 别名连带失效，该修的是渠道不是别名 |
+
+**警告的呈现通道**按运行模式分流：交互 TUI 走转录区 note（Ink 独占终端，不写 stderr/stdout），非交互（`-p` / `--output-format stream-json`）走 stderr（stdout 是协议通道，不污染）。
+
 它也是内置 `update-config` skill 变更协议里「覆盖前独立校验」的那一环，以及 `/provider add`、删除渠道等写配置操作的写后校验入口（校验失败即回滚）。
 
