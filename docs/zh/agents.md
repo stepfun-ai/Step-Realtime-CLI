@@ -100,28 +100,13 @@ model: step35
 
 并行子 agent 额外受 `[subagent].max_concurrent`（默认 4）的并发上限约束——超出的排队等空槽。子 agent 因限流（429）失败时不白占槽位，会退回队尾延迟重试，TUI 会提示重排队次数。授权确认始终串行进行（多个审批不会交错弹出）。这些都由模型自动处理，你不需要显式控制。
 
-## 工作流（workflow）
+## 编排能力
 
-比单个子 agent 更强的编排：模型用 `workflow` 工具声明式地把多个子 agent 编成一条流水线。中间结果存运行时状态、不占主会话上下文，主会话只收最终报告（即最后一步的结果）。TUI 有步骤面板实时显示编排进度。
-
-四种步骤类型：
-
-| 步骤 | 关键字段 | 行为 |
-|------|----------|------|
-| `agent` | `prompt`、`as` | 派一个子 agent 跑单个子任务 |
-| `parallel` | `tasks[]`、`as` | 一组**不同**的子任务并行跑，结果拼接 |
-| `fanout` | `items[]`、`prompt`、`as` | 对列表每一项派一个子 agent（数据并行），`prompt` 里用 `{{item}}` 占位 |
-| `synthesize` | `from[]`、`prompt`、`as` | 把指定变量的结果作为材料交给一个子 agent 综合成报告 |
-
-每步用 `as` 给结果命名，后续步骤用 `{{名}}` 引用；调用时传入的 `args` 用 `{{args.xxx}}` 引用。每步都可用 `subagentType` 指定角色，缺省 `general`。
-
-护栏：`parallel` 与 `fanout` 的并发受 `[subagent].max_concurrent` 约束；整条 workflow 的 agent 总数受 `max_agents`（默认 50）约束，撞线的子任务被跳过并在结果里标注，不会静默丢失。整条 workflow 也支持 `run_in_background`，把编排丢后台、主会话继续（见[后台任务](#后台任务)）。
-
-适合多阶段任务：比如"并行调研 5 个方向，各自出摘要，最后汇总成对比报告"——用 `fanout` + `synthesize` 两步即可。
+比单个子 agent 更强的编排：现在有两种方式，详见 [JS 动态工作流（`dynamic_workflow`）](#js-动态工作流dynamic_workflow)与 [子 agent（`spawn_agent`）](#子-agentspawn_agent)。
 
 ## JS 动态工作流（dynamic_workflow）
 
-声明式 workflow 之外的第二种编排：`dynamic_workflow` 工具让模型现写一段 JavaScript 编排脚本，在 quickjs 沙箱中执行。分工上，结构化重复任务用声明式模板，一次性探索编排用动态脚本。
+`dynamic_workflow` 工具让模型现写一段 JavaScript 编排脚本，在 quickjs 沙箱中执行。结构化任务可直接套用 `dynamic_workflow` 原语，一次性探索编排则靠脚本自由组合。
 
 脚本世界是零能力的：文件、网络、进程、环境变量在里面根本不存在，能用的只有下面注入的原语。控制流不做原语——`if` / `for` / `.map` / 提前 `return` 直接写原生 JS，这是走脚本路线换来的表达力。
 
@@ -297,7 +282,7 @@ paused / blocked 期间的 token 不计入目标账本，所以面板上的 toke
 
 ## 后台任务
 
-`bash` 工具支持 `run_in_background`：长命令（构建、测试、服务）转后台跑，主会话继续。同一个参数在另外三个工具上也可用——`spawn_agent`（整个子 agent 丢后台）、`workflow`、`dynamic_workflow`（整条编排丢后台），所以耗时的编排不必占着主会话干等。配套 `task_list` / `task_output` / `task_stop` 管理，状态栏有 `bg:N` 徽章显示进行中的后台任务数。
+`bash` 工具支持 `run_in_background`：长命令（构建、测试、服务）转后台跑，主会话继续。同一个参数在另外两个编排工具上也可用——`spawn_agent`（整个子 agent 丢后台）和 `dynamic_workflow`（整条编排丢后台），所以耗时的编排不必占着主会话干等。配套 `task_list` / `task_output` / `task_stop` 管理，状态栏有 `bg:N` 徽章显示进行中的后台任务数。
 
 三个派生类工具的后台模式有一条共同的 **v1 限制**：`task_stop` 只把任务标记为 `killed`，不会真正 abort 已经在跑的子 agent——它们会继续跑到自己结束，只是结果不再回灌。要真正止住，只能中断整个回合。
 
@@ -327,4 +312,4 @@ paused / blocked 期间的 token 不计入目标账本，所以面板上的 toke
 
 ## 使用建议
 
-这几类机制的正当用途是**分担你的等待和协调成本**：并行的调查交给 explore 子 agent，多阶段的产出交给 workflow，需要持续推进的交给 goal，定时的交给 cron，耗时命令交后台。主会话只留需要你判断的部分。反过来，一句话能说清的小任务不要动用它们——机制本身有上下文和 token 成本。
+这几类机制的正当用途是**分担你的等待和协调成本**：并行的调查交给 explore 子 agent，多阶段的产出交给 `dynamic_workflow` 或 `spawn_agent`，需要持续推进的交给 goal，定时的交给 cron，耗时命令交后台。主会话只留需要你判断的部分。反过来，一句话能说清的小任务不要动用它们——机制本身有上下文和 token 成本。

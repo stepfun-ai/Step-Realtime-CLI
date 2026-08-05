@@ -37,7 +37,6 @@
 | `cron_list` | 列出定时任务 | [子 agent 与自动化](./agents.md) |
 | `cron_delete` | 删除定时任务 | [子 agent 与自动化](./agents.md) |
 | `tool_search` | 检索并懒加载外部工具（如 MCP） | [技能、插件与 MCP](./skills-and-mcp.md) |
-| `workflow` | 声明式编排多个子 agent | [子 agent 与自动化](./agents.md) |
 | `dynamic_workflow` | 用现写的 JS 脚本动态编排子 agent | [子 agent 与自动化](./agents.md) |
 
 MCP server 提供的工具经 `tool_search` 命中后动态注册，不在这张表里；同名时以内置工具为准。
