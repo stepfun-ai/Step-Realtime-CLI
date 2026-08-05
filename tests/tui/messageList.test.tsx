@@ -90,6 +90,17 @@ describe('countSettledItems 定稿判定', () => {
     expect(countSettledItems(items, true)).toBe(3);
   });
 
+  it('retry 过渡态：boundary note 进 Static、重试新正文留动态区（countSettledItems 边界）', () => {
+    // retry 后 items = [user, boundary note, 新 assistant(流式中)]。
+    // boundary note 之前的（含它）进 Static 定稿；正在流式的新 assistant 留动态区待更新。
+    const items = [
+      user('u1'),
+      { kind: 'note' as const, text: '连接中断，重试', boundary: true },
+      assistant('重发的正文（流式中）'),
+    ];
+    expect(countSettledItems(items, true)).toBe(2);
+  });
+
   it('busy 时 running 工具后的 UI 提示透明：仍按 running 工具截断', () => {
     const items = [user('u1'), assistant('a1'), tool('t1', 'running'), note('已加入发送队列')];
     expect(countSettledItems(items, true)).toBe(2);
@@ -160,6 +171,37 @@ describe('removePartialAssistant 撤回残文气泡（B 方案）', () => {
     expect(removePartialAssistant([])).toEqual([]);
     const items = [user('u1'), note('提示')];
     expect(removePartialAssistant(items)).toEqual(items);
+  });
+
+  it('onRemoved 回调被撤正文字符数：撤回时同步扣减 token 估算（Bug 1 钉住）', () => {
+    // 撤回残文后 turnOutputCharsRef 要扣掉被撤正文的字符数，否则 retry 延迟窗口
+    // 状态栏 tok 估算仍算着被撤内容、虚高。onRemoved 传出被撤 assistant.text.length。
+    let removed = -1;
+    const out = removePartialAssistant([user('u1'), assistant('写了一半')], (n) => { removed = n; });
+    expect(out).toEqual([user('u1')]);
+    expect(removed).toBe('写了一半'.length);
+
+    // 末尾无 assistant（无可撤）→ 不回调
+    let called = false;
+    removePartialAssistant([user('u1'), { kind: 'note', text: 'r', boundary: true }], () => { called = true; });
+    expect(called).toBe(false);
+
+    // 带透明 note：回调只算 assistant 正文，不含 note 字符
+    let removed2 = -1;
+    removePartialAssistant([assistant('残文'), note('提示')], (n) => { removed2 = n; });
+    expect(removed2).toBe('残文'.length);
+  });
+
+  it('连续两次撤回（retry × 2）：每次撤回末尾新残文，历史完整保留', () => {
+    // 第一次撤回后末尾是 boundary note；重试吐新残文（另开 assistant），第二次撤回仍正确定位。
+    const after1 = removePartialAssistant([user('u1'), assistant('残文1')]);
+    const withRetryNote = [...after1, { kind: 'note' as const, text: '重试中', boundary: true }];
+    // 重试吐字：appendStreamText 遇 boundary note 另开新 assistant
+    const withPartial2 = appendStreamText(withRetryNote, '残文2');
+    expect(withPartial2).toEqual([user('u1'), { kind: 'note' as const, text: '重试中', boundary: true }, assistant('残文2')]);
+    // 第二次撤回：只撤残文2，保留 user + 上次 boundary note
+    const after2 = removePartialAssistant(withPartial2);
+    expect(after2).toEqual([user('u1'), { kind: 'note' as const, text: '重试中', boundary: true }]);
   });
 });
 
