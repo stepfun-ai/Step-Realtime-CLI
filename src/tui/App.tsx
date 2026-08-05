@@ -99,7 +99,7 @@ import { computeBacktrack, truncateItemsAtLastUser } from './backtrack.js';
 import { StatusBar } from './StatusBar.js';
 import { TodoPanel, allTodosDone } from './TodoPanel.js';
 import { WorkingStatus } from './WorkingStatus.js';
-import { applyStepEvent, applySubagentEvent, parseWorkflowInput, parseWfSid } from './WorkflowPanel.js';
+import { applyStepEvent, applySubagentEvent, parseDynamicWorkflowInput, parseWorkflowInput, parseWfSid } from './WorkflowPanel.js';
 import { WelcomeBox } from './WelcomeBox.js';
 import type { SessionData, SessionMeta, SessionStore } from '../session/store.js';
 import { exportDebugBundle } from '../session/debugBundle.js';
@@ -1135,9 +1135,10 @@ export function App({
       setItems((prev) => [...prev, { kind: 'thinking', text: thinkingText }]);
     }
     if (ev.type === 'thinking_end') return;
-    // workflow 工具调用跟踪：start 入栈 / end 出栈，供 onWorkflowStep 与 wf- 子 agent 事件定位面板
-    if (ev.type === 'tool_start' && ev.name === 'workflow') activeWorkflowRef.current.push(ev.id);
-    if (ev.type === 'tool_end' && ev.name === 'workflow') {
+    // workflow 工具调用跟踪：start 入栈 / end 出栈，供 onWorkflowStep 与 wf- 子 agent 事件定位面板。
+    // dynamic_workflow 同走此通道（phase 阶段事件经 onWorkflowStep 推进动态面板）。
+    if (ev.type === 'tool_start' && (ev.name === 'workflow' || ev.name === 'dynamic_workflow')) activeWorkflowRef.current.push(ev.id);
+    if (ev.type === 'tool_end' && (ev.name === 'workflow' || ev.name === 'dynamic_workflow')) {
       activeWorkflowRef.current = activeWorkflowRef.current.filter((id) => id !== ev.id);
     }
     // 本轮流式正文字符累加（WorkingStatus 用来估 output token）。thinking 在上方分支单独累加；
@@ -1161,9 +1162,13 @@ export function App({
             status: 'running',
             startedAt: Date.now(),
           };
-          // workflow 工具：从 input.steps 装配步骤面板初始状态（全部 pending）
+          // workflow 工具：从 input.steps 装配步骤面板初始状态（全部 pending）；
+          // dynamic_workflow：无 steps，装配动态阶段面板（空序列，phase 事件逐个追加）。
           if (ev.name === 'workflow') {
             const wf = parseWorkflowInput(ev.input);
+            if (wf !== null) item.workflow = wf;
+          } else if (ev.name === 'dynamic_workflow') {
+            const wf = parseDynamicWorkflowInput(ev.input);
             if (wf !== null) item.workflow = wf;
           }
           next.push(item);
