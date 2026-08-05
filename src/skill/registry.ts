@@ -145,13 +145,7 @@ export function buildSkillRegistry(
  * 走「缓存 + 失效 + 用到时全量重扫」，指纹比对替代 watcher（无新依赖、TUI 无 watcher 生命周期负担）。
  */
 export function fingerprintSkillRoots(cwd: string, pluginSkillDirs: string[] = [], extraDirs?: string[]): string {
-  const roots = [
-    join(homedir(), '.step-code', 'skills'),
-    join(cwd, '.agents', 'skills'),
-    join(cwd, '.step-code', 'skills'),
-    ...(extraDirs ?? []).map((p) => resolveConfigPath(p, cwd)),
-    ...pluginSkillDirs,
-  ];
+  const roots = skillRoots(cwd, pluginSkillDirs, extraDirs);
   const parts: string[] = [];
   for (const root of roots) {
     let entries: Dirent[];
@@ -171,6 +165,95 @@ export function fingerprintSkillRoots(cwd: string, pluginSkillDirs: string[] = [
     }
   }
   return parts.sort().join('\n');
+}
+
+/** skill 扫描根目录清单（注册表与指纹共用，保证两者扫的是同一组根）。 */
+function skillRoots(cwd: string, pluginSkillDirs: string[] = [], extraDirs?: string[]): string[] {
+  return [
+    join(homedir(), '.step-code', 'skills'),
+    join(cwd, '.agents', 'skills'),
+    join(cwd, '.step-code', 'skills'),
+    ...(extraDirs ?? []).map((p) => resolveConfigPath(p, cwd)),
+    ...pluginSkillDirs,
+  ];
+}
+
+/**
+ * 启动期一次性扫描：同一轮 readdirSync 同时产出注册表与指纹，省掉「buildSkillRegistry
+ * 与 fingerprintSkillRoots 各扫一遍」的重复 fs（每根目录 readdirSync 由 2 次降为 1 次，
+ * 每个 SKILL.md 的 readFileSync/statSync 在同一轮内完成）。
+ *
+ * 忠实复刻两个分离函数各自的过滤语义，不改变行为：
+ * - 注册表侧跳过 `.` 开头目录、读全文 parse（同 discoverInDir）；
+ * - 指纹侧不跳过 `.`、只取 mtime（同 fingerprintSkillRoots）。
+ * reload 路径仍走分离的 fast path（指纹未变跳过构建），不受影响。
+ */
+export function scanSkillRootsOnce(
+  cwd: string,
+  pluginSkillDirs: string[] = [],
+  extraDirs?: string[],
+  disabledSkills?: readonly string[],
+): { registry: SkillRegistry; fingerprint: string } {
+  const skills = new Map<string, SkillDefinition>();
+  const overriddenMap = new Map<string, SkillDefinition[]>();
+  const addAll = (defs: SkillDefinition[]): void => {
+    for (const d of defs) {
+      const prev = skills.get(d.name);
+      if (prev !== undefined) overriddenMap.set(d.name, [...(overriddenMap.get(d.name) ?? []), prev]);
+      skills.set(d.name, d);
+    }
+  };
+  addAll(BUILTIN_SKILLS);
+
+  const fingerprintParts: string[] = [];
+  // 根目录的来源标记需与 buildSkillRegistry 的扫描顺序一致（决定同名覆盖优先级）
+  const rootsWithSource: Array<{ root: string; source: SkillDefinition['source'] }> = [
+    { root: join(homedir(), '.step-code', 'skills'), source: 'user' },
+    { root: join(cwd, '.agents', 'skills'), source: 'project' },
+    { root: join(cwd, '.step-code', 'skills'), source: 'project' },
+    ...(extraDirs ?? []).map((p) => ({ root: resolveConfigPath(p, cwd), source: 'user' as const })),
+    ...pluginSkillDirs.map((d) => ({ root: d, source: 'plugin' as const })),
+  ];
+  for (const { root, source } of rootsWithSource) {
+    if (!existsSync(root)) continue;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    const defs: SkillDefinition[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillMd = join(root, entry.name, 'SKILL.md');
+      // 指纹：不跳过 `.`，只取 mtime（无 SKILL.md 忽略）
+      try {
+        fingerprintParts.push(`${skillMd}:${statSync(skillMd).mtimeMs}`);
+      } catch {
+        // 无 SKILL.md：注册表与指纹都忽略
+        continue;
+      }
+      // 注册表：跳过 `.`，读全文 parse
+      if (entry.name.startsWith('.')) continue;
+      try {
+        const def = parseSkillMd(readFileSync(skillMd, 'utf8'), join(root, entry.name), source);
+        if (def !== null) defs.push(def);
+      } catch {
+        // 跳过损坏 skill
+      }
+    }
+    addAll(defs);
+  }
+  for (const name of disabledSkills ?? []) {
+    skills.delete(name);
+    overriddenMap.delete(name);
+  }
+  const conflicts: SkillConflict[] = [];
+  for (const [name, overridden] of overriddenMap) {
+    const winner = skills.get(name);
+    if (winner !== undefined) conflicts.push({ name, winner, overridden });
+  }
+  return { registry: { skills, conflicts }, fingerprint: fingerprintParts.sort().join('\n') };
 }
 
 /** 两次注册表的差异（reload 报告用）。changed 判定：描述、正文或目录路径任一变化。 */
