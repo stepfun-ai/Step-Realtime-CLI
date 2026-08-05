@@ -153,10 +153,15 @@ export function diffConfig(oldCfg: StepCodeConfig, newCfg: StepCodeConfig): Conf
   diffScalar(out, 'compaction.user_message_max_tokens', oc.userMessageMaxTokens, nc.userMessageMaxTokens);
   diffScalar(out, 'compaction.user_message_head_tokens', oc.userMessageHeadTokens, nc.userMessageHeadTokens);
 
-  diffScalar(out, 'subagent.max_per_session', oldCfg.subagent.maxPerSession, newCfg.subagent.maxPerSession);
   diffScalar(out, 'subagent.max_depth', oldCfg.subagent.maxDepth, newCfg.subagent.maxDepth);
   diffScalar(out, 'subagent.max_steps', oldCfg.subagent.maxSteps, newCfg.subagent.maxSteps);
   diffScalar(out, 'subagent.max_concurrent', oldCfg.subagent.maxConcurrent, newCfg.subagent.maxConcurrent);
+  // retention 在部分测试/旧配置里可能缺省，与 background 一样用 ?? {} 防御，避免空指针
+  const oret = oldCfg.subagent.retention ?? {};
+  const nret = newCfg.subagent.retention ?? {};
+  diffScalar(out, 'subagent.retention.delete_with_parent', oret.deleteWithParent, nret.deleteWithParent);
+  diffScalar(out, 'subagent.retention.max_sessions', oret.maxSessions, nret.maxSessions);
+  diffScalar(out, 'subagent.retention.ttl_days', oret.ttlDays, nret.ttlDays);
 
   const ob = oldCfg.background ?? {};
   const nb = newCfg.background ?? {};
