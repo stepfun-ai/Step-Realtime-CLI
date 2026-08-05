@@ -24,6 +24,12 @@ export interface WorkflowStepState {
 export interface WorkflowPanelState {
   name: string;
   steps: WorkflowStepState[];
+  /**
+   * 动态模式标记（dynamic_workflow）：true 表示步骤不是预先可知的静态列表，
+   * 而是运行时随 phase() 调用逐个追加的阶段序列。此时渲染与 applyStepEvent 走动态分支，
+   * 不按 index 定位（phase 事件 index 恒为 -1）。
+   */
+  dynamic?: boolean;
 }
 
 /** wf-{stepIndex}-{taskIndex} 形式的 sid 解析结果。 */
@@ -74,8 +80,26 @@ export function parseWorkflowInput(input: unknown): WorkflowPanelState | null {
   return { name, steps };
 }
 
-/** 推进步骤状态（start → running / done → done）。 */
+/** 从 dynamic_workflow 的 tool_start input 装配动态阶段面板初始状态（空阶段序列，待 phase 追加）。
+ * dynamic_workflow 的入参是 script 字符串（无 steps 数组），无法预知阶段，故返回 dynamic:true 的空面板。 */
+export function parseDynamicWorkflowInput(input: unknown): WorkflowPanelState | null {
+  if (input === null || typeof input !== 'object') return null;
+  const obj = input as Record<string, unknown>;
+  if (typeof obj.script !== 'string' || obj.script === '') return null;
+  const name = typeof obj.name === 'string' && obj.name !== '' ? obj.name : 'dynamic_workflow';
+  return { name, steps: [], dynamic: true };
+}
+
+/** 推进步骤状态（start → running / done → done）。
+ * phase 分支（dynamic_workflow）：阶段是运行时追加的序列，index 恒 -1 不可用——
+ * 把上一个 running 阶段标 done，再按 title 追加一个新 running 阶段。 */
 export function applyStepEvent(state: WorkflowPanelState, info: WorkflowStepEvent): WorkflowPanelState {
+  if (info.kind === 'phase') {
+    const title = info.title ?? '';
+    const steps = state.steps.map((s) => (s.status === 'running' ? { ...s, status: 'done' as const } : s));
+    steps.push({ kind: 'phase', label: title, status: 'running', members: [] });
+    return { ...state, steps };
+  }
   const steps = state.steps.map((s, i) =>
     i === info.index ? { ...s, status: info.status === 'start' ? ('running' as const) : ('done' as const) } : s,
   );

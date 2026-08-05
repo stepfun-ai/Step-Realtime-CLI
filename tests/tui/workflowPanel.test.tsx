@@ -5,6 +5,7 @@ import {
   WorkflowPanel,
   applyStepEvent,
   applySubagentEvent,
+  parseDynamicWorkflowInput,
   parseWorkflowInput,
   parseWfSid,
   type WorkflowPanelState,
@@ -206,5 +207,62 @@ describe('onStep 接线', () => {
       },
     );
     expect(ids).toEqual(['wf-0-0', 'wf-0-1', 'wf-1-0', 'wf-1-1']);
+  });
+});
+
+describe('dynamic_workflow 动态阶段面板（phase）', () => {
+  it('parseDynamicWorkflowInput：script 入参装配空动态面板，缺 script 返回 null', () => {
+    const wf = parseDynamicWorkflowInput({ name: '调研', script: 'return 1' });
+    expect(wf).toEqual({ name: '调研', steps: [], dynamic: true });
+    // name 缺省回退到工具名
+    expect(parseDynamicWorkflowInput({ script: 'return 1' })?.name).toBe('dynamic_workflow');
+    // 无 script / 非对象 / 空 script：不装配
+    expect(parseDynamicWorkflowInput({ name: 'x' })).toBeNull();
+    expect(parseDynamicWorkflowInput({ script: '' })).toBeNull();
+    expect(parseDynamicWorkflowInput(null)).toBeNull();
+    expect(parseDynamicWorkflowInput({ steps: [] })).toBeNull();
+  });
+
+  it('applyStepEvent phase 分支：逐个追加阶段，前一 running 阶段标 done', () => {
+    let state: WorkflowPanelState = { name: 'd', steps: [], dynamic: true };
+    state = applyStepEvent(state, { index: -1, total: 0, kind: 'phase', status: 'start', title: '侦察' });
+    expect(state.steps).toHaveLength(1);
+    expect(state.steps[0]).toMatchObject({ kind: 'phase', label: '侦察', status: 'running' });
+
+    state = applyStepEvent(state, { index: -1, total: 0, kind: 'phase', status: 'start', title: '汇总' });
+    expect(state.steps).toHaveLength(2);
+    // 第一阶段被标 done，第二阶段 running
+    expect(state.steps[0]?.status).toBe('done');
+    expect(state.steps[1]).toMatchObject({ kind: 'phase', label: '汇总', status: 'running' });
+  });
+
+  it('applyStepEvent 非 phase 事件仍按 index 定位（不影响 workflow 静态路径）', () => {
+    let state: WorkflowPanelState = {
+      name: 'w',
+      steps: [
+        { kind: 'agent', as: 'a', status: 'pending', members: [] },
+        { kind: 'agent', as: 'b', status: 'pending', members: [] },
+      ],
+    };
+    state = applyStepEvent(state, { index: 1, total: 2, kind: 'agent', status: 'start' });
+    expect(state.steps[0]?.status).toBe('pending');
+    expect(state.steps[1]?.status).toBe('running');
+  });
+
+  it('动态面板渲染：phase 阶段行显示 ○/●/✓ 与阶段标题', () => {
+    const state: WorkflowPanelState = {
+      name: 'd',
+      dynamic: true,
+      steps: [
+        { kind: 'phase', label: '侦察', status: 'done', members: [] },
+        { kind: 'phase', label: '汇总', status: 'running', members: [] },
+      ],
+    };
+    const { lastFrame } = render(React.createElement(WorkflowPanel, { state }));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('侦察');
+    expect(frame).toContain('汇总');
+    expect(frame).toContain('✓'); // done
+    expect(frame).toContain('●'); // running
   });
 });
