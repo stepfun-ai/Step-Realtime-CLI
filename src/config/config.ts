@@ -464,14 +464,63 @@ interface TomlConfigShape {
   hooks?: unknown;
 }
 
-/** 从 ~/.step-code/config.toml 读取配置（若存在）。 */
-function loadTomlConfig(): TomlConfigShape {
+/**
+ * 逃生舱环境变量：配置文件语法错误时以内置默认配置启动。
+ *
+ * 为什么必须有这个开关：config.toml 在 home 目录，而用户常用 step-code 自己修改它
+ *（内置 update-config skill 就是干这个的）。若语法错误一律 exit，就出现「起不来 →
+ * 无法用 step-code 修 step-code 的配置」的死锁。设为 1 时整份配置不生效，调用方
+ * 负责持续告知用户（不能悄悄用默认配置跑，那正是本机制要消灭的行为）。
+ */
+export const IGNORE_BAD_CONFIG_ENV = 'STEP_CODE_IGNORE_BAD_CONFIG';
+
+/** 语法错误被逃生舱忽略时的现场信息（整份配置未生效）。 */
+export interface IgnoredBadConfigFile {
+  path: string;
+  message: string;
+}
+
+/**
+ * loadConfig 的启动期诊断结果。
+ *
+ * 这里只交出**原始 TOML 表**，不算警告：警告规则住在 diagnostics.ts，而那个模块要用
+ * 本模块的 PROVIDER_PRESETS / HOOK_EVENTS。让 config.ts 反过来 import 它会形成循环依赖，
+ * 所以分工是——config 负责读取与降级事实，diagnostics 负责规则，cli 负责组合与呈现。
+ */
+export interface ConfigLoadDiagnostics {
+  /** 解析成功的原始顶层表（供 collectConfigWarnings 检查）；被逃生舱放行时为空表。 */
+  rawToml: Record<string, unknown>;
+  /** 存在时表示配置文件解析失败但被逃生舱放行，本次跑的是内置默认配置。 */
+  ignoredBadFile?: IgnoredBadConfigFile;
+}
+
+/** 诊断出口：由调用方（cli.tsx）决定往哪条通道呈现。 */
+export type ConfigDiagnosticsSink = (diagnostics: ConfigLoadDiagnostics) => void;
+
+/**
+ * 从 ~/.step-code/config.toml 读取配置（若存在）。
+ *
+ * 解析失败**抛错**而非返回 {}：静默回落等于「用一份用户从未写过的配置跑」——所有渠道、
+ * 别名、语言、权限模式全部消失，随后的报错（api key 缺失、陌生端点 404）与真实病因
+ * （某一行语法错）之间没有任何可见链条，比启动失败难排查得多。
+ * 文件不存在是正常的零配置场景，照旧返回 {}。
+ * 逃生舱（{@link IGNORE_BAD_CONFIG_ENV}）置 1 时降级为「忽略并记录」，交由调用方告知。
+ */
+function loadTomlConfig(): { toml: TomlConfigShape; ignoredBadFile?: IgnoredBadConfigFile } {
   const tomlPath = join(homedir(), '.step-code', 'config.toml');
-  if (!existsSync(tomlPath)) return {};
+  if (!existsSync(tomlPath)) return { toml: {} };
   try {
-    return parseToml(readFileSync(tomlPath, 'utf8')) as TomlConfigShape;
-  } catch {
-    return {};
+    return { toml: parseToml(readFileSync(tomlPath, 'utf8')) as TomlConfigShape };
+  } catch (e) {
+    const detail = (e as Error).message;
+    if (process.env[IGNORE_BAD_CONFIG_ENV] === '1') {
+      return { toml: {}, ignoredBadFile: { path: tomlPath, message: detail } };
+    }
+    throw new Error(
+      `配置文件解析失败：${tomlPath}\n  ${detail}\n` +
+        `  该文件未生效，为避免用一份你没写过的配置运行，已停止启动。\n` +
+        `  修完可用 step doctor config 校验；若要暂时忽略它以默认配置启动，设 ${IGNORE_BAD_CONFIG_ENV}=1。`,
+    );
   }
 }
 
@@ -976,9 +1025,18 @@ export interface ConfigOverrides {
  * （factory.missingApiKey）；启动展开别名时还会经 {@link resolveModelEntry} 的渠道/别名回落链再解析一次。
  * baseUrl / model：用户显式配置（env/toml/override）永远优先；未配时用所选 provider 预设默认。
  */
-export function loadConfig(cwd: string = process.cwd(), overrides: ConfigOverrides = {}): StepCodeConfig {
+export function loadConfig(
+  cwd: string = process.cwd(),
+  overrides: ConfigOverrides = {},
+  onDiagnostics?: ConfigDiagnosticsSink,
+): StepCodeConfig {
   loadDotEnv(cwd);
-  const toml = loadTomlConfig();
+  const { toml, ignoredBadFile } = loadTomlConfig();
+  if (onDiagnostics !== undefined) {
+    const diagnostics: ConfigLoadDiagnostics = { rawToml: toml as Record<string, unknown> };
+    if (ignoredBadFile !== undefined) diagnostics.ignoredBadFile = ignoredBadFile;
+    onDiagnostics(diagnostics);
+  }
 
   const provider =
     overrides.provider ??

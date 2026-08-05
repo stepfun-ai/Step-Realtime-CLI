@@ -40,8 +40,10 @@ import type { WireEvent } from './agent/wirelog.js';
 import { buildSystemPrompt, subagentListing } from './agent/systemPrompt.js';
 import { loadAgentsMd, DEFAULT_AGENTS_MD_BUDGET_BYTES } from './agent/agentsMd.js';
 import { buildAgentRegistry } from './agent/subagent/registry.js';
-import { loadConfig, resolveModelEntry, type StepCodeConfig } from './config/config.js';
+import { loadConfig, resolveModelEntry, type ConfigLoadDiagnostics, type StepCodeConfig } from './config/config.js';
 import { runDoctorConfig } from './config/doctor.js';
+import { collectConfigWarnings } from './config/diagnostics.js';
+import { renderConfigDiagnostics } from './tui/configWarningText.js';
 import { setLocale, t } from './i18n.js';
 import { discoverPlugins, defaultPluginsDir } from './plugin/manager.js';
 import { pluginsStatePath, readPluginsState } from './plugin/manage.js';
@@ -137,8 +139,12 @@ if (program.args[0] === 'doctor') {
 }
 
 let config: StepCodeConfig;
+/** 启动自检的原始素材：loadConfig 内部解析 TOML 时回调带出（零重复读文件/解析）。 */
+let configDiagnostics: ConfigLoadDiagnostics | undefined;
 try {
-  config = loadConfig(cwd, { provider: opts.provider, model: opts.model });
+  config = loadConfig(cwd, { provider: opts.provider, model: opts.model }, (d) => {
+    configDiagnostics = d;
+  });
 } catch (e) {
   logError((e as Error).message);
   process.exit(1);
@@ -156,6 +162,19 @@ process.env.NODE_USE_ENV_PROXY ??= '1';
 // 界面语言：loadConfig 之后立即生效（此后所有给人看的输出走 t() 查表）。
 // commander 帮助定义在模块顶层、早于本行，v1 固定中文（已知限制）。
 setLocale(config.language ?? 'zh');
+
+// 配置启动自检：把 loadConfig 静默跳过/降级的项摆到用户面前（正常配置下零输出）。
+// 规则与 `step doctor config` 共用 collectConfigWarnings，两个入口不会给出不同结论。
+// 必须放在 setLocale 之后——文案走 i18n 查表。呈现通道按运行模式分流（见下方两处）：
+// 交互 TUI 走 App 转录区 note（Ink 独占终端，绝不写 stderr/stdout），非交互走 stderr。
+const configWarnings = configDiagnostics !== undefined ? collectConfigWarnings(configDiagnostics.rawToml) : [];
+const ignoredBadConfig = configDiagnostics?.ignoredBadFile;
+// 非交互模式（-p / --reflect / stream-json）的呈现通道：只写 stderr。stdout 是数据/协议
+// 通道，混入诊断会破坏下游解析。交互模式不在此处输出（Ink 独占终端），改由 App 呈现。
+if (opts.print !== undefined || opts.reflect === true) {
+  const diagText = renderConfigDiagnostics(configWarnings, ignoredBadConfig);
+  if (diagText !== undefined) process.stderr.write(`${diagText}\n`);
+}
 
 // 顶层 `sessions` 子命令（命令行管理，不进 TUI）：list / show <id> / delete <id> / rename <id> <name>。用位置参数检测。
 if (program.args[0] === 'sessions') {
@@ -888,6 +907,7 @@ if (opts.reflect === true) {
       hookEngineRef={hookEngineRef}
       reloadConfig={reloadConfig}
       pluginCommands={plugins.flatMap((p) => p.commands)}
+      configStartupNotice={renderConfigDiagnostics(configWarnings, ignoredBadConfig)}
       onExitInfo={(id, hasContent) => {
         exitInfo = { id, hasContent };
       }}
