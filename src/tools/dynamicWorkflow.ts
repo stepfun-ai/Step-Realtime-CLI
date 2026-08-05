@@ -79,22 +79,28 @@ function formatScriptList(scripts: ScriptInfo[]): string {
 
 /**
  * 动态工作流：模型现写一段 JS 编排脚本，在零能力 wasm 沙箱（quickjs）里执行。
- * 与声明式 workflow 工具的分工：简单批量任务（四个步骤模板能填出来的）用 workflow；
- * 需要条件分支、循环、由中间数据动态决定编排时用 dynamic_workflow。
+ * step-code 的编排收敛为两层：spawn_agent（直接派子 agent，简单批量用它）+
+ * 本工具（写 JS 脚本，需要条件分支、循环、由中间数据动态决定编排时用）。
+ * 循环（loop-until-done）与分支无需专门原语——用原生 for/while/if 表达即可。
  */
 export const dynamicWorkflowTool: ToolDef<z.infer<typeof schema>> = {
   name: 'dynamic_workflow',
   description:
     '动态工作流：用一段现写的 JS 脚本动态编排多个子 agent（quickjs 沙箱执行，脚本只能调 agent/parallel/pipeline/phase/budget 原语，无文件/网络权限）。' +
     '适合需要条件分支、循环、根据中间结果动态决定后续编排的复杂任务；中间结果不占主上下文，只回最终 return 的报告（≤32KB）。' +
-    '简单的固定批量任务（并行调查后综合、对列表逐项处理）优先用声明式 workflow 工具，不用本工具。' +
+    '简单的固定批量任务（并行调查后综合、对列表逐项处理）优先直接发多个 spawn_agent，不必写脚本。' +
+    '\n\n循环与分支无需专门原语——用原生 for/while/if 表达。loop-until-done（循环到条件满足）写法：' +
+    'while (!done) { 派 agent 处理/验证; 根据结果更新 done }，停止条件必须显式可判（「无新发现/无新错误/全部归因」），' +
+    '并设硬上限防死循环（如 for (let i = 0; i < 8 && !done; i++)，同时受 max_agents 与 budget() 兜底）。' +
     '\n\n示例：' +
     '\n① 无依赖任务 fan-out（必须 parallel，不要顺序 await）：' +
     'const [a, b, c] = await parallel([() => agent("调查X"), () => agent("调查Y"), () => agent("调查Z")]);' +
     'const ok = [a, b, c].filter(Boolean); return "综合:" + ok.join(";");' +
     '\n② pipeline 多阶段：return await pipeline(topics, (t) => agent("调研:" + t), (r) => agent("成文:" + r));' +
     '\n③ 条件分支：const pre = await agent("预检"); if (pre === null || pre.includes("不适用")) return "终止"; return await agent("深入:" + pre);' +
-    '\n④ 类型化中间结果（schema + fan-out，下游直接取字段）：' +
+    '\n④ 评审闭环（loop-until-done：写→审→改，最多 N 轮、通过提前停）：' +
+    'let draft = await agent("写初稿"); for (let i = 0; i < 5; i++) { const review = await agent("按标准审查，通过则回复 PASS，否则给修改意见:" + draft); if (review !== null && review.includes("PASS")) break; draft = await agent("按意见改:" + review + "原文:" + draft); } return draft;' +
+    '\n⑤ 类型化中间结果（schema + fan-out，下游直接取字段）：' +
     'const S = { type: "object", properties: { topic: {type:"string"}, points: {type:"array", items:{type:"string"}} }, required: ["topic","points"] };' +
     'const rs = (await parallel(items.map((it) => () => agent("调研:" + it, { schema: S })))).filter(Boolean);' +
     'return rs.map((r) => r.topic + ":" + r.points.join("/")).join("\n");' +
