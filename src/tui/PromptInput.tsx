@@ -1,6 +1,7 @@
 import { Box, Text, useInput, usePaste } from 'ink';
 import { useRef, useState } from 'react';
-import { SLASH_COMMANDS, type SlashCommand } from './commands.js';
+import { type SlashCommand } from './commands.js';
+import { computeCompletions, matchCommandNames, type CompletionContext } from './completions.js';
 import { displayWidth } from './liveBudget.js';
 import { initialNavState, navigateHistory } from '../session/inputHistory.js';
 import { insertText, normalizePastedText, resolveEditAction } from './promptEdit.js';
@@ -41,6 +42,7 @@ export function PromptInput({
   exitPrimed = false,
   onRecallQueued,
   pasteStore,
+  completionCtx,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -59,6 +61,8 @@ export function PromptInput({
   onRecallQueued?: () => string | undefined;
   /** 超长粘贴折叠登记表（可选）：挂上后超阈值粘贴折叠为占位符，提交时由调用方还原。 */
   pasteStore?: PasteStore;
+  /** 补全上下文（模型别名表、思考档位、@ 文件索引）。缺省只有命令名补全。 */
+  completionCtx?: CompletionContext;
 }): React.ReactElement {
   const [selIdx, setSelIdx] = useState(0);
   // 历史导航游标（不参与渲染，用 ref 避免 useInput 闭包读到陈旧值）。
@@ -84,8 +88,9 @@ export function PromptInput({
     selfChangeRef.current = null;
   }
 
-  // 斜杠命令补全：输入以 / 开头且无空格时，过滤匹配命令。
-  const matches = matchSlashCommands(value);
+  // 统一补全：命令名（/ 无空格）、命令参数（/cmd 含空格）、@ 文件引用。
+  // computeCompletions 收敛三类候选为 CompletionItem（kind/display/insertText/description）。
+  const matches = computeCompletions(value, completionCtx ?? {});
   const menuVisible = matches.length > 0 && !menuSuppressedRef.current;
 
   // 弹层不可见时，↑↓ 做 shell 式输入历史回溯（配 bash 风格草稿暂存）。
@@ -128,7 +133,7 @@ export function PromptInput({
         setSelIdx((i) => (i + 1) % matches.length);
       } else if (key.tab) {
         const c = matches[Math.min(selIdx, matches.length - 1)];
-        if (c !== undefined) onChange(`/${c.name} `);
+        if (c !== undefined) onChange(c.insertText);
       } else if (key.escape) {
         onChange('');
       }
@@ -136,12 +141,13 @@ export function PromptInput({
     { isActive: menuVisible },
   );
 
-  // 弹层可见时 Enter 直接执行选中命令（不透传给输入框）
+  // 弹层可见时 Enter 直接执行选中项（不透传给输入框）：
+  // command 去尾空格提交 /name；argument/file 提交补全后的完整文本（insertText 去尾空格）。
   const handleSubmit = (v: string): void => {
     if (menuVisible) {
       const c = matches[Math.min(selIdx, matches.length - 1)];
       if (c !== undefined) {
-        onSubmit(`/${c.name}`);
+        onSubmit(c.insertText.trimEnd());
         return;
       }
     }
@@ -209,12 +215,19 @@ export function PromptInput({
         <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
           {matches.slice(menuStart, menuStart + MENU_WINDOW).map((c, i) => {
             const selected = menuStart + i === selIdx;
+            // command 的 description 是 i18n key（cmd.*）需 t() 查表；
+            // argument/file 的 description 已是普通文本，直接显示。
+            const desc = c.kind === 'command' && c.description !== undefined ? t(c.description) : c.description ?? '';
             return (
-              <Text key={c.name} color={selected ? 'cyan' : 'gray'} bold={selected} wrap="truncate">
+              <Text key={`${c.kind}:${c.display}`} color={selected ? 'cyan' : 'gray'} bold={selected} wrap="truncate">
                 {selected ? '› ' : '  '}
-                <Text color={selected ? 'cyan' : 'white'}>/{c.name}</Text>
-                {'  '}
-                <Text color="gray">{t(c.describe)}</Text>
+                <Text color={selected ? 'cyan' : 'white'}>{c.display}</Text>
+                {desc !== '' ? (
+                  <>
+                    {'  '}
+                    <Text color="gray">{desc}</Text>
+                  </>
+                ) : null}
               </Text>
             );
           })}
@@ -248,40 +261,11 @@ export function PromptInput({
  *    覆盖 cp→compact、se→sessions 这类缩写。
  * 结果按「前缀命中 > 子序列命中」排序，同层按注册序。
  */
-/**
- * 子序列匹配：query 的字符按顺序出现在 str 中即可，不需连续。
- * 额外约束：每个匹配字符在 str 中的位置不得超过 len(query) * 2，
- * 防止长跨度误匹配（如 /re 命中 provider 的 r→e 跨度 5）。
- */
-function isSubsequence(query: string, str: string): boolean {
-  if (query.length === 0) return true;
-  const limit = query.length * 2;
-  let qi = 0;
-  for (let i = 0; i < str.length && qi < query.length; i++) {
-    if (str[i] === query[qi] && i <= limit) qi++;
-  }
-  return qi === query.length;
-}
-
 export function matchSlashCommands(value: string): SlashCommand[] {
   const query = value.startsWith('/') && !/\s/.test(value) ? value.slice(1).toLowerCase() : null;
   if (query === null) return [];
-  const q = query.toLowerCase();
-  // 仅 2 字符查询启用子序列回退（覆盖 cp→compact 这类缩写）；≥3 字符前缀匹配已足够精确
-  const isAbbrev = q.length === 2;
-  const scored = SLASH_COMMANDS.map((c) => {
-    const name = c.name.toLowerCase();
-    const aliases = (c.aliases ?? []).map((a) => a.toLowerCase());
-    const allStrings = [name, ...aliases];
-    const prefixHit = allStrings.some((s) => s.startsWith(q));
-    const seqHit = isAbbrev && allStrings.some((s) => isSubsequence(q, s));
-    const rank = prefixHit ? 0 : seqHit ? 1 : 2;
-    return { cmd: c, rank };
-  })
-    .filter(({ rank }) => rank < 2)
-    .sort((a, b) => a.rank - b.rank)
-    .map(({ cmd }) => cmd);
-  return scored;
+  // 委托 completions 的命令名匹配（同一语义），避免与参数/文件补全的引擎逻辑漂移
+  return matchCommandNames(query);
 }
 
 export interface PromptRowOptions {
@@ -303,8 +287,8 @@ export interface PromptRowOptions {
  * 注：历史回溯抑制菜单期间（menuSuppressed，App 不可知）此处仍把菜单行计入——
  * chrome 高估只压缩动态区视口，是滚动预算的安全方向，且回溯浏览是瞬态。
  */
-export function computePromptRows(value: string, opts: PromptRowOptions): number {
-  const matches = matchSlashCommands(value);
+export function computePromptRows(value: string, opts: PromptRowOptions, completionCtx?: CompletionContext): number {
+  const matches = computeCompletions(value, completionCtx ?? {});
   const menuRows =
     matches.length > 0 ? 2 + Math.min(matches.length, MENU_WINDOW) + (matches.length > MENU_WINDOW ? 1 : 0) : 0;
   // 输入框内容区可用宽度：边框 2 + 内边距 2 + 前缀（› + 空格）2

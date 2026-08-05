@@ -1,17 +1,54 @@
 import { t } from '../i18n.js';
 
+/** 参数补全的注入上下文（避免 commands 直接依赖 config 结构）。 */
+export interface ArgumentCompletionContext {
+  models: Record<string, { model?: string; displayName?: string }>;
+  thinkChoices: readonly string[];
+}
+
+/** 一个参数补全候选。 */
+export interface ArgumentCompletion {
+  /** 补全进输入框的值。 */
+  value: string;
+  /** 次要说明。 */
+  description?: string;
+}
+
 /** 一条斜杠命令的元信息。describe 为 i18n key（cmd.*），渲染时走 t() 查表。 */
 export interface SlashCommand {
   name: string;
   aliases?: string[];
   describe: string;
+  /** 参数补全：输入 `/<name> <partial>` 时给出候选。缺省表示该命令无参数补全。 */
+  getArgumentCompletions?: (partial: string, ctx: ArgumentCompletionContext) => ArgumentCompletion[];
 }
 
 /** 已注册的斜杠命令。实际行为在 App 里分发。 */
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'help', aliases: ['?'], describe: 'cmd.help' },
-  { name: 'model', describe: 'cmd.model' },
-  { name: 'think', describe: 'cmd.think' },
+  {
+    name: 'model',
+    describe: 'cmd.model',
+    getArgumentCompletions: (partial, ctx) => {
+      const q = partial.toLowerCase();
+      return Object.entries(ctx.models)
+        .filter(([alias, entry]) => q === '' || alias.toLowerCase().includes(q) || (entry.model ?? '').toLowerCase().includes(q))
+        .map(([alias, entry]) => ({
+          value: alias,
+          description: entry.displayName ?? entry.model,
+        }));
+    },
+  },
+  {
+    name: 'think',
+    describe: 'cmd.think',
+    getArgumentCompletions: (partial, ctx) => {
+      const q = partial.toLowerCase();
+      return ctx.thinkChoices
+        .filter((c) => q === '' || c.toLowerCase().startsWith(q))
+        .map((c) => ({ value: c }));
+    },
+  },
   { name: 'permission', describe: 'cmd.permission' },
   { name: 'yolo', describe: 'cmd.yolo' },
   { name: 'auto', describe: 'cmd.auto' },
