@@ -145,6 +145,32 @@ export type WireEvent =
       taskId: string;
       status: string;
       notificationId: string;
+    }
+  | {
+      /**
+       * 请求级异常（空响应/重试/断连错误）的审计记录。纯审计、不参与重放状态迁移——
+       * 它解决的是「空响应/断连发生时 wire 日志完全无踪迹、事后无法排查」的盲区：
+       * 此前这类轮次没有任何 model.usage（请求失败无 usage）也无 error 事件落盘，
+       * 调试包里看不到那轮到底发生了什么。诊断上下文凭空响应分型（stop_reason /
+       * hadReasoning / outputTokens/maxTokens 比值）定位是预算烧光还是正常结束。
+       */
+      type: 'turn.issue';
+      ts: string;
+      /** 异常类别：empty（空响应）/ retry（重试）/ error（不可重试错误）。 */
+      kind: 'empty' | 'retry' | 'error';
+      /** 人类可读摘要（errorMessageWithAdvice 的同源文案）。 */
+      message: string;
+      /** 重试第几次（kind=retry 时有值）。 */
+      attempt?: number;
+      /** 重试间隔 ms（kind=retry 时有值）。 */
+      delayMs?: number;
+      /** 空响应诊断上下文（kind=empty 时有值）。 */
+      stopReason?: string | null;
+      hadReasoning?: boolean;
+      outputTokens?: number;
+      maxTokens?: number;
+      model?: string;
+      provider?: string;
     };
 
 /**
@@ -222,6 +248,9 @@ export function applyWireEvent(state: WireReplayState, event: WireEvent): void {
       state.deliveredNotifications.add(
         notifyDedupKey(event.taskId, event.status, event.notificationId),
       );
+      break;
+    case 'turn.issue':
+      // 纯审计事件：不参与状态迁移（空响应/重试/错误不影响 resume 的会话重建）
       break;
   }
 }

@@ -324,6 +324,8 @@ export async function* runTurn(
         delayMs: delay,
         // 吐字后断连（emittedText）：屏幕上有残文，标记 hadPartial 让 UI 撤回残文气泡（B 方案）。
         hadPartial: emittedText,
+        // cause 供 wire 落盘定位成因（空响应带诊断上下文，断连带网络 code）；UI 不消费。
+        cause: e,
         message: emittedText
           ? t('turn.retryAfterPartial', { delay: Math.round(delay), attempt, max: RETRY_MAX_ATTEMPTS - 1 })
           : t('turn.retry', { delay: Math.round(delay), attempt, max: RETRY_MAX_ATTEMPTS - 1 }),

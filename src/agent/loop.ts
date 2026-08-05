@@ -15,6 +15,7 @@ import {
   usageTotalTokens,
   type CompactionThresholds,
 } from './compaction/compact.js';
+import { EmptyResponseError } from '../provider/retry.js';
 import type { AgentEvent } from './events.js';
 import { type LoopHooks, resolveContinuation } from './hooks.js';
 import { type StoredMessage, stored } from './message.js';
@@ -394,6 +395,44 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
     const turn = runTurn({ provider, system, tools, ctx, messages, hooks, signal, allowedTools: allowedSet, model, thinking, providerName });
     let step = await turn.next();
     while (!step.done) {
+      // 请求级异常落盘（审计）：retry / error 事件在 wire 留下踪迹，否则空响应/断连那轮
+      // 在调试包里完全无记录（无 model.usage 也无 error），事后无法排查。error 的 cause
+      // 若是 EmptyResponseError，带诊断上下文（stop_reason/hadReasoning/token 比值）便于定位。
+      const ev = step.value;
+      if (ev.type === 'retry') {
+        // 重试落盘：cause 若是 EmptyResponseError，带空响应诊断上下文（能看到是空响应触发的重试，
+        // 及其 stop_reason/hadReasoning/token 比值）；否则只记通用 retry。
+        const retryCtx = ev.cause instanceof EmptyResponseError ? ev.cause.context : undefined;
+        opts.onWireEvent?.({
+          type: 'turn.issue',
+          ts: new Date().toISOString(),
+          kind: retryCtx !== undefined ? 'empty' : 'retry',
+          message: ev.message,
+          attempt: ev.attempt,
+          delayMs: ev.delayMs,
+          ...(retryCtx?.stopReason !== undefined ? { stopReason: retryCtx.stopReason } : {}),
+          ...(retryCtx?.hadReasoning !== undefined ? { hadReasoning: retryCtx.hadReasoning } : {}),
+          ...(retryCtx?.outputTokens !== undefined ? { outputTokens: retryCtx.outputTokens } : {}),
+          ...(retryCtx?.maxTokens !== undefined ? { maxTokens: retryCtx.maxTokens } : {}),
+          ...(retryCtx?.model !== undefined ? { model: retryCtx.model } : model !== undefined ? { model } : {}),
+          ...(retryCtx?.provider !== undefined ? { provider: retryCtx.provider } : {}),
+        });
+      } else if (ev.type === 'error') {
+        const cause = ev.cause;
+        const emptyCtx = cause instanceof EmptyResponseError ? cause.context : undefined;
+        opts.onWireEvent?.({
+          type: 'turn.issue',
+          ts: new Date().toISOString(),
+          kind: emptyCtx !== undefined ? 'empty' : 'error',
+          message: ev.message,
+          ...(emptyCtx?.stopReason !== undefined ? { stopReason: emptyCtx.stopReason } : {}),
+          ...(emptyCtx?.hadReasoning !== undefined ? { hadReasoning: emptyCtx.hadReasoning } : {}),
+          ...(emptyCtx?.outputTokens !== undefined ? { outputTokens: emptyCtx.outputTokens } : {}),
+          ...(emptyCtx?.maxTokens !== undefined ? { maxTokens: emptyCtx.maxTokens } : {}),
+          ...(emptyCtx?.model !== undefined ? { model: emptyCtx.model } : model !== undefined ? { model } : {}),
+          ...(emptyCtx?.provider !== undefined ? { provider: emptyCtx.provider } : {}),
+        });
+      }
       yield step.value;
       step = await turn.next();
     }
