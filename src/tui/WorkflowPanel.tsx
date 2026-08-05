@@ -166,26 +166,17 @@ export function WorkflowPanel({ state }: { state: WorkflowPanelState }): React.R
             {(s.kind === 'parallel' || s.kind === 'fanout') && s.members.length > 0
               ? s.members.map((m, j) => {
                   const branch = j === s.members.length - 1 ? '└─' : '├─';
-                  const mMark =
-                    m.status === 'done' ? '✓' : m.status === 'error' ? '✗' : m.status === 'running' ? '⠶' : '○';
+                  // 状态圆点（●）与 AgentGroup 对齐：黄=运行中、绿=已完成、红=失败、灰=排队中。
                   const mColor =
-                    m.status === 'done' ? 'green' : m.status === 'error' ? 'red' : m.status === 'running' ? 'cyan' : 'gray';
-                  const mStatus =
-                    m.status === 'done'
-                      ? t('agentGroup.status.done')
-                      : m.status === 'error'
-                        ? t('agentGroup.status.error')
-                        : m.status === 'running'
-                          ? t('agentGroup.status.running')
-                          : t('agentGroup.status.queued');
+                    m.status === 'done' ? 'green' : m.status === 'error' ? 'red' : m.status === 'running' ? 'yellow' : 'gray';
                   return (
                     <Box key={j} flexDirection="column">
                       <Text>
                         {'  │   '}
                         {branch} <Text color="white">{m.type}</Text>
                         {/* 无 tick：运行中时长显示最近一次事件触发渲染时的值，终态为定格值 */}
-                        <Text color="gray"> · {m.description} · {formatSubagentStats(m, Date.now())} · </Text>
-                        <Text color={mColor}>{mMark} {mStatus}</Text>
+                        <Text color="gray"> · {m.description} · {formatSubagentStats(m, Date.now())} </Text>
+                        <Text color={mColor}>●</Text>
                       </Text>
                       {m.status === 'running' && m.activity !== undefined && m.activity !== '' ? (
                         <Text color="gray">{'        '}{m.activity}</Text>
