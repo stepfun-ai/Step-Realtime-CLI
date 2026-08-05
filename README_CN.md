@@ -17,7 +17,7 @@ Step Code 是一个终端编码 agent CLI，核心是一个 agent 主循环：�
 
 核心能力：
 - **三档权限 + 计划模式**：管住「改什么之前先说清楚」
-- **子 agent、声明式工作流与 JS 动态工作流**：大任务拆开并行执行
+- **子 agent 与 JS 动态工作流**：大任务拆开并行执行
 - **自主目标**：跨回合持续推进同一个目标
 - **上下文压缩 + 会话持久化**：历史完整保留，数天后仍可续接
 - **技能、插件与 MCP**：外部能力按需懒加载
@@ -49,7 +49,7 @@ step
 | [配置参考](./docs/zh/configuration.md) | config.toml 全字段、多协议渠道与模型别名、环境变量、数据目录 |
 | [交互使用](./docs/zh/interactive.md) | TUI 界面、斜杠命令、快捷键、权限三档、计划模式、切模型与渠道 |
 | [工具集](./docs/zh/tools.md) | 全部内置工具的参数与行为边界、并行执行与结果回灌机制 |
-| [子 agent 与自动化](./docs/zh/agents.md) | spawn_agent、工作流、自主目标、定时任务、后台任务 |
+| [子 agent 与自动化](./docs/zh/agents.md) | spawn_agent、dynamic_workflow、自主目标、定时任务、后台任务 |
 | [会话管理](./docs/zh/sessions.md) | 持久化、续接与恢复、分叉、上下文压缩、回顾、非交互输出 |
 | [技能、插件与 MCP](./docs/zh/skills-and-mcp.md) | SKILL.md 格式、加载层级、plugin、MCP 接入 |
 | [hooks 机制](./docs/zh/hooks.md) | 五个生命周期事件点执行 shell 命令 |
