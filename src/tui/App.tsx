@@ -63,7 +63,7 @@ import { formatElapsed } from './elapsed.js';
 import { STATUS_BAR_ROWS } from './LiveViewport.js';
 import { computeLiveBudget, logRenderBudget, displayWidth, wrappedRows } from './liveBudget.js';
 import { MessageItem, MessageList, ThinkingPreview, THINKING_PREVIEW_LINES, appendStreamText, countSettledItems, removePartialAssistant } from './MessageList.js';
-import { ModelPicker, type ModelPickerItem } from './ModelPicker.js';
+import { buildModelPickerItems, ModelPicker, type ModelPickerItem } from './ModelPicker.js';
 import { StreamBuffer } from './streamBuffer.js';
 import { ProviderWizard, type ProviderWizardResult } from './ProviderWizard.js';
 import { ProviderManager, type ProviderManagerRow } from './ProviderManager.js';
@@ -302,8 +302,11 @@ export function App({
   const compactionBindingRef = useRef(resolveCompactionBinding(config, compactionProviderCache.current));
   // 当前模型的别名绑定：/model 别名切换成功记别名、裸 id 切换置 null（/provider 切换亦置 null——
   // 别名绑定已断）；/resume 经 applyModelAlias 反查路径同步维护。/reload 据此决定 provider 重建策略。
+  // 初始化取 config.model 指针本身是否命中别名表：指针存的是别名（用户选择），天然唯一。
+  // 不能用「真实 id 反查别名」——多个别名可指向同一 id（step37/step37-plan 同为 step-3.7-flash），
+  // find 会任取第一个，未必是实际激活的那个。config.model 是裸 id（不在别名表）时初始化为 null。
   const currentModelAliasRef = useRef<string | null>(
-    Object.keys(config.models ?? {}).find((a) => (config.models?.[a]?.model ?? a) === initialModel) ?? null,
+    config.models !== undefined && Object.hasOwn(config.models, config.model) ? config.model : null,
   );
   // plan 模式的 ref（权限守卫与 /plan 切换读它）：与 planMode state 同源于会话快照，
   // 否则恢复会话时 UI 显示 plan 而守卫仍按非 plan 放行工具。
@@ -2726,14 +2729,12 @@ export function App({
   // 动态区只留在途尾部 + 交互元素，高度被压住，避免终端超高时走整屏清屏重写路径（闪烁/残行/无法回滚）。
   // ink 只认一个 static 节点，因此全树仅此处一个 <Static>，WelcomeBox 作为首条挂进去。
   const settledCount = countSettledItems(items, busy);
-  // 模型选择器候选清单：左列 displayName ?? 别名，右列渠道名（entry.provider ?? 顶层 provider），
-  // 当前项按「别名解析出的真实 id === 当前 model」判定（与 /model 切换后的 model state 对齐）。
-  const modelPickerItems: ModelPickerItem[] = Object.entries(configRef.current.models ?? {}).map(([alias, entry]) => ({
-    alias,
-    label: entry.displayName ?? alias,
-    channel: entry.provider ?? configRef.current.provider,
-    current: (entry.model ?? alias) === model,
-  }));
+  // 模型选择器候选清单：构造逻辑（含「当前」按别名判定）抽在 buildModelPickerItems，便于测试。
+  const modelPickerItems: ModelPickerItem[] = buildModelPickerItems(
+    configRef.current.models ?? {},
+    currentModelAliasRef.current,
+    configRef.current.provider,
+  );
   // 渠道管理面板行：[providers] 自定义渠道（按文件顺序）在前，内置预设独有行在后；
   // 自定义渠道与预设同名时自定义优先（遮蔽预设），预设独有行标「内置」；别名数按 entry.provider === id 统计。
   const providerManagerRows: ProviderManagerRow[] = (() => {
