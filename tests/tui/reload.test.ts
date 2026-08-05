@@ -11,7 +11,7 @@ function makeCfg(overrides: Partial<StepCodeConfig> = {}): StepCodeConfig {
     model: 'step-3.7-flash',
     maxContextSize: 262_144,
     maxTokens: 65_536,
-    subagent: { maxPerSession: 10, maxDepth: 1, maxSteps: 100, maxConcurrent: 4 },
+    subagent: { maxDepth: 1, maxSteps: 100, maxConcurrent: 4, retention: { deleteWithParent: true, maxSessions: 0, ttlDays: 0 } },
     compaction: { triggerRatio: 0.85, reservedTokens: 32_000 },
     thinking: { enabled: false, levels: { low: 1024, medium: 4096, high: 32_000 } },
     ...overrides,
@@ -112,6 +112,23 @@ describe('diffConfig', () => {
     expect(changes).toEqual([
       { kind: 'changed', path: 'hooks', oldText: '0', newText: '1', restart: undefined },
     ]);
+  });
+
+  it('subagent.retention 三字段变更被列出', () => {
+    const oldCfg = makeCfg();
+    const newCfg = makeCfg({
+      subagent: {
+        maxDepth: 1,
+        maxSteps: 100,
+        maxConcurrent: 4,
+        retention: { deleteWithParent: false, maxSessions: 200, ttlDays: 30 },
+      },
+    });
+    const changes = diffConfig(oldCfg, newCfg);
+    const paths = changes.map((c) => c.path);
+    expect(paths).toContain('subagent.retention.delete_with_parent');
+    expect(paths).toContain('subagent.retention.max_sessions');
+    expect(paths).toContain('subagent.retention.ttl_days');
   });
 });
 
