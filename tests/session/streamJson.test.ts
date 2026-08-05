@@ -111,11 +111,14 @@ describe('顶层异常转结构化 error 事件（对照 Claude 的错误提升�
    * stream-json 消费方只拿到半截 JSON 流 + stderr 堆栈，收不到可判别的错误事件，
    * 且会话落盘与 resume 提示被整个跳过。
    */
-  it('Error 抛出物取 message', () => {
-    expect(errorEventFromThrown(new Error('mid-stream failure'))).toEqual({
-      type: 'error',
-      message: 'mid-stream failure',
-    });
+  it('Error 抛出物取 message，并保留 cause 供子 agent runner 识别 429（对内元数据）', () => {
+    const err = new Error('mid-stream failure');
+    const ev = errorEventFromThrown(err);
+    expect(ev.type).toBe('error');
+    expect(ev.message).toBe('mid-stream failure');
+    // 循环兜底路径的异常也要带 cause：子 agent runner 靠它识别 429 做重排队。
+    // 对外 stream-json 由 agentEventLine 剥离（见下方「cause 剥离」describe），不泄漏认证。
+    expect(ev.cause).toBe(err);
   });
 
   it('非 Error 抛出物（字符串/对象/undefined）一律 String 化，message 恒为字符串', () => {
