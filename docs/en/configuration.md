@@ -260,11 +260,23 @@ Complex tasks (long-document analysis, strict JSON structured output, multimodal
 
 > **A historical correction**: this section previously stated that lowering the thinking level does not help, citing measurements that showed near-identical thinking length across levels. That conclusion came from a bug on our side — the level parameter was being sent in the wrong field, the server silently ignored it, and every level therefore ran at the server's default depth. Once the field was corrected, levels take real effect.
 
+### `[continuation]`: auto-continue on output truncation
+
+```toml
+[continuation]
+max_auto_continues = 3  # default 3; set to 0 to disable auto-continue
+```
+
+| Field | Default | Range | Description |
+|------|------|------|------|
+| `max_auto_continues` | `3` | 0–100 | Number of automatic continuation turns after the output is truncated by `max_tokens`; `0` disables auto-continue and falls back to manual 「continue」 |
+
+Auto-continue only applies when the response body is cut off mid-output. It does not fire when thinking exhausts the budget with zero answer tokens (that is a budget-configuration problem, not something continuation can fix). Each continuation turn passes through the same loop guard that halts on zero progress, full repetition, full rewrites, periodic regurgitation, or tortoise-speed cycles.
+
 ### `[subagent]`: sub-agent limits
 
 | Field | Default | Range | Description |
 |------|------|------|------|
-| `max_per_session` | 10 | 1–50 | Cumulative spawn limit per session |
 | `max_depth` | 1 | 1–3 | Maximum nesting depth |
 | `max_steps` | 100 | 1–1000 | Maximum internal round trips inside a sub-agent |
 | `max_concurrent` | 4 | 1–16 | Concurrency limit for parallel sub-agents |
