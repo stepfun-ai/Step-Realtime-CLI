@@ -3,13 +3,18 @@ import { mapStepChatFinishReason } from '../../src/provider/step/stepCommon.js';
 import { describe, expect, it } from 'vitest';
 import {
   httpErrorToApiError,
+  MAX_ACCUMULATED_CHARS,
   mapUsage,
   messagesToOpenAi,
+  OpenAiChatAccumulator,
   type OpenAiMessage,
   parseToolArguments,
   toolsToOpenAi,
+  withStreamIdleWatchdog,
 } from '../../src/provider/openaiCommon.js';
 import { OpenAiChatProvider } from '../../src/provider/openaiChat.js';
+import { isRetryableError, StreamIdleTimeoutError } from '../../src/provider/retry.js';
+import { normalizeHistory } from '../../src/provider/projector.js';
 
 /** 把若干 SSE data 行拼成一个 Response body 的字节流（模拟 OpenAI 流式响应）。 */
 function sseResponse(lines: string[], status = 200): Response {
@@ -122,6 +127,123 @@ describe('messagesToOpenAi 请求翻译', () => {
     ];
     const out = messagesToOpenAi('', messages);
     expect((out[0] as OpenAiMessage).content).toBe('答复');
+  });
+
+  it('混合 user 消息（文本 + tool_result）→ tool 消息在前、user 文本在后', () => {
+    // 某些严格网关要求 tool 消息紧跟 assistant(tool_calls)，
+    // 中间插一条 user 文本即 400「tool_calls must be followed by tool messages」。
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call_1', name: 'read_file', input: {} }],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '补充一句' },
+          { type: 'tool_result', tool_use_id: 'call_1', content: '文件内容' },
+        ],
+      },
+    ];
+    const out = messagesToOpenAi('', messages);
+    expect(out).toEqual([
+      { role: 'assistant', content: null, tool_calls: [
+        { id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{}' } },
+      ] },
+      { role: 'tool', tool_call_id: 'call_1', content: '文件内容' },
+      { role: 'user', content: '补充一句' },
+    ]);
+  });
+
+  it('悬空 tool_use 经 normalizeHistory 修复后，wire 上 assistant.tool_calls 后紧跟 tool 消息', () => {
+    // 端到端顺序断言：整形层把合成 tool_result 前插进带文本的 user 消息，
+    // 翻译层若把文本发在 tool 前面，修复会在 wire 上被抵消（2026-08-04 严格网关 400 事故）。
+    const messages: Anthropic.MessageParam[] = [
+      { role: 'user', content: '问' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'read_file:202', name: 'read_file', input: {} }],
+      },
+      { role: 'user', content: '继续完成任务' },
+    ];
+    const out = messagesToOpenAi('', normalizeHistory(messages));
+    const assistantIdx = out.findIndex((m) => m.role === 'assistant');
+    expect(assistantIdx).toBeGreaterThanOrEqual(0);
+    const next = out[assistantIdx + 1] as OpenAiMessage;
+    expect(next.role).toBe('tool');
+    expect(next.tool_call_id).toBe('read_file:202');
+  });
+});
+
+describe('OpenAiChatAccumulator 累积保险丝', () => {
+  it('累积字符超过 MAX_ACCUMULATED_CHARS 即抛错中止（防上游洪流撑爆堆）', () => {
+    // 2026-08-04 事故：两条在途流 15 分钟未结束，堆涨到 4GB 触发 V8 OOM。
+    const acc = new OpenAiChatAccumulator();
+    expect(() => acc.addDelta({ content: 'x'.repeat(MAX_ACCUMULATED_CHARS + 1) })).toThrow(
+      /累积超过/,
+    );
+  });
+
+  it('工具 arguments 同样计入预算', () => {
+    const acc = new OpenAiChatAccumulator();
+    expect(() =>
+      acc.addDelta({
+        tool_calls: [{ index: 0, id: 'c1', function: { name: 't', arguments: 'y'.repeat(MAX_ACCUMULATED_CHARS + 1) } }],
+      }),
+    ).toThrow(/累积超过/);
+  });
+
+  it('预算内的累积不受影响', () => {
+    const acc = new OpenAiChatAccumulator();
+    acc.addDelta({ content: '正常输出', reasoning_content: '正常思考' });
+    const msg = acc.build('m');
+    const text = msg.content.find((b) => b.type === 'text');
+    expect(text).toMatchObject({ type: 'text', text: '正常输出' });
+  });
+});
+
+describe('withStreamIdleWatchdog 流式空闲看门狗', () => {
+  /** 按给定间隔（ms）逐个产出元素的流。 */
+  async function* delayed(delays: number[]): AsyncGenerator<string> {
+    for (const d of delays) {
+      await new Promise((r) => setTimeout(r, d));
+      yield 'x';
+    }
+  }
+
+  it('间隔小于超时的流不受影响', async () => {
+    const seen: string[] = [];
+    for await (const v of withStreamIdleWatchdog(delayed([5, 5, 5]), 100)) seen.push(v);
+    expect(seen).toEqual(['x', 'x', 'x']);
+  });
+
+  it('超过超时无任何数据 → 抛错并触发 onIdle（中止底层 fetch）', async () => {
+    // 2026-08-04 事故形态：流不收尾也不报错，无限挂住。
+    let idleCalled = false;
+    const consume = async (): Promise<void> => {
+      for await (const _ of withStreamIdleWatchdog(delayed([5, 500]), 30, () => {
+        idleCalled = true;
+      })) {
+        /* 消费 */
+      }
+    };
+    await expect(consume()).rejects.toThrow(/没有任何数据/);
+    expect(idleCalled).toBe(true);
+  });
+
+  it('空闲超时抛 StreamIdleTimeoutError 且可重试——假死换连接可恢复，不该推给用户手动重发', async () => {
+    // 2026-08-05 实测：旧版抛裸 Error，isRetryableError 接不住 → 流假死 120s 被判死后
+    // 直接报错退出，与「吐字即放弃」同属把瞬时网络问题推成硬错误的缺陷。独立成类型后可重试。
+    const consume = async (): Promise<void> => {
+      for await (const _ of withStreamIdleWatchdog(delayed([5, 500]), 30)) {
+        /* 消费 */
+      }
+    };
+    const err = await consume().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StreamIdleTimeoutError);
+    expect(isRetryableError(err)).toBe(true);
+    // 反向钉住：同文案的裸 Error 不可重试——没有把所有 Error 一并放开
+    expect(isRetryableError(new Error('流式响应超过 120s 没有任何数据'))).toBe(false);
   });
 });
 

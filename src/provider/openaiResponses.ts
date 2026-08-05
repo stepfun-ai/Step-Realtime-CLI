@@ -124,16 +124,19 @@ export function messagesToResponsesInput(
         (b): b is Anthropic.ToolResultBlockParam => b.type === 'tool_result',
       );
       const nonToolText = blocksToText(blocks.filter((b) => b.type !== 'tool_result'));
-      // 无工具结果时即使正文为空也要留一条 user 项，保持对话轮次完整
-      if (nonToolText.length > 0 || toolResults.length === 0) {
-        out.push({ role: 'user', content: nonToolText });
-      }
+      // function_call_output 在前、文本 user 在后：与 messagesToOpenAi 同一顺序约定——
+      // 整形层会把合成/迟到的 tool_result 与插话文本合进同一条 user 消息，
+      // 输出项先发出能保证工具配对在 input 序列上保持「调用紧邻结果」的形态。
       for (const tr of toolResults) {
         out.push({
           type: 'function_call_output',
           call_id: tr.tool_use_id,
           output: toolResultText(tr),
         });
+      }
+      // 无工具结果时即使正文为空也要留一条 user 项，保持对话轮次完整
+      if (nonToolText.length > 0 || toolResults.length === 0) {
+        out.push({ role: 'user', content: nonToolText });
       }
       continue;
     }
@@ -228,11 +231,18 @@ export class OpenAiResponsesProvider implements ChatProvider {
     let completed: ResponsesResponse | undefined;
 
     async function* iterate(): AsyncGenerator<Anthropic.MessageStreamEvent> {
+      // 本地 AbortController 汇流用户 Esc 与流空闲看门狗两个中止源（同 openaiChat）。
+      const controller = new AbortController();
+      const parentSignal = params.signal;
+      if (parentSignal !== undefined) {
+        if (parentSignal.aborted) controller.abort(parentSignal.reason);
+        else parentSignal.addEventListener('abort', () => controller.abort(parentSignal.reason), { once: true });
+      }
       const res = await fetchImpl(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        ...(params.signal !== undefined ? { signal: params.signal } : {}),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
@@ -241,7 +251,7 @@ export class OpenAiResponsesProvider implements ChatProvider {
       if (res.body === null) {
         throw httpErrorToApiError(502, 'empty response body', res.headers);
       }
-      for await (const raw of parseSseStream(res.body)) {
+      for await (const raw of parseSseStream(res.body, { onIdle: () => controller.abort() })) {
         const event = raw as ResponsesStreamEvent;
         if (event.type === 'response.reasoning_text.delta') {
           if (typeof event.delta === 'string' && event.delta.length > 0) {

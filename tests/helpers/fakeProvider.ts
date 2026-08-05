@@ -13,6 +13,12 @@ export type Behavior =
        * signature_delta → content_block_stop；空数组即「无痕思考」（只吐 signature 的模型）。
        */
       thinkingChunks?: string[];
+      /**
+       * 吐完上述增量后在 finalMessage 阶段抛错——模拟「流式正文中途连接中断」
+       * （ECONNRESET / terminated）：正文已进 UI，但流未正常收尾。与 `{ throw }` 不同，
+       * 后者在 stream() 调用时同步抛（连第一个增量都没产出），覆盖不了「吐字后断连」。
+       */
+      throwAfterChunks?: unknown;
       finalContent: Anthropic.ContentBlock[];
       stopReason?: Anthropic.Message['stop_reason'];
       /** 本回合真实 usage（缺省即无 usage，模拟 provider 未返回）。 */
@@ -78,8 +84,10 @@ export function makeFakeProvider(
       const gen = iter();
       return {
         [Symbol.asyncIterator]: () => gen,
-        finalMessage: async () =>
-          ({ content: b.finalContent, stop_reason: b.stopReason ?? 'end_turn', usage: b.usage }) as unknown as Anthropic.Message,
+        finalMessage: async () => {
+          if (b.throwAfterChunks !== undefined) throw b.throwAfterChunks;
+          return { content: b.finalContent, stop_reason: b.stopReason ?? 'end_turn', usage: b.usage } as unknown as Anthropic.Message;
+        },
       };
     },
   };
