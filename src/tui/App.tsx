@@ -92,6 +92,8 @@ import {
   type ThinkOverride,
 } from './thinkCommand.js';
 import { PromptInput, computePromptRows } from './PromptInput.js';
+import { scanFileIndex } from './fileIndex.js';
+import type { CompletionContext } from './completions.js';
 import { QueuePreview } from './QueuePreview.js';
 import { computeBacktrack, truncateItemsAtLastUser } from './backtrack.js';
 import { StatusBar } from './StatusBar.js';
@@ -342,6 +344,29 @@ export function App({
   const pasteStore = useRef<PasteStore>(new PasteStore());
   // 输入框里当前有效图片占位符数（从 input 派生，占位符增删自动跟随）。必须在 imageStore 定义之后声明。
   const imageCount = useMemo(() => imageStore.current.activeIds(input).length, [input]);
+  // @ 文件引用的文件索引：挂载后后台异步扫描 cwd（不阻塞首帧），完成前 @ 补全为空（优雅降级）。
+  const [fileIndex, setFileIndex] = useState<string[] | undefined>(undefined);
+  const fileIndexStartedRef = useRef(false);
+  useEffect(() => {
+    if (fileIndexStartedRef.current) return;
+    fileIndexStartedRef.current = true;
+    const controller = new AbortController();
+    void scanFileIndex(ctx.cwd, controller.signal)
+      .then((files) => setFileIndex(files))
+      .catch(() => setFileIndex([])); // 扫描失败降级为空索引（不阻塞补全其他类别）
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 统一补全上下文：/model 别名表、/think 档位（含 off）、@ 文件索引。
+  // models 取 configRef（启动快照，别名表运行期不变）；thinkChoices 含 'off'（关闭思考的合法档位）。
+  const completionCtx = useMemo<CompletionContext>(
+    () => ({
+      models: configRef.current.models ?? {},
+      thinkChoices: [...THINK_CHOICES, 'off'],
+      files: fileIndex,
+    }),
+    [fileIndex],
+  );
   const pendingPlanRef = useRef<PendingPlan | null>(null);
   // 计划审批结果：approved + 拒绝时的修订意见（feedback 经 deny reason 回给模型）
   const planResolver = useRef<((r: { approved: boolean; feedback?: string }) => void) | null>(null);
@@ -2915,7 +2940,7 @@ export function App({
       primed: backtrackPrimed,
       exitPrimed,
       columns: stdout?.columns ?? 80,
-    });
+    }, completionCtx);
   }
   const budget = computeLiveBudget(stdout?.rows, {
     statusRows: STATUS_BAR_ROWS,
@@ -3140,7 +3165,7 @@ export function App({
           }}
         />
       ) : (
-        <PromptInput value={input} onChange={setInput} onSubmit={submit} busy={busy} history={inputHistory} primed={backtrackPrimed} exitPrimed={exitPrimed} onRecallQueued={recallQueued} pasteStore={pasteStore.current} />
+        <PromptInput value={input} onChange={setInput} onSubmit={submit} busy={busy} history={inputHistory} primed={backtrackPrimed} exitPrimed={exitPrimed} onRecallQueued={recallQueued} pasteStore={pasteStore.current} completionCtx={completionCtx} />
       )}
       <StatusBar
         mode={mode}
