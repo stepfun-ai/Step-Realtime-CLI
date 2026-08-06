@@ -17,11 +17,18 @@ import { mapStepChatFinishReason } from './step/stepCommon.js';
 export interface OpenAiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   /** 文本内容；assistant 纯工具调用时可为 null。 */
-  content?: string | null;
+  content?: string | OpenAiContentPart[] | null;
   /** assistant 的工具调用列表（tool_use 块翻译而来）。 */
   tool_calls?: OpenAiToolCall[];
   /** tool 消息回指的工具调用 id（tool_result 块的 tool_use_id）。 */
   tool_call_id?: string;
+}
+
+/** OpenAI Chat 的多模态 content part（user/tool 消息的 content 数组元素）。 */
+export interface OpenAiContentPart {
+  type: 'text' | 'image_url';
+  text?: string;
+  image_url?: { url: string };
 }
 
 /** OpenAI Chat 的一次工具调用（function 型）。 */
@@ -60,16 +67,37 @@ function blocksToText(content: Anthropic.ContentBlockParam[]): string {
   return parts.join('');
 }
 
-/** tool_result 块的 content 折成纯文本（string 原样；数组取其中 text 块拼接）。 */
-function toolResultText(block: Anthropic.ToolResultBlockParam): string {
+/**
+ * tool_result 块的 content 折成 OpenAI 格式：
+ * - string 原样返回
+ * - 数组：text 块保留，image 块转成 image_url（data URI），其余丢弃
+ *
+ * 背景：OpenAI Chat Completions 官方文档只描述 tool role 的 content 为 string，
+ * 但 step_plan 通道实测（2026-08-06）接受非标准扩展——content 数组里放 image_url。
+ * 这是直接透传策略（不做图片提升到 user 消息）。
+ */
+function toolResultContent(block: Anthropic.ToolResultBlockParam): string | OpenAiContentPart[] {
   const c = block.content;
   if (c === undefined) return '';
   if (typeof c === 'string') return c;
-  const parts: string[] = [];
+
+  const parts: OpenAiContentPart[] = [];
   for (const part of c) {
-    if (part.type === 'text') parts.push(part.text);
+    if (part.type === 'text') {
+      parts.push({ type: 'text', text: part.text });
+    } else if (part.type === 'image' && part.source.type === 'base64') {
+      // data URI 格式：data:<media_type>;base64,<data>
+      const url = `data:${part.source.media_type};base64,${part.source.data}`;
+      parts.push({ type: 'image_url', image_url: { url } });
+    }
+    // document / tool_use / tool_result 等块在 tool_result 里不该出现，丢弃
   }
-  return parts.join('');
+
+  // 纯文本场景退化成 string（兼容严格网关）
+  if (parts.length === 1 && parts[0]!.type === 'text') {
+    return parts[0]!.text!;
+  }
+  return parts;
 }
 
 /**
@@ -110,7 +138,7 @@ export function messagesToOpenAi(
         blocks.filter((b) => b.type !== 'tool_result') as Anthropic.ContentBlockParam[],
       );
       for (const tr of toolResults) {
-        out.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: toolResultText(tr) });
+        out.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: toolResultContent(tr) });
       }
       if (nonToolText.length > 0 || toolResults.length === 0) {
         out.push({ role: 'user', content: nonToolText });
