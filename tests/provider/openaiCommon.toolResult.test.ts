@@ -80,4 +80,124 @@ describe('messagesToOpenAi · tool_result 图片块', () => {
     const out = messagesToOpenAi('', messages);
     expect(out[0]!.content).toBe('简单字符串结果');
   });
+
+  it('带 document 块的 tool_result → document 块被丢弃（Chat Completions 不支持）', () => {
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_123',
+            content: [
+              { type: 'text', text: '已读取 PDF：' },
+              {
+                type: 'document',
+                source: {
+                  type: 'base64',
+                  media_type: 'application/pdf',
+                  data: 'JVBERi0xLjQKJeLjz9MKMyAwIG9iago8PC9MZW5ndGgg...',
+                },
+              } as unknown as Anthropic.ContentBlockParam,
+            ],
+          },
+        ],
+      },
+    ];
+    const out = messagesToOpenAi('', messages);
+    expect(out).toHaveLength(1);
+    // document 块被丢弃，只剩 text 块，退化成 string
+    expect(out[0]!.content).toBe('已读取 PDF：');
+  });
+
+  it('混合内容（text + image + document）→ image 转 image_url，document 丢弃', () => {
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_123',
+            content: [
+              { type: 'text', text: '已读取文件：' },
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                },
+              },
+              {
+                type: 'document',
+                source: {
+                  type: 'base64',
+                  media_type: 'application/pdf',
+                  data: 'JVBERi0xLjQKJeLjz9MKMyAwIG9iago8PC9MZW5ndGgg...',
+                },
+              } as unknown as Anthropic.ContentBlockParam,
+              { type: 'text', text: '处理完成' },
+            ],
+          },
+        ],
+      },
+    ];
+    const out = messagesToOpenAi('', messages);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.role).toBe('tool');
+    expect(Array.isArray(out[0]!.content)).toBe(true);
+    const parts = out[0]!.content as Array<{ type: string; text?: string; image_url?: { url: string } }>;
+    // document 被丢弃，剩 3 个 part：text + image_url + text
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toEqual({ type: 'text', text: '已读取文件：' });
+    expect(parts[1]).toEqual({
+      type: 'image_url',
+      image_url: {
+        url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      },
+    });
+    expect(parts[2]).toEqual({ type: 'text', text: '处理完成' });
+  });
+
+  it('多个 tool_result 块混合（一个纯文本，一个带图片）', () => {
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_111',
+            content: [{ type: 'text', text: '纯文本结果' }],
+          },
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_222',
+            content: [
+              { type: 'text', text: '带图片结果：' },
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const out = messagesToOpenAi('', messages);
+    expect(out).toHaveLength(2);
+    // 第一个：纯文本，退化成 string
+    expect(out[0]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_111',
+      content: '纯文本结果',
+    });
+    // 第二个：带图片，OpenAiContentPart[]
+    expect(out[1]!.role).toBe('tool');
+    expect(out[1]!.tool_call_id).toBe('call_222');
+    expect(Array.isArray(out[1]!.content)).toBe(true);
+  });
 });
