@@ -45,6 +45,7 @@ const UPDATE_CONFIG_BODY = `# update-config：step-code 自身配置的查询与
 | proxy | string | 无（直连） | 代理 URL（http:// 或 https:// 开头，其他值 loadConfig 报错）。生效优先级：环境变量 HTTPS_PROXY > 本键 > 直连。全局请求经 Node 内置代理机制生效；NO_PROXY 可排除指定域名。只在启动时读取，/reload 改本键需重启生效 |
 | agents_paths | string[] | 无 | AGENTS.md 自定义加载路径，配置后完全覆盖默认收集。支持 ~ 与相对 cwd 路径 |
 | agents_md_max_bytes | number | 32768 | AGENTS.md 总字节预算；0 或负数 = 禁用加载 |
+| media_keep_recent | number | 3 | 媒体降级（413/400 图片超限触发）时保留的最近图片张数，更旧的图换占位文本；0 = 全部换占位。仅 stepfun 通道生效 |
 | extra_skill_dirs | string[] | 无 | 追加的 skill 扫描目录，同名 skill 追加目录胜出 |
 | disabled_skills | string[] | 无 | 按名排除的 skill 清单，任何来源的同名 skill 都不加载 |
 | continuation | table | 无 | 输出截断自动续写配置（[continuation] 段） |

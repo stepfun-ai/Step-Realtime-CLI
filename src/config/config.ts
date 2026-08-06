@@ -259,6 +259,12 @@ export interface StepCodeConfig {
   extraSkillDirs?: string[];
   /** 按名排除的 skill 清单（config.toml disabled_skills）。合并完成后统一过滤，任何来源的同名 skill 都不加载；用于屏蔽不归你管的目录（团队共享 .agents/skills 等）里的个别 skill。 */
   disabledSkills?: string[];
+  /**
+   * 媒体降级时保留的最近图片张数（config.toml media_keep_recent）。缺省 3。
+   * 触发 413/400 图片超限时，media-degraded 档只把更旧的图换成占位文本、保留最近 N 张，
+   * 避免「全剥光、模型变瞎」。仅 stepfun 通道的错误驱动重投影生效；0 = 旧行为（全换占位）。
+   */
+  mediaKeepRecentImages?: number;
   /** [models.<别名>] 模型别名表（渠道与模型分离）。未配置或全部无效时键不进结果对象。 */
   models?: Record<string, ModelEntry>;
   /** [providers.<id>] 渠道表（自定义服务商端点/密钥）。未配置或全部无效时键不进结果对象。 */
@@ -457,6 +463,7 @@ interface TomlConfigShape {
   proxy?: unknown;
   agents_paths?: unknown;
   agents_md_max_bytes?: unknown;
+  media_keep_recent?: unknown;
   extra_skill_dirs?: unknown;
   disabled_skills?: unknown;
   models?: unknown;
@@ -1086,6 +1093,8 @@ export function loadConfig(
   if (agentsPaths !== undefined) cfg.agentsPaths = agentsPaths;
   const agentsMdMaxBytes = asNumber(toml.agents_md_max_bytes);
   if (agentsMdMaxBytes !== undefined) cfg.agentsMdMaxBytes = agentsMdMaxBytes;
+  const mediaKeepRecent = asNumber(toml.media_keep_recent);
+  if (mediaKeepRecent !== undefined) cfg.mediaKeepRecentImages = Math.max(0, Math.floor(mediaKeepRecent));
   const extraSkillDirs = resolveStringArray(toml.extra_skill_dirs);
   if (extraSkillDirs !== undefined) cfg.extraSkillDirs = extraSkillDirs;
   const disabledSkills = resolveStringArray(toml.disabled_skills);

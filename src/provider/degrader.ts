@@ -87,19 +87,47 @@ export function degradeMessages(
 /**
  * 应用一档重投影：
  * - normal：原样返回（主动降级已在发送前做过，此档不重投影）。
- * - media-degraded：全部媒体块换占位文本（不论能力声明如何）。
+ * - media-degraded：保留最近 keepRecentImages 张图片，更旧的媒体块换占位文本。
+ *   图片是上下文里最贵的块，触发降级（413/400 图片超限）时把旧图全剥掉会让模型
+ *   「变瞎」——连当前正在看的图也丢了。保留最近 N 张（只降级旧图、留新图）。
+ *   document 块不参与保留计数（场景少，统一换占位）。
  * - media-stripped：全部媒体块直接移除。
  * - strict：media-stripped 之上再剥 thinking 块与所有 cache_control（最保守形态）。
+ *
+ * keepRecentImages 缺省 0 = 维持旧行为（全换占位），不传入时不改变既有语义。
  */
 export function applyReprojectionLevel(
   messages: Anthropic.MessageParam[],
   level: ReprojectionLevel,
+  keepRecentImages = 0,
 ): Anthropic.MessageParam[] {
   if (level === 'normal') return messages;
+
+  // media-degraded 且要保留最近 N 张时，先按消息逆序数出要保留的 image 块集合。
+  // 同一块可能被多条消息引用（实际上不会，但防御），用 Set 去重。
+  let keep: Set<Block> | undefined;
+  if (level === 'media-degraded' && keepRecentImages > 0) {
+    keep = new Set<Block>();
+    outer: for (let mi = messages.length - 1; mi >= 0; mi--) {
+      const content = messages[mi]!.content;
+      if (typeof content === 'string') continue;
+      for (let bi = content.length - 1; bi >= 0; bi--) {
+        const block = content[bi]!;
+        if (block.type === 'image') {
+          keep.add(block);
+          if (keep.size >= keepRecentImages) break outer;
+        }
+      }
+    }
+  }
+
   return messages.map((msg) =>
     mapBlocks(msg, (block) => {
       if (isMediaBlock(block)) {
-        return level === 'media-degraded' ? mediaPlaceholder(block) : null;
+        if (level === 'media-degraded') {
+          return keep !== undefined && keep.has(block) ? block : mediaPlaceholder(block);
+        }
+        return null;
       }
       if (level === 'strict') {
         if (isThinkingBlock(block)) return null;
