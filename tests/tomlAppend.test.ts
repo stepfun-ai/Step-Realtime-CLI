@@ -40,13 +40,13 @@ function backupFiles(): string[] {
 }
 
 describe('tomlKey / tomlString', () => {
-  it('bare key 字符集原样，其余走 quoted key', () => {
+  it('bare key 字符集原样，其余走 quoted key', async () => {
     expect(tomlKey('gw-1_x')).toBe('gw-1_x');
     expect(tomlKey('has.dot')).toBe('"has.dot"');
     expect(tomlKey('空格')).toBe('"空格"');
   });
 
-  it('字符串转义反斜杠、双引号、控制字符', () => {
+  it('字符串转义反斜杠、双引号、控制字符', async () => {
     expect(tomlString('plain')).toBe('"plain"');
     expect(tomlString('a"b\\c')).toBe('"a\\"b\\\\c"');
     expect(tomlString('a\nb\t')).toBe('"a\\nb\\t"');
@@ -54,7 +54,7 @@ describe('tomlKey / tomlString', () => {
 });
 
 describe('allocateAlias', () => {
-  it('未占用直接用 base；占用依次加数字后缀', () => {
+  it('未占用直接用 base；占用依次加数字后缀', async () => {
     expect(allocateAlias('m', new Set())).toBe('m');
     expect(allocateAlias('m', new Set(['m']))).toBe('m-2');
     expect(allocateAlias('m', new Set(['m', 'm-2']))).toBe('m-3');
@@ -62,7 +62,7 @@ describe('allocateAlias', () => {
 });
 
 describe('renderSections', () => {
-  it('渠道段在前、模型段在后，可选字段缺省不写', () => {
+  it('渠道段在前、模型段在后，可选字段缺省不写', async () => {
     const out = renderSections(sampleInput(), '\n');
     expect(out).toBe(
       '[providers.gw]\n' +
@@ -85,8 +85,8 @@ describe('renderSections', () => {
 });
 
 describe('appendProviderConfig', () => {
-  it('文件不存在时创建，无备份，doctor 通过', () => {
-    const result = appendProviderConfig(sampleInput(), tomlPath);
+  it('文件不存在时创建，无备份，doctor 通过', async () => {
+    const result = await appendProviderConfig(sampleInput(), tomlPath);
     expect(result.backupPath).toBeUndefined();
     expect(result.aliases).toEqual(['m-1', 'm-2']);
     const text = readFileSync(tomlPath, 'utf8');
@@ -95,7 +95,7 @@ describe('appendProviderConfig', () => {
     expect(backupFiles()).toEqual([]);
   });
 
-  it('追加保留原文（注释与其他字段逐字节不动），并补空行分隔', () => {
+  it('追加保留原文（注释与其他字段逐字节不动），并补空行分隔', async () => {
     const original = '# 我的配置\nmodel = "flash"\n\n[subagent]\nmax_depth = 2\n';
     writeFileSync(tomlPath, original);
     appendProviderConfig(sampleInput(), tomlPath);
@@ -105,14 +105,14 @@ describe('appendProviderConfig', () => {
     expect(text.slice(original.length)).toBe('\n' + renderSections(sampleInput(), '\n') + '\n');
   });
 
-  it('原文末尾无换行时先补换行再分隔追加', () => {
+  it('原文末尾无换行时先补换行再分隔追加', async () => {
     writeFileSync(tomlPath, 'model = "flash"');
     appendProviderConfig(sampleInput({ id: 'gw2' }), tomlPath);
     const text = readFileSync(tomlPath, 'utf8');
     expect(text.startsWith('model = "flash"\n\n[providers.gw2]')).toBe(true);
   });
 
-  it('CRLF 换行风格保留到追加内容', () => {
+  it('CRLF 换行风格保留到追加内容', async () => {
     writeFileSync(tomlPath, 'model = "flash"\r\n');
     appendProviderConfig(sampleInput(), tomlPath);
     const text = readFileSync(tomlPath, 'utf8');
@@ -120,54 +120,54 @@ describe('appendProviderConfig', () => {
     expect(text).not.toContain('\n[providers.gw]\n');
   });
 
-  it('写前备份：备份文件保留且内容等于原文', () => {
+  it('写前备份：备份文件保留且内容等于原文', async () => {
     const original = 'model = "flash"\n';
     writeFileSync(tomlPath, original);
-    const result = appendProviderConfig(sampleInput(), tomlPath);
+    const result = await appendProviderConfig(sampleInput(), tomlPath);
     expect(result.backupPath).toBeDefined();
     expect(readFileSync(result.backupPath!, 'utf8')).toBe(original);
   });
 
-  it('渠道 id 已存在：抛错且不写文件', () => {
+  it('渠道 id 已存在：抛错且不写文件', async () => {
     const original = '[providers.gw]\ntype = "openai"\n';
     writeFileSync(tomlPath, original);
-    expect(() => appendProviderConfig(sampleInput(), tomlPath)).toThrow(/已存在/);
+    await expect(appendProviderConfig(sampleInput(), tomlPath)).rejects.toThrow(/已存在/);
     expect(readFileSync(tomlPath, 'utf8')).toBe(original);
   });
 
-  it('模型别名已存在：抛错且不写文件', () => {
+  it('模型别名已存在：抛错且不写文件', async () => {
     const original = '[models.m-1]\nmodel = "m-1"\n';
     writeFileSync(tomlPath, original);
-    expect(() => appendProviderConfig(sampleInput(), tomlPath)).toThrow(/别名已存在/);
+    await expect(appendProviderConfig(sampleInput(), tomlPath)).rejects.toThrow(/别名已存在/);
     expect(readFileSync(tomlPath, 'utf8')).toBe(original);
   });
 
-  it('同批草稿别名重复：抛错', () => {
+  it('同批草稿别名重复：抛错', async () => {
     const input = sampleInput();
     input.models[1]!.alias = 'm-1';
-    expect(() => appendProviderConfig(input, tomlPath)).toThrow(/重复/);
+    await expect(appendProviderConfig(input, tomlPath)).rejects.toThrow(/重复/);
     expect(existsSync(tomlPath)).toBe(false);
   });
 
-  it('原文件有 TOML 语法错误：拒绝追加（先修再写）', () => {
+  it('原文件有 TOML 语法错误：拒绝追加（先修再写）', async () => {
     const original = 'model = "flash"\n[broken\n';
     writeFileSync(tomlPath, original);
-    expect(() => appendProviderConfig(sampleInput(), tomlPath)).toThrow(/语法错误/);
+    await expect(appendProviderConfig(sampleInput(), tomlPath)).rejects.toThrow(/语法错误/);
     expect(readFileSync(tomlPath, 'utf8')).toBe(original);
   });
 
-  it('doctor 校验失败：回滚到原文，备份文件不残留', () => {
+  it('doctor 校验失败：回滚到原文，备份文件不残留', async () => {
     // permission_mode 非法值会让 doctor 走 loadConfig 抛错路径（exit 1）
     const original = 'permission_mode = "bogus"\n';
     writeFileSync(tomlPath, original);
-    expect(() => appendProviderConfig(sampleInput(), tomlPath)).toThrow(/已回滚/);
+    await expect(appendProviderConfig(sampleInput(), tomlPath)).rejects.toThrow(/已回滚/);
     expect(readFileSync(tomlPath, 'utf8')).toBe(original);
     expect(backupFiles()).toEqual([]);
   });
 
-  it('doctor 警告（非失败）不回滚：写入保留', () => {
+  it('doctor 警告（非失败）不回滚：写入保留', async () => {
     // 非法 type 在 doctor 里只是警告（loadConfig 静默跳过），验证警告级别不回滚
-    const result = appendProviderConfig(sampleInput({ type: 'openai' }), tomlPath);
+    const result = await appendProviderConfig(sampleInput({ type: 'openai' }), tomlPath);
     expect(result.aliases).toEqual(['m-1', 'm-2']);
   });
 
@@ -217,9 +217,9 @@ describe('removeProviderConfig', () => {
     'provider = "keep"\n' +
     'model = "k-1"\n';
 
-  it('摘除渠道节与归属别名节，其余内容逐字节保留；悬空顶层指针一并清除', () => {
+  it('摘除渠道节与归属别名节，其余内容逐字节保留；悬空顶层指针一并清除', async () => {
     writeFileSync(tomlPath, original);
-    const result = removeProviderConfig('gw', tomlPath);
+    const result = await removeProviderConfig('gw', tomlPath);
     expect(result.removedAliases).toEqual(['m-1', 'm-2']);
     expect(result.clearedDefaultModel).toBe(true);
     expect(readFileSync(tomlPath, 'utf8')).toBe(
@@ -234,41 +234,41 @@ describe('removeProviderConfig', () => {
     );
   });
 
-  it('写前备份：备份文件保留且内容等于原文', () => {
+  it('写前备份：备份文件保留且内容等于原文', async () => {
     writeFileSync(tomlPath, original);
-    const result = removeProviderConfig('gw', tomlPath);
+    const result = await removeProviderConfig('gw', tomlPath);
     expect(backupFiles()).toHaveLength(1);
     expect(readFileSync(result.backupPath, 'utf8')).toBe(original);
   });
 
-  it('顶层 model 指针指向保留别名时不动（clearedDefaultModel=false）', () => {
+  it('顶层 model 指针指向保留别名时不动（clearedDefaultModel=false）', async () => {
     writeFileSync(tomlPath, original.replace('model = "m-2"', 'model = "k-1"'));
-    const result = removeProviderConfig('gw', tomlPath);
+    const result = await removeProviderConfig('gw', tomlPath);
     expect(result.clearedDefaultModel).toBe(false);
     expect(readFileSync(tomlPath, 'utf8')).toContain('model = "k-1"');
   });
 
-  it('渠道不存在：抛错且不写文件', () => {
+  it('渠道不存在：抛错且不写文件', async () => {
     writeFileSync(tomlPath, original);
-    expect(() => removeProviderConfig('nope', tomlPath)).toThrow(/不存在/);
+    await expect(removeProviderConfig('nope', tomlPath)).rejects.toThrow(/不存在/);
     expect(readFileSync(tomlPath, 'utf8')).toBe(original);
     expect(backupFiles()).toEqual([]);
   });
 
-  it('config.toml 不存在：抛错', () => {
-    expect(() => removeProviderConfig('gw', tomlPath)).toThrow(/不存在/);
+  it('config.toml 不存在：抛错', async () => {
+    await expect(removeProviderConfig('gw', tomlPath)).rejects.toThrow(/不存在/);
   });
 
-  it('doctor 校验失败：回滚到原文，备份文件不残留', () => {
+  it('doctor 校验失败：回滚到原文，备份文件不残留', async () => {
     // permission_mode 非法值让 doctor 走 loadConfig 抛错路径（exit 1）
     const broken = 'permission_mode = "bogus"\n\n[providers.gw]\ntype = "openai"\n';
     writeFileSync(tomlPath, broken);
-    expect(() => removeProviderConfig('gw', tomlPath)).toThrow(/已回滚/);
+    await expect(removeProviderConfig('gw', tomlPath)).rejects.toThrow(/已回滚/);
     expect(readFileSync(tomlPath, 'utf8')).toBe(broken);
     expect(backupFiles()).toEqual([]);
   });
 
-  it('quoted key 渠道（id 含点）同样按整节摘除', () => {
+  it('quoted key 渠道（id 含点）同样按整节摘除', async () => {
     const quoted =
       '[providers."my.gw"]\n' +
       'type = "openai"\n' +
@@ -280,12 +280,12 @@ describe('removeProviderConfig', () => {
       '[models.k-1]\n' +
       'model = "k-1"\n';
     writeFileSync(tomlPath, quoted);
-    const result = removeProviderConfig('my.gw', tomlPath);
+    const result = await removeProviderConfig('my.gw', tomlPath);
     expect(result.removedAliases).toEqual(['m-1']);
     expect(readFileSync(tomlPath, 'utf8')).toBe('[models.k-1]\nmodel = "k-1"\n');
   });
 
-  it('[[...]] 数组表节不受摘除影响（不被误吞）', () => {
+  it('[[...]] 数组表节不受摘除影响（不被误吞）', async () => {
     const withHooks =
       '[providers.gw]\n' +
       'type = "openai"\n' +
@@ -298,7 +298,7 @@ describe('removeProviderConfig', () => {
     expect(readFileSync(tomlPath, 'utf8')).toBe('[[hooks]]\nevent = "Stop"\ncommand = "echo done"\n');
   });
 
-  it('CRLF 换行风格保留到摘除结果', () => {
+  it('CRLF 换行风格保留到摘除结果', async () => {
     writeFileSync(tomlPath, original.replace(/\n/g, '\r\n'));
     removeProviderConfig('gw', tomlPath);
     const text = readFileSync(tomlPath, 'utf8');
