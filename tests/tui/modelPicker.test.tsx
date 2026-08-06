@@ -61,7 +61,7 @@ describe('ModelPicker', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('beta');
+    expect(onSelect).toHaveBeenCalledWith('beta', false);
   });
 
   it('↑ 在顶部 clamp 不循环：按 ↑ 后 Enter 仍选中第一项', async () => {
@@ -72,7 +72,7 @@ describe('ModelPicker', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('alpha');
+    expect(onSelect).toHaveBeenCalledWith('alpha', false);
   });
 
   it('↓ 在底部 clamp 不循环：连按多次后 Enter 仍选中最后一项', async () => {
@@ -83,7 +83,7 @@ describe('ModelPicker', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('gamma');
+    expect(onSelect).toHaveBeenCalledWith('gamma', false);
   });
 
   it('输入过滤：匹配别名 / 显示名 / 渠道名', async () => {
@@ -127,7 +127,7 @@ describe('ModelPicker', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('gamma');
+    expect(onSelect).toHaveBeenCalledWith('gamma', false);
   });
 
   it('Esc 有过滤词时先清词（不取消），再按 Esc 才 onSelect(null)', async () => {
@@ -206,7 +206,7 @@ describe('ModelPicker Tab 渠道筛选', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('m2');
+    expect(onSelect).toHaveBeenCalledWith('m2', false);
   });
 
   it('Tab 回卷：all → stepfun → gw → anthropic → all，Shift+Tab 反向', async () => {
@@ -248,7 +248,7 @@ describe('ModelPicker Tab 渠道筛选', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('alpha');
+    expect(onSelect).toHaveBeenCalledWith('alpha', false);
   });
 
   it('per-tab 状态：切走再切回，过滤词与光标位置各自恢复', async () => {
@@ -278,7 +278,7 @@ describe('ModelPicker Tab 渠道筛选', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('gamma');
+    expect(onSelect).toHaveBeenCalledWith('gamma', false);
   });
 
   it('current 标记在渠道 tab 内仍显示', async () => {
@@ -332,7 +332,7 @@ describe('ModelPicker initialChannel 预选', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('alpha');
+    expect(onSelect).toHaveBeenCalledWith('alpha', false);
   });
 
   it('预选渠道 tab 内 Enter 选中该渠道首项', async () => {
@@ -343,7 +343,7 @@ describe('ModelPicker initialChannel 预选', () => {
     await delay();
     stdin.write('\r');
     await delay();
-    expect(onSelect).toHaveBeenCalledWith('alpha');
+    expect(onSelect).toHaveBeenCalledWith('alpha', false);
   });
 });
 

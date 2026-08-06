@@ -73,7 +73,7 @@ export function ModelPicker({
   items: ModelPickerItem[];
   /** 会话已有历史时为 true，顶部显示 cache 失效警告。 */
   hasHistory: boolean;
-  onSelect: (alias: string | null) => void;
+  onSelect: (alias: string | null, sessionOnly?: boolean) => void;
   /** 打开时预选到对应渠道 tab（无该渠道 tab 时退回「全部」）；缺省行为不变。 */
   initialChannel?: string;
 }): React.ReactElement {
@@ -166,7 +166,7 @@ export function ModelPicker({
     }
     if (key.return) {
       const chosen = filtered[clampedSel];
-      onSelect(chosen !== undefined ? chosen.alias : null);
+      onSelect(chosen !== undefined ? chosen.alias : null, key.shift);
       return;
     }
     // ↑↓ clamp 移动：越界停住不循环
