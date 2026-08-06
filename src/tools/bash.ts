@@ -171,24 +171,42 @@ function runForeground(
       if (taskId !== undefined) ctx.background?.settleForeground(taskId, null, e.message);
       finish(fail(`命令执行失败：${e.message}`));
     };
+    let stdoutEnded = false;
+    let stderrEnded = false;
+    let exitCode: number | null = null;
+
+    const onStdoutEnd = (): void => {
+      stdoutEnded = true;
+      maybeFinish();
+    };
+    const onStderrEnd = (): void => {
+      stderrEnded = true;
+      maybeFinish();
+    };
     const onClose = (code: number | null): void => {
-      // 无论中断与否都先同步终态：登记过的前台任务不能留在 running（中断杀死的进程同样到达终态）
-      if (taskId !== undefined) ctx.background?.settleForeground(taskId, code);
-      // Esc 中断后进程被杀也会触发 close：中断语义优先（与旧行为一致）
+      exitCode = code;
+      maybeFinish();
+    };
+    /** 等 stdout/stderr 的 end 与 close 三者齐了再 snapshot：close 可能在流 data 之前触发，漏掉尾部 stderr。 */
+    const maybeFinish = (): void => {
+      if (exitCode === null || !stdoutEnded || !stderrEnded) return;
+      if (taskId !== undefined) ctx.background?.settleForeground(taskId, exitCode);
       if (ctx.signal?.aborted) {
         finish(fail('用户中断，命令已终止。'));
         return;
       }
       const text = truncateOutput(collector.snapshot(), canDelegate);
-      const exitCode = code ?? 0;
-      if (exitCode !== 0) {
-        finish(fail(`${text}\n\n[退出码：${exitCode}]`));
+      const code = exitCode ?? 0;
+      if (code !== 0) {
+        finish(fail(`${text}\n\n[退出码：${code}]`));
       } else {
         finish(ok(text === '' ? '[命令执行完毕，无输出]' : text));
       }
     };
     proc.on('error', onError);
     proc.on('close', onClose);
+    proc.stdout?.on('end', onStdoutEnd);
+    proc.stderr?.on('end', onStderrEnd);
 
     // 第三方结算源：前台任务被转后台（用户主动 / 前台超时自动）。
     // 终态（terminal）由 close/error 路径结算，这里直接忽略。
