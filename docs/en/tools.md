@@ -165,6 +165,7 @@ Reads a local image file and passes its content back to the model as an inline i
 | `path` | string, required | Image file path |
 | `region` | object, optional | View only a rectangle of the original image: `{x, y, width, height}`, in original-image pixel coordinates. Cropped first, then delivered within the budget |
 | `full_resolution` | boolean, optional | `true` = skip downsampling and deliver the original image; if the raw bytes exceed 4MB it errors out explicitly and suggests using `region` to read in chunks |
+| `probe` | boolean, optional | `true` = return metadata only (format / dimensions / byte size / suggested chunks), without delivering the image. Probe a large or long image first to get its exact dimensions and a ready-made chunking plan, instead of guessing `region` values and hitting errors |
 
 **Capability gating**: when the model's `capabilities` does not declare `image_in`, this tool is unloaded from the tool table entirely, so the model cannot see it and will not try to call it, saving a round trip that was bound to fail. A runtime capability check remains as a fallback.
 
@@ -175,7 +176,8 @@ Behavioral limits:
 - **Long-edge cap of 1568 px**: beyond that the image is scaled down proportionally (matching the recommended input size of mainstream vision models).
 - When there is no cropping and the budget is not exceeded, it takes the **passthrough** path: the raw bytes are delivered directly, with no re-encoding.
 - **webp errors out when cropping or downsampling is needed**: jimp cannot re-encode webp, so in that case you are told to convert to png first and read again. A webp within the budget takes the passthrough path and is unaffected.
-- If `region` falls outside the original image, it errors out and reports both the original dimensions and the region you gave.
+- If `region` falls outside the original image, it errors out and reports both the original dimensions and the region you gave — and also **suggests a clamped region you can retry with immediately** (the origin pulled inside the image, the span narrowed to what remains). Alternatively, use `probe:true` first for a full chunking plan.
+- **Probe a large or long image first**: `probe:true` returns metadata only, with a ready-made list of regions cut to the delivery cap (the last chunk is narrowed to the remaining edge, so copying the list verbatim never goes out of bounds). A 30000-pixel-long screenshot yields about 20 directly usable regions from a single probe call, replacing the "guess a region → out-of-range error → guess again" loop.
 - Video and audio are **not supported in v1**: they are identified by magic-number sniffing (MP4/MOV/WebM/MKV/WAV and so on), and on a match it says plainly that reading video/audio is not supported yet, rather than reporting a vague "not an image".
 - Image decoding failures (a corrupt file or an unsupported format) are returned as error results.
 

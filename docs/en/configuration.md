@@ -63,6 +63,7 @@ MCP server declarations (`mcp.json`) and `[[hooks]]` follow the same rule: only 
 | `agents_md_max_bytes` | int | Total AGENTS.md budget in UTF-8 bytes, default 32768; `0` or a negative value disables loading. Startup warns when truncation occurs; see [How AGENTS.md works](./agents-md.md) |
 | `extra_skill_dirs` | string[] | Additional skill scan directories; see [Skills, plugins, and MCP](./skills-and-mcp.md) |
 | `disabled_skills` | string[] | Excludes skills by name (from any source); see [Skills, plugins, and MCP](./skills-and-mcp.md) |
+| `media_keep_recent` | int | How many recent images media degradation keeps, default 10; `0` = replace all with placeholders. On a 413/400 image-limit rejection, only the older images become placeholder text and the most recent N are kept before retrying, so the model is not left blind. Effective on all providers; per-alias override under `[models.*]`, see [Media degradation](#media-degradation) |
 
 An empty string in a string field is equivalent to leaving it unset; a non-numeric value in a numeric field (including `NaN` and infinity) makes the field count as unset and fall back to its default. The three string-array fields (`agents_paths` / `extra_skill_dirs` / `disabled_skills`) must be **valid as a whole**: if the value is not an array, is an empty array, or contains any element that is not a non-empty string, the entire field is discarded rather than filtered element by element. Path fields support `~` expansion and paths relative to the current working directory.
 
@@ -148,6 +149,7 @@ capabilities = ["thinking", "image_in"] # optional, see capabilities tags below
 | `max_tokens` | Maximum output tokens per response; when omitted it falls back to the top level |
 | `display_name` | Display name in the selector and the status bar; defaults to the alias |
 | `capabilities` | Array of capability tags (such as `thinking` or `image_in`); the single source of truth for tool gating and request shaping. Must be a non-empty array of plain strings with values from the allowed set, otherwise startup fails (see [capabilities tags](#capabilities-tags)) |
+| `media_keep_recent` | Overrides how many recent images media degradation keeps, per alias; falls back to the top-level `media_keep_recent`. Image limits vary widely by provider (step-3.7 measured at 60 per request, Gemini at 10), so generous providers can keep more and stricter ones fewer; see [Media degradation](#media-degradation) |
 
 - The final model is expanded through the alias table once at startup, so `--model <alias>`, `STEP_CODE_MODEL=<alias>`, and the top-level `model = "<alias>"` in toml all behave identically.
 - At runtime, `/model` opens the interactive selector and `/model <alias>` switches directly. Switching rebuilds the provider from the merged configuration, and the context window follows; see [Interactive use](./interactive.md).
@@ -198,6 +200,31 @@ The semantics of `capabilities` are **additive only**: listing a value declares 
 - The **display** of thinking does not look at `capabilities`: the `think:` segment in the status bar comes from the session-level `/think` level, and thinking blocks are rendered unconditionally. Whether reasoning-control fields are sent is decided by the `[thinking]` section.
 - **Protocol limitation**: image passthrough for `read_media` is currently end-to-end only on `anthropic` protocol providers. On `openai` protocol providers, the tool result collapse keeps text only and images are dropped silently. An openai provider that declares `image_in` therefore still cannot actually read images; this protocol translation gap is logged as a pending fix.
 - **Models and protocols are not freely interchangeable**: some models are only enabled on specific endpoints. Pointing one at the wrong provider surfaces a server-side 400 at request time, and the error message names the endpoint you should use instead.
+
+#### Media degradation
+
+When a request is rejected for exceeding an image limit (413 payload too large, or a 400 for too many/too-large images), step-code replaces the older images in history with placeholder text, keeps only the most recent N, and retries automatically. This prevents one oversized image from "poisoning" the whole session — where every subsequent message, even plain text, fails with the same error.
+
+**Degradation levels** (retried along the chain, each level at most once per request):
+
+| Level | Behavior |
+|------|------|
+| `media-degraded` | Keeps the most recent `media_keep_recent` images; older ones become placeholder text (the placeholder states the original image was removed for an API limit, so the model does not think it misremembered) |
+| `media-stripped` | All media blocks removed |
+| `strict` | Media removed plus thinking blocks and cache_control stripped (most conservative form) |
+
+**Trigger detection**: a 413 always triggers (its meaning is unambiguous). A 400 triggers only when the error message matches a known media "dialect" — `Input images too many` (stepfun, measured), `image exceeds 5 MB maximum` / `image dimensions exceed max allowed size` (Anthropic), `You can only include N image links` (Gemini/Vertex), `At most N image(s)` (vLLM serving), and similar. A bare 400 for an invalid parameter (such as a bad `max_tokens`) does **not** trigger, so real calling bugs are not masked by degradation.
+
+**Configuration**:
+
+- The top-level `media_keep_recent` (default 10) sets the global keep count; `0` = replace all (legacy behavior).
+- `media_keep_recent` under `[models.*]` overrides it per alias. Image limits vary widely by provider (step-3.7 measured at 60 per request, Gemini at 10, GLM at 5), so generous providers can keep more and stricter ones fewer.
+
+**Why the default is 10**: step-3.7-flash was measured at 60 images per request (direct API probe, 2026-08-06; 61 images returns `max: 60`), and 10 is a safe one-sixth of that — degradation rarely triggers in everyday use, yet keeps enough context when it does. Reading a long screenshot in segments commonly accumulates 10+ images in one conversation; the old default of 3 would make the main agent forget every image except the most recent three.
+
+**Effective on all providers**: the stepfun provider degrades inside its adapter's send path, while the other protocol providers (anthropic / openai / openai_responses) share a single media-degradation wrapper, so behavior is consistent.
+
+**Known boundary**: modifying historical images invalidates the prompt-cache prefix, so the one or two requests after a degradation may cost more. This is API-side behavior and cannot be avoided.
 
 ### The `/provider` wizard
 
