@@ -160,7 +160,7 @@ const zh = {
   'modelPicker.current': '← 当前',
   'modelPicker.cacheWarning': '切换模型会使已有 prompt cache 失效，/new 开新会话可避免额外 token 消耗',
   'modelPicker.tabAll': '全部',
-  'modelPicker.hint': '↑/↓ 选择 · Tab 切渠道 · 输入过滤 · Enter 切换 · Esc 取消',
+  'modelPicker.hint': '↑/↓ 选择 · Tab 切渠道 · 输入过滤 · Enter 切换并设为默认 · Shift+Enter 仅本会话 · Esc 取消',
 
   // --- 思考深度选择器（ThinkPicker）与 /think 命令 ---
   'thinkPicker.title': '选择思考深度',
@@ -180,6 +180,7 @@ const zh = {
   'skillPicker.empty': '无匹配的技能（Esc 取消）',
   'skillPicker.hint': '↑/↓ 选择 · 输入过滤 · Enter 激活 · Esc 取消',
   'app.skill.unavailable': '技能不可用：{name}',
+  'app.image.unsupported': '当前模型（{model}）不支持图片输入，{count} 张图片未直接发送；已落盘缓存，可用 read_media 读取，或 /model 切换到多模态模型后重试。',
 
   'app.think.unavailable': '当前渠道未启用思考控制字段，思考深度不可用（在 config.toml 的 [thinking] 段设 enabled = true 可开启）。',
   'app.think.invalid': '未知思考深度档位：{name}（可用：{list}，或 off 关闭）',
@@ -792,6 +793,7 @@ const en: Record<keyof typeof zh, string> = {
   'skillPicker.empty': 'No matching skills (Esc to cancel)',
   'skillPicker.hint': '↑/↓ select · type to filter · Enter activate · Esc cancel',
   'app.skill.unavailable': 'Skill unavailable: {name}',
+  'app.image.unsupported': 'Current model ({model}) does not support image input; {count} image(s) were not sent directly but were cached to disk (readable via read_media). Switch to a multimodal model with /model and try again.',
 
   'app.think.unavailable': 'The current provider does not send thinking-control fields, so thinking level is unavailable (set enabled = true under [thinking] in config.toml to turn it on).',
   'app.think.invalid': 'Unknown thinking level: {name} (available: {list}, or off to disable)',
