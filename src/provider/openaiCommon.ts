@@ -81,6 +81,19 @@ function toolResultContent(block: Anthropic.ToolResultBlockParam): string | Open
   if (c === undefined) return '';
   if (typeof c === 'string') return c;
 
+  // 裸对象防御：MCP 工具可能输出裸 image/text 对象（非数组），cc-switch #6170 实测
+  // SenseNova 等严格网关会因此 400。按 type 分发处理，避免 for...of 崩溃。
+  if (!Array.isArray(c)) {
+    const obj = c as unknown as Record<string, unknown>;
+    if (obj.type === 'image' && typeof obj.data === 'string' && typeof obj.mimeType === 'string') {
+      return [{ type: 'image_url', image_url: { url: `data:${obj.mimeType};base64,${obj.data}` } }];
+    }
+    if (obj.type === 'text' && typeof obj.text === 'string') {
+      return obj.text;
+    }
+    return '';  // 无法识别的裸对象，丢弃
+  }
+
   const parts: OpenAiContentPart[] = [];
   for (const part of c) {
     if (part.type === 'text') {
