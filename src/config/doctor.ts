@@ -257,6 +257,15 @@ export async function runDoctorConfig(
   const lines = [`ok: ${target} 解析与校验通过`];
   for (const w of collectConfigWarnings(t)) lines.push(`warn: ${formatWarningZh(w)}`);
 
+  // media_keep_recent 配置提示（用户可能不知道这个键的存在，doctor 输出明示当前生效值）
+  const mediaKeepRecent = t['media_keep_recent'];
+  if (typeof mediaKeepRecent === 'number' && Number.isFinite(mediaKeepRecent)) {
+    const n = Math.max(0, Math.floor(mediaKeepRecent));
+    lines.push(`info: media_keep_recent = ${n}（媒体降级时保留最近 ${n} 张图，0 = 全部换占位）`);
+  } else {
+    lines.push(`info: media_keep_recent 未配置，缺省 3（媒体降级时保留最近 3 张图）`);
+  }
+
   // capabilities 实测（可选）：发真实请求验证 image_in 是否真实支持
   if (options?.testCapabilities === true) {
     lines.push('');
