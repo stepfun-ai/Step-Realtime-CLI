@@ -161,4 +161,83 @@ describe('read_media', () => {
     expect(r.content).toContain('视频');
     expect(r.content).toContain('暂不支持');
   });
+
+  it('probe 模式：只回元数据不交付图片，小图建议无需分块', async () => {
+    writePng('small.png', await pngBytes(100, 80));
+    const r = await executeTool('read_media', { path: 'small.png', probe: true }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.images).toBeUndefined(); // 不交付图片
+    expect(r.content).toContain('图片元数据');
+    expect(r.content).toContain('100×80');
+    expect(r.content).toContain('无需分块');
+  });
+
+  it('probe 模式：长图给出按高度方向的建议分块，末块按剩余收窄', async () => {
+    // 508×30173 长图（模拟真实公众号长截图）
+    writePng('tall.png', await pngBytes(508, 30173));
+    const r = await executeTool('read_media', { path: 'tall.png', probe: true }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.images).toBeUndefined();
+    expect(r.content).toContain('508×30173');
+    expect(r.content).toContain('建议分');
+    expect(r.content).toContain('高度方向');
+    // 第一块 y=0 height=1568
+    expect(r.content).toContain('{x:0,y:0,width:508,height:1568}');
+    // 末块：30173 = 19×1568 + 381，最后一块 height 应收窄为 381
+    expect(r.content).toContain(`{x:0,y:${19 * 1568},width:508,height:${30173 - 19 * 1568}}`);
+    // 验证所有建议 region 照抄不超界（重新调用 read_media 逐个试）
+    const count = Math.ceil(30173 / 1568);
+    for (let i = 0; i < count; i++) {
+      const y = i * 1568;
+      const h = Math.min(1568, 30173 - y);
+      const rr = await executeTool(
+        'read_media',
+        { path: 'tall.png', region: { x: 0, y, width: 508, height: h } },
+        ctx,
+      );
+      expect(rr.isError, `建议 region 第 ${i} 块不应超界`).toBe(false);
+    }
+  });
+
+  it('probe 模式：宽图给出按宽度方向的建议分块', async () => {
+    writePng('wide.png', await pngBytes(4000, 800));
+    const r = await executeTool('read_media', { path: 'wide.png', probe: true }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.content).toContain('宽度方向');
+    expect(r.content).toContain('{x:0,y:0,width:1568,height:800}');
+  });
+
+  it('region 超限错误：自动建议 clamp 后的可重试 region', async () => {
+    writePng('small.png', await pngBytes(100, 80));
+    const r = await executeTool(
+      'read_media',
+      { path: 'small.png', region: { x: 90, y: 0, width: 50, height: 50 } },
+      ctx,
+    );
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('超出图片范围');
+    // 建议 region：x 保持 90（在图内），width 收窄为 100-90=10
+    expect(r.content).toContain('建议改用 region {x:90,y:0,width:10,height:50}');
+    expect(r.content).toContain('probe:true');
+    // 按建议 region 重试应成功
+    const r2 = await executeTool(
+      'read_media',
+      { path: 'small.png', region: { x: 90, y: 0, width: 10, height: 50 } },
+      ctx,
+    );
+    expect(r2.isError).toBe(false);
+  });
+
+  it('region 超限（起点已超界）：建议 clamp 起点到图内', async () => {
+    writePng('small.png', await pngBytes(100, 80));
+    // y=200 远超 height=80
+    const r = await executeTool(
+      'read_media',
+      { path: 'small.png', region: { x: 0, y: 200, width: 50, height: 50 } },
+      ctx,
+    );
+    expect(r.isError).toBe(true);
+    // y clamp 到 79，height 收窄为 80-79=1
+    expect(r.content).toContain('建议改用 region {x:0,y:79,width:50,height:1}');
+  });
 });

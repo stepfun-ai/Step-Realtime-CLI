@@ -30,6 +30,10 @@ const schema = z.object({
     .boolean()
     .optional()
     .describe('true = 跳过降采样按原图交付；原始字节超 4MB 时会明确报错，建议改用 region 分块读。'),
+  probe: z
+    .boolean()
+    .optional()
+    .describe('true = 只探测元数据（格式/尺寸/字节数/建议分块），不交付图片。用于分块读大图前获取精确尺寸，避免盲目猜 region。'),
 });
 
 type Input = z.infer<typeof schema>;
@@ -72,10 +76,55 @@ function buildNote(meta: ImageMeta, rawBytes: number, delivery: string): string 
   );
 }
 
+/**
+ * 组装 probe 旁注：元数据 + 建议分块方案。
+ *
+ * 建议分块的口径：按交付预算反推每个 region 的最大边长，让单次 region 读取
+ * 既不超字节预算也不触发降采样（文字清晰度最优）。长图（高远大于宽）按高度
+ * 方向切，宽图按宽度方向切；短边图直接说「无需分块」。
+ *
+ * 边界对齐：最后一块用 min(剩余, 块高) 收尾，调用方直接照抄即可不超界——
+ * 这是「region 超出图片范围」试错的主要消除手段。
+ */
+function buildProbeNote(meta: ImageMeta, rawBytes: number): string {
+  const { width, height, mime } = meta;
+  const longEdge = Math.max(width, height);
+  const base =
+    `<system>图片元数据：${mime}，原始 ${rawBytes} 字节，原始尺寸 ${width}×${height}。`;
+
+  // 短边图（长边 ≤ 交付上限）：无需分块
+  if (longEdge <= READ_MEDIA_MAX_EDGE_PX && rawBytes <= READ_MEDIA_IMAGE_BYTE_BUDGET) {
+    return base + '尺寸与字节均在交付预算内，无需分块，直接读取即可。</system>';
+  }
+
+  // 建议块高：按交付长边上限切（每块长边 ≤1568，降采样后文字仍清晰）
+  const isTall = height > width;
+  const chunkSpan = READ_MEDIA_MAX_EDGE_PX;
+  const count = Math.ceil((isTall ? height : width) / chunkSpan);
+  const regions: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const start = i * chunkSpan;
+    const span = Math.min(chunkSpan, (isTall ? height : width) - start);
+    if (span <= 0) break;
+    regions.push(
+      isTall
+        ? `{x:0,y:${start},width:${width},height:${span}}`
+        : `{x:${start},y:0,width:${span},height:${height}}`,
+    );
+  }
+  const axis = isTall ? '高度' : '宽度';
+  return (
+    base +
+    `超出交付预算，建议分 ${count} 块按${axis}方向读取。建议 region（原图坐标，直接可用）：` +
+    regions.join('、') +
+    '。最后一块已按剩余边界收窄，照抄不会超界。</system>'
+  );
+}
+
 export const readMediaTool: ToolDef<Input> = {
   name: 'read_media',
   description:
-    '读取本地图片文件，把图片内容回传给模型看。支持 png/jpeg/gif/bmp/webp；超预算（>4MB 或长边 >1568px）会自动等比降采样，可用 region 只看原图某个区域。视频/音频 v1 暂不支持。',
+    '读取本地图片文件，把图片内容回传给模型看。支持 png/jpeg/gif/bmp/webp；超预算（>4MB 或长边 >1568px）会自动等比降采样，可用 region 只看原图某个区域。读大图/长图前先用 probe:true 拿精确尺寸与建议分块，避免盲目猜 region 报错。视频/音频 v1 暂不支持。',
   schema,
   access: (input, ctx) => ({ kind: 'read', path: resolvePath(ctx.cwd, input.path) }),
   async execute(input, ctx) {
@@ -122,6 +171,15 @@ export const readMediaTool: ToolDef<Input> = {
       return fail(`不是可识别的图片文件：${input.path}`);
     }
 
+    // probe 模式：只回元数据，不交付图片。给出建议分块让调用方一次算准 region，
+    // 不再靠「猜 region → 报错 → 再猜」的试错循环（30000px 长图场景的真实痛点）。
+    if (input.probe === true) {
+      return {
+        content: buildProbeNote(meta, buf.length),
+        isError: false,
+      };
+    }
+
     const longEdge = Math.max(meta.width, meta.height);
     const withinBudget = buf.length <= READ_MEDIA_IMAGE_BYTE_BUDGET && longEdge <= READ_MEDIA_MAX_EDGE_PX;
 
@@ -164,8 +222,16 @@ export const readMediaTool: ToolDef<Input> = {
     if (input.region !== undefined) {
       const r = input.region;
       if (r.x + r.width > meta.width || r.y + r.height > meta.height) {
+        // 给出可立即重试的建议 region：起点 clamp 到图内、跨度按剩余收窄。
+        // 消除「猜 region → 超界报错 → 再猜」的循环（30000px 长图真实痛点）。
+        const x2 = Math.min(r.x, Math.max(0, meta.width - 1));
+        const y2 = Math.min(r.y, Math.max(0, meta.height - 1));
+        const w2 = Math.min(r.width, meta.width - x2);
+        const h2 = Math.min(r.height, meta.height - y2);
         return fail(
-          `region 超出图片范围（原图 ${meta.width}×${meta.height}，区域 x=${r.x},y=${r.y},w=${r.width},h=${r.height}）。`,
+          `region 超出图片范围（原图 ${meta.width}×${meta.height}，区域 x=${r.x},y=${r.y},w=${r.width},h=${r.height}）。` +
+            `建议改用 region {x:${x2},y:${y2},width:${w2},height:${h2}}（已按边界收窄）。` +
+            '或先用 probe:true 拿完整分块方案。',
         );
       }
       image.crop({ x: r.x, y: r.y, w: r.width, h: r.height });
