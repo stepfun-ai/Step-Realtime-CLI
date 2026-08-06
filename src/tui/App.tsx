@@ -3082,10 +3082,10 @@ export function App({
           items={modelPickerItems}
           hasHistory={history.current.length > 0}
           initialChannel={modelPickerInitialChannel}
-          onSelect={(alias) => {
+          onSelect={(alias, sessionOnly) => {
             setModelPickerOpen(false);
             setModelPickerInitialChannel(undefined);
-            if (alias !== null) applyModelAlias(alias);
+            if (alias !== null) applyModelAlias(alias, { persistDefault: !sessionOnly });
           }}
         />
       ) : thinkPickerOpen ? (

@@ -182,6 +182,8 @@ Plan mode is session-level state, persisted on toggle and read back when the ses
 
 `/model <alias>` switches directly by text, skipping the picker. Either way, confirming rebuilds the provider from the alias's merged config, the context window follows along, and the status bar shows the new model's display name. Confirming also updates the top-level `model` in config.toml to the chosen alias, so the next new session uses it (the two cases of a `step --model` command-line override and resuming an old session with `/resume` are not written back).
 
+**Shift+Enter for session-only switch**: in the picker, pressing Shift+Enter confirms the model switch but does not write back to config.toml — useful for "try another model for this turn, keep the old one as default". Enter means "switch and set as default"; Shift+Enter means "switch for this session only".
+
 `/think` controls thinking depth (available only on channels using the anthropic protocol with `[thinking]` enabled): with no argument it opens the level picker (degrading to a text list when the session is busy), `/think <level>` switches directly, and `/think off` stops sending the thinking field for this session. The level table comes from `[thinking.levels]` (defaulting to low/medium/high = 1024/4096/32000), and the current level is shown next to the model name in the status bar. Switching affects only the current session and is not written back to config.toml (use `default_level` to persist it); when the session already has history, switching warns that the prompt cache is invalidated. If the level you switch to leaves too little room for the response under the current `max_tokens`, a warning is given, but it is not hard-blocked.
 
 ## Switching providers
