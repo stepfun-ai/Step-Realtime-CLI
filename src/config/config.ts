@@ -164,6 +164,12 @@ export interface ModelEntry {
   displayName?: string;
   /** 能力标记（如 thinking / image_in），原样透传，消费方自己解释。 */
   capabilities?: string[];
+  /**
+   * 按别名覆盖媒体降级保留张数（config.toml [models.*] media_keep_recent）。
+   * 缺省继承顶层 media_keep_recent，再缺省 10。通道限制差异大（step-3.7 实测
+   * 60 张、Gemini 10 张、GLM 5 张），宽松通道可多留、严格通道少留。
+   */
+  mediaKeepRecent?: number;
 }
 
 /** 用户可配置 hooks 的合法事件名集合（其余事件名视为非法，整条跳过）。 */
@@ -260,9 +266,12 @@ export interface StepCodeConfig {
   /** 按名排除的 skill 清单（config.toml disabled_skills）。合并完成后统一过滤，任何来源的同名 skill 都不加载；用于屏蔽不归你管的目录（团队共享 .agents/skills 等）里的个别 skill。 */
   disabledSkills?: string[];
   /**
-   * 媒体降级时保留的最近图片张数（config.toml media_keep_recent）。缺省 3。
+   * 媒体降级时保留的最近图片张数（config.toml media_keep_recent）。缺省 10。
+   * 全通道生效：stepfun 走 StepfunAdapter.send 的重投影，其余通道走
+   * withMediaDegradation wrapper（factory.ts 装配）。别名的 [models.*]
+   * media_keep_recent 可覆盖（resolveModelEntry 合并）。
    * 触发 413/400 图片超限时，media-degraded 档只把更旧的图换成占位文本、保留最近 N 张，
-   * 避免「全剥光、模型变瞎」。仅 stepfun 通道的错误驱动重投影生效；0 = 旧行为（全换占位）。
+   * 避免「全剥光、模型变瞎」。0 = 旧行为（全换占位）。
    */
   mediaKeepRecentImages?: number;
   /** [models.<别名>] 模型别名表（渠道与模型分离）。未配置或全部无效时键不进结果对象。 */
@@ -873,6 +882,8 @@ export function resolveModels(raw: unknown): Record<string, ModelEntry> | undefi
       }
       entry.capabilities = normalized;
     }
+    const mediaKeepRecent = asNumber(t['media_keep_recent']);
+    if (mediaKeepRecent !== undefined) entry.mediaKeepRecent = Math.max(0, Math.floor(mediaKeepRecent));
     out[alias] = entry;
   }
   return Object.keys(out).length > 0 ? out : undefined;
@@ -1012,6 +1023,8 @@ export function resolveModelEntry(config: StepCodeConfig, name: string): StepCod
     // capabilities 只在命中别名时带入（别名未声明则 undefined，覆盖掉 spread 来的旧值）；
     // 裸模型 / 未命中别名（返回 null 的路径）不带
     capabilities: entry.capabilities,
+    // mediaKeepRecent 按别名覆盖，未声明继承顶层（再缺省由工厂/use 点补 10）
+    mediaKeepRecentImages: entry.mediaKeepRecent ?? config.mediaKeepRecentImages,
   };
 }
 

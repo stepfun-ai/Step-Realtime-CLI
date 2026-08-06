@@ -21,6 +21,13 @@ const MEDIA_BLOCK_TYPES = new Set(['image', 'document']);
 /** 媒体块占位文本：如实告知模型此处有媒体被省略。 */
 const IMAGE_OMITTED_TEXT = '[image omitted: model has no image input]';
 const DOCUMENT_OMITTED_TEXT = '[document omitted: model has no document input]';
+/**
+ * 降级重投影换下的旧图占位文本：必须保留「原图曾存在、因 API 限制被移除」的语义。
+ * 模型在前面的轮次可能描述过这些图，只写 [image omitted] 会让它以为自己记错了；
+ * 写明原因它才能把「我看过的图」和「现在看不到」调和起来（失忆问题的缓解：
+ * 公开 issue 里有「占位语义不清导致模型反复引用已不可见的图」的真实案例）。
+ */
+const IMAGE_DEGRADED_TEXT = '[image removed: exceeded API image limit, older images dropped to retry]';
 
 /** 重投影档位（数组序即降级顺序）。 */
 export const REPROJECTION_LEVELS = ['normal', 'media-degraded', 'media-stripped', 'strict'] as const;
@@ -32,6 +39,14 @@ function mediaPlaceholder(block: Block): Block {
   return {
     type: 'text',
     text: block.type === 'document' ? DOCUMENT_OMITTED_TEXT : IMAGE_OMITTED_TEXT,
+  };
+}
+
+/** 降级重投影的占位（与主动降级区分文案：这里是「图曾被看到、因超限被移除」）。 */
+function degradedPlaceholder(block: Block): Block {
+  return {
+    type: 'text',
+    text: block.type === 'document' ? DOCUMENT_OMITTED_TEXT : IMAGE_DEGRADED_TEXT,
   };
 }
 
@@ -125,7 +140,7 @@ export function applyReprojectionLevel(
     mapBlocks(msg, (block) => {
       if (isMediaBlock(block)) {
         if (level === 'media-degraded') {
-          return keep !== undefined && keep.has(block) ? block : mediaPlaceholder(block);
+          return keep !== undefined && keep.has(block) ? block : degradedPlaceholder(block);
         }
         return null;
       }
@@ -139,14 +154,59 @@ export function applyReprojectionLevel(
 }
 
 /**
- * 判断错误是否可触发重投影：413（载荷过大）与 400（媒体格式/结构问题）可降级；
- * 上下文溢出（400 里的特定子类）不可——那要靠压缩历史解决，降级无益。
+ * 各通道「图片/媒体超限」报错文案的方言集合（全部来自真实 issue 与实测）。
+ *
+ * 背景：同一语义（媒体太多/太大）在不同厂商的报错文案完全不同——
+ * - stepfun 实测（2026-08-06）：`Input images too many. model: ..., max: 60, input: 61`
+ * - Anthropic 协议（公开 issue 实录）：`image exceeds 5 MB maximum` /
+ *   `image dimensions exceed max allowed size (for many-image requests)`
+ * - Gemini/Vertex（多厂商代理层 issue 实录）：`You can only include 10 image links`
+ * - OpenAI 兼容网关（公开 issue 实录）：`Image base64 size ... exceeds API limit`
+ * - vLLM 系推理端：`At most N image(s) may be provided in one request`
+ *
+ * 判定原则：只在文案**明确指向媒体**时算可重投影。裸 400（参数错误等）不匹配任何
+ * 关键词时不降级——把普通 400 也降级会掩盖真正的调用 bug。413（载荷过大）不加
+ * 关键词约束：该状态码语义唯一（请求实体过大），且媒体是 bulk 请求里唯一可能
+ * 撑爆载荷的内容。
+ */
+const MEDIA_ERROR_PATTERNS: readonly RegExp[] = [
+  /too many images|images too many/i,
+  /image(s)? (exceeds?|too (large|many|big))/i,
+  /image dimensions exceed/i,
+  /\d+ image links/i,
+  /at most \d+ image/i,
+  /image base64 size.*exceeds/i,
+  /image.*(limit|maximum)/i,
+  /payload (too )?large/i,
+];
+
+/** 从错误上提取可匹配的文本（message + error.type，覆盖 SDK 包装与裸 Error）。 */
+function errorText(err: unknown): string {
+  if (err instanceof Error) return `${err.message} ${err.name}`;
+  return String(err);
+}
+
+/**
+ * 判断错误是否可触发重投影。
+ *
+ * 两条路径：
+ * - 413（载荷过大）：语义唯一，直接可降级。
+ * - 400：只在文案命中媒体方言（{@link MEDIA_ERROR_PATTERNS}）且不是上下文溢出时
+ *   可降级——400 是「请求无效」的泛化码，裸 400 降级会掩盖真正的调用 bug。
+ *
+ * 错误类型不限于 Anthropic.APIError：openai 通道的 httpErrorToApiError 已把
+ * HTTP 错误统一包装成 Anthropic.APIError（status + 原始文案保留），但裸 Error
+ * （网关非 JSON 响应等）也走文案匹配兜底。
  */
 export function isReprojectableError(err: unknown): boolean {
-  if (!(err instanceof Anthropic.APIError)) return false;
-  if (err.status === 413) return true;
-  if (err.status === 400) return !isContextOverflowError(err);
-  return false;
+  const status =
+    err instanceof Anthropic.APIError && typeof err.status === 'number' ? err.status : undefined;
+  if (status === 413) return true;
+  if (status !== undefined && status !== 400) return false;
+  // status 为 400 或错误无 status（裸 Error）：靠文案判定
+  if (err instanceof Anthropic.APIError && isContextOverflowError(err)) return false;
+  const text = errorText(err);
+  return MEDIA_ERROR_PATTERNS.some((p) => p.test(text));
 }
 
 /**
