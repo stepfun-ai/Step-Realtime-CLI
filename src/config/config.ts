@@ -286,6 +286,15 @@ export interface StepCodeConfig {
    * 消费方：read_media 等多模态工具据此做能力门控（经 ToolContext.capabilities 下发）。
    */
   capabilities?: string[];
+  /**
+   * 用户原始选择的模型别名（展开前）。当 config.model 是别名（如 'step37-plan'）时，
+   * 此字段保存该别名；config.model 是裸模型 id 时为 undefined。
+   *
+   * 解决「多别名指向同一真实 id」的歧义：step37 和 step37-plan 都是 step-3.7-flash，
+   * 但渠道不同（stepfun vs stepfun-plan）。App 侧需要知道用户实际选的是哪个别名，
+   * 才能正确初始化 currentModelAliasRef 和 modelLabel。
+   */
+  modelAlias?: string;
 }
 
 const DEFAULT_BASE_URL = 'https://api.stepfun.com';
@@ -1128,7 +1137,13 @@ export function loadConfig(
   const hooks = resolveHooks(toml.hooks);
   if (hooks !== undefined) cfg.hooks = hooks;
   // 最终 model 命中别名时展开一次（--model 别名 / env / toml 顶层 model 写别名均可工作）
-  return resolveModelEntry(cfg, cfg.model) ?? cfg;
+  const resolved = resolveModelEntry(cfg, cfg.model);
+  if (resolved !== null) {
+    // 保留原始别名指针：App 侧需要知道用户选的是哪个别名（多别名指向同一真实 id 时消歧）
+    resolved.modelAlias = cfg.model;
+    return resolved;
+  }
+  return cfg;
 }
 
 /**

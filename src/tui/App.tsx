@@ -225,7 +225,15 @@ export function App({
   const [input, setInput] = useState('');
   const [model, setModel] = useState(initialModel);
   // 状态栏模型显示名：当前模型命中带 displayName 的别名时用 displayName，否则用真实 id。
+  // 优先用 config.modelAlias（用户实际选择的别名）查 displayName，避免多别名指向同一真实 id 时
+  // 反查错（step37/step37-plan 同为 step-3.7-flash，但 displayName 不同）。
   const [modelLabel, setModelLabel] = useState(() => {
+    // 有明确别名指针时直接查该别名
+    if (config.modelAlias !== undefined) {
+      const entry = config.models?.[config.modelAlias];
+      if (entry?.displayName !== undefined) return entry.displayName;
+    }
+    // 无别名指针（裸 id）时回退到真实 id 反查（保持原行为）
     for (const [alias, entry] of Object.entries(config.models ?? {})) {
       if ((entry.model ?? alias) === initialModel && entry.displayName !== undefined) {
         return entry.displayName;
@@ -292,8 +300,9 @@ export function App({
   // 当前模型 id 的 ref（persist 落盘用，避免闭包读陈旧 state；applyModelAlias 切换时同步）
   const modelRef = useRef(initialModel);
   // config.toml 顶层 `model` 的当前值（默认模型指针）：/model 切换时写回并同步此 ref，
-  // 供幂等判定（相等则不重复写文件）。启动值取 config.model。
-  const defaultModelPointerRef = useRef(config.model);
+  // 供幂等判定（相等则不重复写文件）。启动值取 config.modelAlias（原始别名指针）——
+  // 不能用展开后的 config.model（真实 id），否则 /model 切换时 saveDefaultModel 会误写真实 id。
+  const defaultModelPointerRef = useRef(config.modelAlias ?? config.model);
   // 运行时配置持有者：/reload 热重载后整体换引用（对齐 skillsRef/providerRef 模式）。
   // 逐轮现取派读取点（submit/runAgent 参数组装、/model /think /provider 各 case、选择器候选、
   // settle 回调的 background 开关）全部经 configRef.current 取，下一轮请求即按新配置生效。
@@ -305,12 +314,10 @@ export function App({
   const compactionBindingRef = useRef(resolveCompactionBinding(config, compactionProviderCache.current));
   // 当前模型的别名绑定：/model 别名切换成功记别名、裸 id 切换置 null（/provider 切换亦置 null——
   // 别名绑定已断）；/resume 经 applyModelAlias 反查路径同步维护。/reload 据此决定 provider 重建策略。
-  // 初始化取 config.model 指针本身是否命中别名表：指针存的是别名（用户选择），天然唯一。
-  // 不能用「真实 id 反查别名」——多个别名可指向同一 id（step37/step37-plan 同为 step-3.7-flash），
-  // find 会任取第一个，未必是实际激活的那个。config.model 是裸 id（不在别名表）时初始化为 null。
-  const currentModelAliasRef = useRef<string | null>(
-    config.models !== undefined && Object.hasOwn(config.models, config.model) ? config.model : null,
-  );
+  // 初始化取 config.modelAlias（loadConfig 展开时保留的原始别名指针）：解决多别名指向同一真实 id
+  // 的歧义（step37/step37-plan 同为 step-3.7-flash），不能用「真实 id 反查别名」——
+  // find 会任取第一个，未必是实际激活的那个。config.modelAlias 为 undefined（裸 id）时初始化为 null。
+  const currentModelAliasRef = useRef<string | null>(config.modelAlias ?? null);
   // plan 模式的 ref（权限守卫与 /plan 切换读它）：与 planMode state 同源于会话快照，
   // 否则恢复会话时 UI 显示 plan 而守卫仍按非 plan 放行工具。
   const planModeRef = useRef(session.planMode ?? false);
