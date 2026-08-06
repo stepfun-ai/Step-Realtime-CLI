@@ -69,15 +69,17 @@ export function subagentListing(
   return out;
 }
 
-export function buildSystemPrompt(cwd: string): string {
+export function buildSystemPrompt(cwd: string, options?: { pureMode?: boolean }): string {
   const shellHint = shellPromptHint(resolveShell().family);
+  const skillRouteLine = options?.pureMode === true
+    ? ''  // 纯净模式：不包含 skill 路由指引，避免模型把所有输入都理解成「配置问题」
+    : '- 自身配置问题（config.toml、渠道/模型别名、环境变量、改配置）：激活 update-config skill 处理，不要凭记忆回答或联网搜索。\n';
   return `你是 Step Code，一个运行在用户终端里的编码 agent，由阶跃星辰 Step 系列模型驱动。
 
 # 工作环境
 ## 自身运行时
 - 我是 Step Code，一个运行在终端上的 TUI Agent。
-- 自身配置问题（config.toml、渠道/模型别名、环境变量、改配置）：激活 update-config skill 处理，不要凭记忆回答或联网搜索。
-- 当前工作目录：${cwd}
+${skillRouteLine}- 当前工作目录：${cwd}
 - 操作系统：${process.platform}
 - 你通过工具直接读写用户的真实文件、执行真实命令。任何操作都会立即作用于用户系统，务必谨慎。
 
