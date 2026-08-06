@@ -76,6 +76,7 @@ program
   .version(versionLine())
   // 允许位置参数（用于 `step sessions [list|show|delete] <id>` 子命令检测）
   .allowExcessArguments(true)
+  .allowUnknownOption(true)  // doctor config 的 --test-capabilities 是位置参数，不是 commander 选项
   .option('-p, --print [prompt]', '非交互模式：执行单条指令，流式打印结果后退出。prompt 可省略，从 stdin 读取')
   .option('--reflect', '非交互模式：回顾指定/最近会话的完整历史，提炼可复用方法论经验后打印退出')
   .option('-C, --cwd <dir>', '指定工作目录，默认当前目录')
@@ -130,13 +131,15 @@ if (program.args[0] === 'export-debug-zip') {
 // 顶层 `doctor config [path]` 子命令：无头校验 config.toml（不进 TUI、不改文件），退出码 0/非 0。
 // 是内置 update-config skill 变更协议「覆盖前独立校验」一环的入口；放在 loadConfig 之前，
 // 坏配置不能阻塞校验器自身。path 缺省为 ~/.step-code/config.toml。
+// --test-capabilities 是位置参数（不是 commander 选项），从 program.args 里读。
 if (program.args[0] === 'doctor') {
   configureLogger({ mode: 'headless' });
   if (program.args[1] !== 'config') {
-    process.stderr.write('usage: step doctor config [path]\n');
+    process.stderr.write('usage: step doctor config [path] [--test-capabilities]\n');
     process.exit(1);
   }
-  const res = runDoctorConfig(program.args[2]);
+  const testCapabilities = program.args.includes('--test-capabilities');
+  const res = await runDoctorConfig(program.args[2], { testCapabilities });
   if (res.stdout !== undefined) process.stdout.write(res.stdout);
   if (res.stderr !== undefined) process.stderr.write(res.stderr);
   process.exit(res.code);

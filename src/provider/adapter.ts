@@ -76,6 +76,11 @@ export interface StepfunAdapterOptions {
   sendThinking?: boolean;
   /** thinking 构造默认（[thinking] 配置启用时由工厂注入），sendThinking 为 true 才生效。 */
   thinking?: ThinkingParam;
+  /**
+   * media-degraded 档保留的最近图片张数（config.toml media_keep_recent，缺省 3 由
+   * 工厂解析后传入）。0 = 旧行为（全部换占位）。仅 send() 的错误驱动重投影使用。
+   */
+  mediaKeepRecentImages?: number;
   /** 测试注入：替换内部协议 provider（生产缺省用 AnthropicMessagesProvider）。 */
   inner?: ChatProvider;
 }
@@ -95,6 +100,7 @@ export class StepfunAdapter implements StepProvider {
   readonly maxTokens: number;
   private readonly model: string;
   private readonly overrides?: CapabilityOverride[];
+  private readonly mediaKeepRecentImages: number;
   /** 与工厂口径一致的 thinking 开关与构造默认，透传给内部协议 provider。 */
   private readonly sendThinking: boolean;
   private readonly thinking?: ThinkingParam;
@@ -106,6 +112,7 @@ export class StepfunAdapter implements StepProvider {
     this.overrides = options.capabilityOverrides;
     this.sendThinking = options.sendThinking ?? false;
     this.thinking = options.thinking;
+    this.mediaKeepRecentImages = options.mediaKeepRecentImages ?? 0;
     // 内部协议 provider 用 StepMessagesProvider（不是 AnthropicMessagesProvider）：
     // Step 的 /v1/messages 只认顶层 effort，官方的 thinking.budget_tokens 会被接受但
     // 静默无效（实测见 step/stepCommon.ts 头注释）。用官方类等于思考深度完全不受控。
@@ -174,7 +181,7 @@ export class StepfunAdapter implements StepProvider {
         const level = nextReprojectionLevel(err, used);
         if (level === null) throw err;
         used.add(level);
-        messages = applyReprojectionLevel(prepared, level);
+        messages = applyReprojectionLevel(prepared, level, this.mediaKeepRecentImages);
       }
     }
   }

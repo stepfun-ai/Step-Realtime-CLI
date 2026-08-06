@@ -6,8 +6,12 @@ import { fail, type ToolDef } from './types.js';
 
 /** 读入文件硬上限：超过直接拒绝（不读进内存）。 */
 export const READ_MEDIA_MAX_BYTES = 100 * 1024 * 1024;
-/** 交付给模型的图片字节预算：超出则需降采样/裁剪后再交付。 */
-export const READ_MEDIA_IMAGE_BYTE_BUDGET = 4 * 1024 * 1024;
+/**
+ * 交付给模型的图片字节预算：超出则需降采样/裁剪后再交付。
+ * 256KB：图片是上下文里最贵的块，一张超预算的大图对模型读图精度和 token
+ * 成本都不划算（对齐主流视觉 CLI 的交付预算量级）。
+ */
+export const READ_MEDIA_IMAGE_BYTE_BUDGET = 256 * 1024;
 /** 交付图片的长边像素上限：超出则等比降采样（对齐主流视觉模型的推荐输入尺寸）。 */
 export const READ_MEDIA_MAX_EDGE_PX = 1568;
 
@@ -174,7 +178,9 @@ export const readMediaTool: ToolDef<Input> = {
       mime === 'image/jpeg' ? image.getBuffer('image/jpeg', { quality }) : image.getBuffer('image/png');
 
     if (input.full_resolution !== true) {
-      // 等比缩到长边 ≤1568，再按字节预算迭代收缩
+      // 先等比缩到长边 ≤1568，再按双阶梯压进字节预算：
+      // JPEG 走质量阶梯 [85,70,55,40]（PNG 无损，质量参数无效，直接进边长回退）；
+      // 仍超预算则边长 ×0.8 回退，最多 6 轮。对齐主流视觉 CLI 的阶梯思路。
       let w = image.bitmap.width;
       let h = image.bitmap.height;
       const scale = Math.min(1, READ_MEDIA_MAX_EDGE_PX / Math.max(w, h));
@@ -183,14 +189,21 @@ export const readMediaTool: ToolDef<Input> = {
         h = Math.max(1, Math.round(h * scale));
         image.resize({ w, h });
       }
-      let out = await encode(85);
+      const QUALITY_LADDER = [85, 70, 55, 40];
+      // JPEG 走质量阶梯，PNG 无损直接编码一次；out 在两条分支都必然被赋值。
+      let out: Buffer = await encode(mime === 'image/jpeg' ? QUALITY_LADDER[0]! : 85);
+      if (mime === 'image/jpeg') {
+        for (let i = 1; i < QUALITY_LADDER.length && out.length > READ_MEDIA_IMAGE_BYTE_BUDGET; i++) {
+          out = await encode(QUALITY_LADDER[i]!);
+        }
+      }
       let shrink = 0;
-      while (out.length > READ_MEDIA_IMAGE_BYTE_BUDGET && shrink < 4) {
+      while (out.length > READ_MEDIA_IMAGE_BYTE_BUDGET && shrink < 6) {
         shrink++;
-        w = Math.max(1, Math.round(w * 0.7));
-        h = Math.max(1, Math.round(h * 0.7));
+        w = Math.max(1, Math.round(w * 0.8));
+        h = Math.max(1, Math.round(h * 0.8));
         image.resize({ w, h });
-        out = await encode(85);
+        out = await encode(mime === 'image/jpeg' ? 40 : 85);
       }
       if (out.length > READ_MEDIA_IMAGE_BYTE_BUDGET) {
         return fail(
