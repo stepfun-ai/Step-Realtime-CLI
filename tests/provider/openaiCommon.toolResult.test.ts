@@ -201,3 +201,58 @@ describe('messagesToOpenAi · tool_result 图片块', () => {
     expect(Array.isArray(out[1]!.content)).toBe(true);
   });
 });
+
+describe('messagesToOpenAi · tool_result 裸对象 content（cc-switch #6170 边缘 case）', () => {
+  it('裸 image 对象 → image_url（MCP 工具真实输出形态）', () => {
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_123',
+            content: { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' } as unknown as Anthropic.ToolResultBlockParam['content'],
+          },
+        ],
+      },
+    ];
+    const out = messagesToOpenAi('', messages);
+    expect(out[0]!.content).toEqual([
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' } },
+    ]);
+  });
+
+  it('裸 text 对象 → string', () => {
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_123',
+            content: { type: 'text', text: 'hello' } as unknown as Anthropic.ToolResultBlockParam['content'],
+          },
+        ],
+      },
+    ];
+    const out = messagesToOpenAi('', messages);
+    expect(out[0]!.content).toBe('hello');
+  });
+
+  it('无法识别的裸对象 → 空字符串（丢弃，不崩溃）', () => {
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_123',
+            content: { type: 'unknown', foo: 'bar' } as unknown as Anthropic.ToolResultBlockParam['content'],
+          },
+        ],
+      },
+    ];
+    const out = messagesToOpenAi('', messages);
+    expect(out[0]!.content).toBe('');
+  });
+});
