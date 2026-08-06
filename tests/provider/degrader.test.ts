@@ -110,7 +110,7 @@ describe('applyReprojectionLevel 档位行为', () => {
   it('media-degraded：媒体块换占位文本，其余不动', () => {
     const out = applyReprojectionLevel(history, 'media-degraded');
     const content = out[0]!.content as Anthropic.ContentBlockParam[];
-    expect(content[0]).toEqual({ type: 'text', text: '[image omitted: model has no image input]' });
+    expect(content[0]).toEqual({ type: 'text', text: '[image removed: exceeded API image limit, older images dropped to retry]' });
     expect(out[1]).toEqual(history[1]);
   });
 
@@ -129,7 +129,7 @@ describe('applyReprojectionLevel 档位行为', () => {
     // 最旧的 imgA 被换占位
     expect((out[0]!.content as Anthropic.ContentBlockParam[])[0]).toEqual({
       type: 'text',
-      text: '[image omitted: model has no image input]',
+      text: '[image removed: exceeded API image limit, older images dropped to retry]',
     });
     // 最近两张（imgB、imgC）原样保留
     const last = out[2]!.content as Anthropic.ContentBlockParam[];
@@ -142,7 +142,7 @@ describe('applyReprojectionLevel 档位行为', () => {
   it('media-degraded keep=0 时维持旧行为（全部换占位）', () => {
     const out = applyReprojectionLevel(history, 'media-degraded', 0);
     const content = out[0]!.content as Anthropic.ContentBlockParam[];
-    expect(content[0]).toEqual({ type: 'text', text: '[image omitted: model has no image input]' });
+    expect(content[0]).toEqual({ type: 'text', text: '[image removed: exceeded API image limit, older images dropped to retry]' });
   });
 
   it('media-degraded 保留计数只算 image，document 块仍换占位', () => {
@@ -176,10 +176,12 @@ describe('applyReprojectionLevel 档位行为', () => {
 });
 
 describe('nextReprojectionLevel 错误驱动档位', () => {
-  const err400 = () => new Anthropic.APIError(400, undefined, 'invalid image', undefined);
+  // 真实媒体方言（stepfun 实测 2026-08-06 的报错文案）
+  const err400 = () =>
+    new Anthropic.APIError(400, undefined, 'Input images too many. model: step-3.7-flash, max: 60, input: 61', undefined);
   const err413 = () => new Anthropic.APIError(413, undefined, 'payload too large', undefined);
 
-  it('413 / 普通 400 可重投影，从 normal 进到 media-degraded', () => {
+  it('413 / 媒体超限 400 可重投影，从 normal 进到 media-degraded', () => {
     const used = new Set<ReprojectionLevel>(['normal']);
     expect(nextReprojectionLevel(err413(), used)).toBe('media-degraded');
     expect(nextReprojectionLevel(err400(), used)).toBe('media-degraded');
@@ -203,7 +205,27 @@ describe('nextReprojectionLevel 错误驱动档位', () => {
     expect(nextReprojectionLevel(overflow, new Set(['normal']))).toBeNull();
   });
 
-  it('500 / 429 / 非 APIError 不重投影', () => {
+  it('裸 400（非媒体方言）不重投影：参数错误不该被降级掩盖', () => {
+    const plain = new Anthropic.APIError(400, undefined, 'invalid_request_error: max_tokens must be positive', undefined);
+    expect(isReprojectableError(plain)).toBe(false);
+    expect(nextReprojectionLevel(plain, new Set(['normal']))).toBeNull();
+  });
+
+  it('各通道媒体方言均可重投影（issue 实录文案）', () => {
+    const dialects = [
+      'image exceeds 5 MB maximum: 7414068 bytes > 5242880 bytes', // Anthropic 协议 issue 实录
+      'image dimensions exceed max allowed size for many-image requests: 2000 pixels', // Anthropic 多图场景
+      'You can only include 10 image links. Please reduce the number accordingly.', // Gemini/Vertex
+      'At most 1 image(s) may be provided in one request.', // vLLM 推理端
+      'Image base64 size (8.4 MB) exceeds API limit (5.0 MB).', // OpenAI 兼容网关 issue 实录
+    ];
+    for (const msg of dialects) {
+      const err = new Anthropic.APIError(400, undefined, msg, undefined);
+      expect(isReprojectableError(err), `方言应可重投影: ${msg}`).toBe(true);
+    }
+  });
+
+  it('500 / 429 / 无媒体关键词的裸 Error 不重投影', () => {
     expect(nextReprojectionLevel(new Anthropic.APIError(500, undefined, 'x', undefined), new Set(['normal']))).toBeNull();
     expect(nextReprojectionLevel(new Anthropic.APIError(429, undefined, 'x', undefined), new Set(['normal']))).toBeNull();
     expect(nextReprojectionLevel(new Error('boom'), new Set(['normal']))).toBeNull();

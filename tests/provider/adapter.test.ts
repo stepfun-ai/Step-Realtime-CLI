@@ -134,22 +134,22 @@ describe('StepfunAdapter.send：错误驱动重投影', () => {
   const mediaHistory: Anthropic.MessageParam[] = [{ role: 'user', content: [imageBlock] }];
 
   it('400 后沿档位降级重发：第二次请求媒体块已换占位文本', async () => {
-    const inner = new MockInner([new Anthropic.APIError(400, undefined, 'bad image', undefined)]);
+    const inner = new MockInner([new Anthropic.APIError(400, undefined, 'Input images too many. max: 60, input: 61', undefined)]);
     const adapter = makeAdapter(inner);
     const res = await adapter.send({ system: 's', tools: [], messages: mediaHistory });
     expect(res.message.content[0]).toMatchObject({ type: 'text', text: 'ok' });
     expect(inner.calls).toHaveLength(2);
     // 第一次按能力表透传图片；第二次走 media-degraded 档换占位文本
     expect(JSON.stringify(inner.calls[0]!.messages)).toContain('base64');
-    expect(JSON.stringify(inner.calls[1]!.messages)).toContain('[image omitted');
+    expect(JSON.stringify(inner.calls[1]!.messages)).toContain('[image removed');
   });
 
   it('连续失败逐档推进，档位用尽后抛出最后一次错误', async () => {
     const inner = new MockInner([
-      new Anthropic.APIError(400, undefined, 'e1', undefined),
-      new Anthropic.APIError(400, undefined, 'e2', undefined),
-      new Anthropic.APIError(400, undefined, 'e3', undefined),
-      new Anthropic.APIError(400, undefined, 'e4', undefined),
+      new Anthropic.APIError(400, undefined, 'Input images too many. max: 60 (e1)', undefined),
+      new Anthropic.APIError(400, undefined, 'Input images too many. max: 60 (e2)', undefined),
+      new Anthropic.APIError(400, undefined, 'Input images too many. max: 60 (e3)', undefined),
+      new Anthropic.APIError(400, undefined, 'Input images too many. max: 60 (e4)', undefined),
     ]);
     const adapter = makeAdapter(inner);
     await expect(adapter.send({ system: 's', tools: [], messages: mediaHistory })).rejects.toThrow(

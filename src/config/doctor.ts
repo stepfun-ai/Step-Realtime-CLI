@@ -263,7 +263,7 @@ export async function runDoctorConfig(
     const n = Math.max(0, Math.floor(mediaKeepRecent));
     lines.push(`info: media_keep_recent = ${n}（媒体降级时保留最近 ${n} 张图，0 = 全部换占位）`);
   } else {
-    lines.push(`info: media_keep_recent 未配置，缺省 3（媒体降级时保留最近 3 张图）`);
+    lines.push(`info: media_keep_recent 未配置，缺省 10（媒体降级时保留最近 10 张图）`);
   }
 
   // capabilities 实测（可选）：发真实请求验证 image_in 是否真实支持
