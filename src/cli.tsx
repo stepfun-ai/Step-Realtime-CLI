@@ -518,8 +518,11 @@ const session = resolved.session;
 const resumeDelivered: ReadonlySet<string> = resolved.delivered;
 // 模型来源优先级：命令行 --model 显式覆盖 > 会话存储的 model（恢复时保留）> config 默认。
 // opts.model 存在表示用户命令行显式指定，覆盖会话；否则新建会话用 config.model，恢复会话保留其存储值。
+// session.model 存的是展开后的真实模型 id（不是别名），保证后续 provider.stream 直接用。
 if (opts.model !== undefined) {
-  session.model = opts.model;  // ← 修复：原先是 session.model = config.model，丢弃了用户指定的别名
+  // opts.model 可能是别名（如 'router'）或裸模型 id（如 'step-router-v1'）；
+  // loadConfig 已经展开过一次（config.model 是真实 id），这里直接用展开后的值。
+  session.model = config.model;
 } else if (session.model === '' || session.model === undefined) {
   session.model = config.model;
 }
