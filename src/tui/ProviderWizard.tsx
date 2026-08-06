@@ -143,9 +143,9 @@ export function ProviderWizard({
   }, [step, catalogUrl]);
 
   /** 共用写入出口：成功/失败都经 onDone 上报（写入器内部已备份 + doctor 校验 + 失败回滚）。 */
-  const finish = (input: AppendProviderInput): void => {
+  const finish = async (input: AppendProviderInput): Promise<void> => {
     try {
-      const result = appendProviderConfig(input);
+      const result = await appendProviderConfig(input);
       onDone({ kind: 'added', providerId: input.provider.id, aliasCount: result.aliases.length });
     } catch (e) {
       onDone({ kind: 'failed', message: (e as Error).message });

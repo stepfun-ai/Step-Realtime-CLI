@@ -1454,10 +1454,10 @@ export function App({
 
   /** 渠道管理面板的删除回调：落盘摘除（备份 + 校验 + 失败回滚在写入器内）后刷新配置并反馈。 */
   const removeProvider = useCallback(
-    (id: string): void => {
+    async (id: string): Promise<void> => {
       setProviderManagerOpen(false);
       try {
-        const result = removeProviderConfig(id);
+        const result = await removeProviderConfig(id);
         pushItem({
           kind: 'note',
           text: t('app.provider.deleted', {

@@ -118,7 +118,7 @@ export function renderSections(input: AppendProviderInput, newline: string): str
  * @param path 目标文件路径，缺省 ~/.step-code/config.toml（测试注入用）
  * @throws 冲突 / 原文件语法错误 / doctor 校验失败（已回滚）
  */
-export function appendProviderConfig(input: AppendProviderInput, path?: string): AppendProviderResult {
+export async function appendProviderConfig(input: AppendProviderInput, path?: string): Promise<AppendProviderResult> {
   const target = path ?? defaultConfigPath();
   const existed = existsSync(target);
   const text = existed ? readFileSync(target, 'utf8') : '';
@@ -173,7 +173,7 @@ export function appendProviderConfig(input: AppendProviderInput, path?: string):
   if (existed) copyFileSync(target, backupPath);
   writeFileSync(target, body, 'utf8');
 
-  const doctor = runDoctorConfig(target);
+  const doctor = await runDoctorConfig(target);
   if (doctor.code !== 0) {
     // 回滚：有备份恢复原文件（并清掉备份），首次创建则删掉新文件
     if (existed) {
@@ -215,7 +215,7 @@ function normalizeHeader(inner: string): string {
  * @param path 目标文件路径，缺省 ~/.step-code/config.toml（测试注入用）
  * @throws 文件不存在 / 文件语法错误 / 渠道不存在 / doctor 校验失败（已回滚）
  */
-export function removeProviderConfig(providerId: string, path?: string): RemoveProviderResult {
+export async function removeProviderConfig(providerId: string, path?: string): Promise<RemoveProviderResult> {
   const target = path ?? defaultConfigPath();
   if (!existsSync(target)) {
     throw new Error(`config.toml 不存在，没有可删除的渠道：${target}`);
@@ -311,7 +311,7 @@ export function removeProviderConfig(providerId: string, path?: string): RemoveP
   copyFileSync(target, backupPath);
   writeFileSync(target, body, 'utf8');
 
-  const doctor = runDoctorConfig(target);
+  const doctor = await runDoctorConfig(target);
   if (doctor.code !== 0) {
     // 回滚：恢复备份（并清掉备份文件，与 append 写入器同款语义）
     renameSync(backupPath, target);

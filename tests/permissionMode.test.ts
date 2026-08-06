@@ -57,17 +57,17 @@ function writeHomeConfig(content: string): void {
 }
 
 describe('resolvePermissionMode', () => {
-  it('三个合法值原样返回', () => {
+  it('三个合法值原样返回', async () => {
     expect(resolvePermissionMode('manual')).toBe('manual');
     expect(resolvePermissionMode('auto')).toBe('auto');
     expect(resolvePermissionMode('yolo')).toBe('yolo');
   });
 
-  it('未配置 → undefined（键不进结果对象，缺省 manual 由消费方落）', () => {
+  it('未配置 → undefined（键不进结果对象，缺省 manual 由消费方落）', async () => {
     expect(resolvePermissionMode(undefined)).toBeUndefined();
   });
 
-  it('非法值抛配置错误（安全相关配置，不静默吞）', () => {
+  it('非法值抛配置错误（安全相关配置，不静默吞）', async () => {
     expect(() => resolvePermissionMode('yes')).toThrow(/permission_mode/);
     expect(() => resolvePermissionMode('MANUAL')).toThrow(/manual \| auto \| yolo/);
     expect(() => resolvePermissionMode(true)).toThrow(/permission_mode/);
@@ -76,42 +76,42 @@ describe('resolvePermissionMode', () => {
 });
 
 describe('loadConfig permission_mode 接线', () => {
-  it('未配置 → permissionMode 键不进结果对象（与现状行为一致）', () => {
+  it('未配置 → permissionMode 键不进结果对象（与现状行为一致）', async () => {
     writeHomeConfig('provider = "stepfun"\n');
     const cfg = loadConfig(dir);
     expect(cfg.permissionMode).toBeUndefined();
     expect('permissionMode' in cfg).toBe(false);
   });
 
-  it('合法值进结果对象', () => {
+  it('合法值进结果对象', async () => {
     writeHomeConfig('permission_mode = "yolo"\n');
     expect(loadConfig(dir).permissionMode).toBe('yolo');
   });
 
-  it('非法值 → loadConfig 抛配置错误', () => {
+  it('非法值 → loadConfig 抛配置错误', async () => {
     writeHomeConfig('permission_mode = "yes"\n');
     expect(() => loadConfig(dir)).toThrow(/permission_mode/);
   });
 });
 
 describe('resolveStartupMode 优先级链（flag > config > session > manual）', () => {
-  it('全缺省 → manual（config 未设置时与历史行为一致）', () => {
+  it('全缺省 → manual（config 未设置时与历史行为一致）', async () => {
     expect(resolveStartupMode({})).toBe('manual');
   });
 
-  it('只有 config → config 生效', () => {
+  it('只有 config → config 生效', async () => {
     expect(resolveStartupMode({ config: 'auto' })).toBe('auto');
   });
 
-  it('只有 session（恢复会话）→ session 生效', () => {
+  it('只有 session（恢复会话）→ session 生效', async () => {
     expect(resolveStartupMode({ session: 'yolo' })).toBe('yolo');
   });
 
-  it('config 压过 session（常驻表态压过会话历史值）', () => {
+  it('config 压过 session（常驻表态压过会话历史值）', async () => {
     expect(resolveStartupMode({ config: 'manual', session: 'yolo' })).toBe('manual');
   });
 
-  it('flag 永远赢（一次性意图压过常驻偏好与会话历史）', () => {
+  it('flag 永远赢（一次性意图压过常驻偏好与会话历史）', async () => {
     expect(resolveStartupMode({ flag: 'yolo', config: 'manual', session: 'auto' })).toBe('yolo');
     expect(resolveStartupMode({ flag: 'auto', config: 'yolo' })).toBe('auto');
     expect(resolveStartupMode({ flag: 'auto', session: 'yolo' })).toBe('auto');
@@ -119,23 +119,23 @@ describe('resolveStartupMode 优先级链（flag > config > session > manual）'
 });
 
 describe('doctor permission_mode 校验', () => {
-  it('合法 permission_mode → code 0 且无 warn', () => {
+  it('合法 permission_mode → code 0 且无 warn', async () => {
     const p = writeToml('permission_mode = "auto"\n');
-    const res = runDoctorConfig(p);
+    const res = await runDoctorConfig(p);
     expect(res.code).toBe(0);
     expect(res.stdout).not.toContain('warn:');
   });
 
-  it('非法 permission_mode → code 1（复用 loadConfig 抛错路径）', () => {
+  it('非法 permission_mode → code 1（复用 loadConfig 抛错路径）', async () => {
     const p = writeToml('permission_mode = "yes"\n');
-    const res = runDoctorConfig(p);
+    const res = await runDoctorConfig(p);
     expect(res.code).toBe(1);
     expect(res.stderr).toContain('permission_mode');
   });
 
-  it('permission_mode 是已知顶层键，不再触发未知键 warn', () => {
+  it('permission_mode 是已知顶层键，不再触发未知键 warn', async () => {
     const p = writeToml('permission_mode = "manual"\n');
-    const res = runDoctorConfig(p);
+    const res = await runDoctorConfig(p);
     expect(res.code).toBe(0);
     expect(res.stdout).not.toContain('未知顶层键');
   });
@@ -158,14 +158,14 @@ function makeCfg(overrides: Partial<StepCodeConfig> = {}): StepCodeConfig {
 }
 
 describe('reload diff 的 permission_mode 归类', () => {
-  it('permission_mode 变更进 diff 且标 restart（一次性固化：只在启动/新会话读取）', () => {
+  it('permission_mode 变更进 diff 且标 restart（一次性固化：只在启动/新会话读取）', async () => {
     const changes = diffConfig(makeCfg(), makeCfg({ permissionMode: 'auto' }));
     expect(changes).toEqual([
       { kind: 'added', path: 'permission_mode', oldText: undefined, newText: 'auto', restart: true },
     ]);
   });
 
-  it('permission_mode 移除也标 restart', () => {
+  it('permission_mode 移除也标 restart', async () => {
     const changes = diffConfig(makeCfg({ permissionMode: 'yolo' }), makeCfg());
     expect(changes).toEqual([
       { kind: 'removed', path: 'permission_mode', oldText: 'yolo', newText: undefined, restart: true },
