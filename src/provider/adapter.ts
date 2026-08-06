@@ -77,7 +77,7 @@ export interface StepfunAdapterOptions {
   /** thinking 构造默认（[thinking] 配置启用时由工厂注入），sendThinking 为 true 才生效。 */
   thinking?: ThinkingParam;
   /**
-   * media-degraded 档保留的最近图片张数（config.toml media_keep_recent，缺省 3 由
+   * media-degraded 档保留的最近图片张数（config.toml media_keep_recent，缺省 10 由
    * 工厂解析后传入）。0 = 旧行为（全部换占位）。仅 send() 的错误驱动重投影使用。
    */
   mediaKeepRecentImages?: number;

@@ -8,6 +8,7 @@ import { t } from '../i18n.js';
 import { StepfunAdapter } from './adapter.js';
 import { capabilitiesToOverride } from './capability-registry.js';
 import { AnthropicMessagesProvider } from './anthropicMessages.js';
+import { withMediaDegradation } from './mediaDegradation.js';
 import { OpenAiChatProvider } from './openaiChat.js';
 import { OpenAiResponsesProvider } from './openaiResponses.js';
 import { withHistoryNormalization } from './normalizedProvider.js';
@@ -69,27 +70,33 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
     : undefined;
 
   if (preset.protocol === 'openai') {
-    return withHistoryNormalization(
-      new OpenAiChatProvider({
-        apiKey,
-        baseUrl: config.baseUrl,
-        model: config.model,
-        maxTokens: config.maxTokens,
-        sendThinking,
-        ...(thinking !== undefined ? { thinking } : {}),
-      }),
+    return withMediaDegradation(
+      withHistoryNormalization(
+        new OpenAiChatProvider({
+          apiKey,
+          baseUrl: config.baseUrl,
+          model: config.model,
+          maxTokens: config.maxTokens,
+          sendThinking,
+          ...(thinking !== undefined ? { thinking } : {}),
+        }),
+      ),
+      { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
     );
   }
   if (preset.protocol === 'openai_responses') {
-    return withHistoryNormalization(
-      new OpenAiResponsesProvider({
-        apiKey,
-        baseUrl: config.baseUrl,
-        model: config.model,
-        maxTokens: config.maxTokens,
-        sendThinking,
-        ...(thinking !== undefined ? { thinking } : {}),
-      }),
+    return withMediaDegradation(
+      withHistoryNormalization(
+        new OpenAiResponsesProvider({
+          apiKey,
+          baseUrl: config.baseUrl,
+          model: config.model,
+          maxTokens: config.maxTokens,
+          sendThinking,
+          ...(thinking !== undefined ? { thinking } : {}),
+        }),
+      ),
+      { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
     );
   }
 
@@ -107,19 +114,22 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
       maxTokens: config.maxTokens,
       sendThinking,
       thinking,
-      mediaKeepRecentImages: config.mediaKeepRecentImages ?? 3,
+      mediaKeepRecentImages: config.mediaKeepRecentImages ?? 10,
       ...(override !== undefined ? { capabilityOverrides: [override] } : {}),
     });
   }
 
-  return withHistoryNormalization(
-    new AnthropicMessagesProvider({
-      apiKey,
-      baseUrl: config.baseUrl,
-      model: config.model,
-      maxTokens: config.maxTokens,
-      sendThinking,
-      thinking,
-    }),
+  return withMediaDegradation(
+    withHistoryNormalization(
+      new AnthropicMessagesProvider({
+        apiKey,
+        baseUrl: config.baseUrl,
+        model: config.model,
+        maxTokens: config.maxTokens,
+        sendThinking,
+        thinking,
+      }),
+    ),
+    { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
   );
 }
