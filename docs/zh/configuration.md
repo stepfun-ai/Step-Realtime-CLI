@@ -57,6 +57,7 @@ MCP server 声明（`mcp.json`）与 `[[hooks]]` 同理，只读用户级一份�
 | `agents_md_max_bytes` | int | AGENTS.md 总量预算（UTF-8 字节），默认 32768；`0` 或负数 = 禁用加载；发生截断时启动会提示，见 [AGENTS.md 机制](./agents-md.md) |
 | `extra_skill_dirs` | string[] | 追加 skill 扫描目录，见[技能、插件与 MCP](./skills-and-mcp.md) |
 | `disabled_skills` | string[] | 按名排除 skill（任何来源生效），见[技能、插件与 MCP](./skills-and-mcp.md) |
+| `media_keep_recent` | int | 媒体降级时保留的最近图片张数，默认 10；`0` = 全部换占位。触发 413/400 图片超限时，只把更旧的图换成占位文本、保留最近 N 张重试，避免「全剥光、模型变瞎」。全通道生效；`[models.*]` 下可按别名覆盖，见[媒体降级](#媒体降级) |
 
 字符串字段的空串等同未配置；数字字段填非数字（含 `NaN` / 无穷）时该字段视为未配置、落默认值。三个字符串数组字段（`agents_paths` / `extra_skill_dirs` / `disabled_skills`）要求**整体合法**：非数组、空数组，或其中任一元素不是非空字符串时，整个字段被丢弃而不是逐项过滤。路径类字段支持 `~` 展开与相对当前工作目录的写法。
 
@@ -142,6 +143,7 @@ capabilities = ["thinking", "image_in"] # 可选，见下方 capabilities 能力
 | `max_tokens` | 单次响应最大输出 token，缺省回落顶层 |
 | `display_name` | 选择器与状态栏显示名，缺省用别名 |
 | `capabilities` | 能力标签数组（如 `thinking` / `image_in`），工具门控与请求整形的唯一依据。要求非空的纯字符串数组、取值在白名单内，否则启动报错（见 [capabilities 能力标签](#capabilities-能力标签)） |
+| `media_keep_recent` | 按别名覆盖媒体降级保留张数，缺省继承顶层 `media_keep_recent`。通道图片限制差异大（step-3.7 实测 60 张、Gemini 10 张），宽松通道可多留、严格通道少留，见[媒体降级](#媒体降级) |
 
 - 启动时对最终 model 展开一次别名，因此 `--model 别名`、`STEP_CODE_MODEL=别名`、toml 顶层 `model = "别名"` 三条路径同效。
 - 运行时用 `/model` 打开交互式选择器或 `/model <别名>` 直切，切换会按合并配置重建 provider，上下文窗口随之跟随，见[交互使用](./interactive.md)。
@@ -192,6 +194,31 @@ capabilities = ["thinking", "image_in"] # 可选，见下方 capabilities 能力
 - 思考的**展示**不看 `capabilities`：状态栏的 `think:` 段来自会话级 `/think` 档位，思考块渲染是无条件的。是否发送思考控制字段由 `[thinking]` 段决定。
 - **协议限制**：`read_media` 的图片回传目前只在 `anthropic` 协议渠道端到端有效——`openai` 协议渠道的工具结果折叠只保留文本，图片会被静默丢弃。openai 渠道声明了 `image_in` 也实际读不到图，该协议翻译缺口已登记待修。
 - **模型与协议不是自由组合**：个别模型只在特定接口上开放，配错渠道会在实际请求时收到服务端的 400 提示（错误信息里会指明应改用哪个接口）。
+
+#### 媒体降级
+
+当一次请求因图片超限被 API 拒绝（413 载荷过大、400 图片太多/太大）时，step-code 会把历史里较旧的图片换成占位文本、只保留最近 N 张，然后自动重试——避免整张会话被一张超限图「毒化」（后续所有消息包括纯文本都报同一个错）。
+
+**降级档位**（沿链逐档重试，每档每请求最多一次）：
+
+| 档位 | 行为 |
+|------|------|
+| `media-degraded` | 保留最近 `media_keep_recent` 张图，更旧的换占位文本（占位文案保留「原图因 API 限制被移除」语义，模型不会以为自己记错） |
+| `media-stripped` | 全部媒体块移除 |
+| `strict` | 媒体移除 + 思考块与 cache_control 剥掉（最保守形态） |
+
+**触发识别**：413 直接触发（语义唯一）；400 只在报错文案命中媒体方言时触发——`Input images too many`（stepfun 实测）、`image exceeds 5 MB maximum` / `image dimensions exceed max allowed size`（Anthropic）、`You can only include N image links`（Gemini/Vertex）、`At most N image(s)`（vLLM 推理端）等。裸 400 参数错误（如 `max_tokens` 非法）**不触发**，不会被降级掩盖。
+
+**配置**：
+
+- 顶层 `media_keep_recent`（默认 10）设全局保留张数；`0` = 全部换占位（旧行为）。
+- `[models.*]` 下的 `media_keep_recent` 按别名覆盖。通道图片限制差异大（step-3.7 实测 60 张/请求、Gemini 10 张、GLM 5 张），宽松通道可多留、严格通道少留。
+
+**默认值 10 的依据**：step-3.7-flash 实测单请求 60 张上限（2026-08-06 直连 API，61 张报 `max: 60`），10 是其 1/6 安全值——日常几乎不触发降级，触发时也保留足够上下文。「长图分段阅读」场景一段对话读 10+ 张很常见，3 张的旧默认值会让主 agent 立刻忘记除最近 3 张外的所有图。
+
+**全通道生效**：stepfun 通道走 adapter 的发送路径，其余协议通道（anthropic / openai / openai_responses）走统一的媒体降级包装层，行为一致。
+
+**已知边界**：修改历史图片会让 prompt cache 前缀失效，降级后的一两轮请求成本可能上升；这是 API 侧行为，无法避免。
 
 ### `/provider` 渠道向导
 
