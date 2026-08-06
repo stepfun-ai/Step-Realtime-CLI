@@ -61,7 +61,7 @@ describe('bash 输出收集上限', () => {
     // 这个极常见形状会让错误信息经历两次丢失（先被挤出内存，再被展示截断切掉）。
     const cmd =
       `node -e "const c='x'.repeat(1024*1024);for(let i=0;i<10;i++)process.stdout.write(c);` +
-      `console.error('BOOM-MARKER-42');process.exitCode=3;"`;
+      `console.error('BOOM-MARKER-42');process.exit(3);"`;
     const r = await bashTool.execute({ command: cmd, timeout: 120 }, { cwd });
 
     expect(r.isError).toBe(true);
