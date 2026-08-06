@@ -107,6 +107,7 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
       maxTokens: config.maxTokens,
       sendThinking,
       thinking,
+      mediaKeepRecentImages: config.mediaKeepRecentImages ?? 3,
       ...(override !== undefined ? { capabilityOverrides: [override] } : {}),
     });
   }

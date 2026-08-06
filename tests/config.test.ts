@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -75,6 +75,25 @@ describe('loadConfig', () => {
   it('完全无 key 时不抛错，apiKey 为 undefined（缺失由 provider 工厂兜底）', () => {
     const cfg = loadConfig(dir);
     expect(cfg.apiKey).toBeUndefined();
+  });
+
+  it('media_keep_recent 解析：正整数进结果对象，缺省/非法值不进', () => {
+    const cfgDir = join(dir, '.step-code');
+    mkdirSync(cfgDir, { recursive: true });
+    // 缺省：键不进结果对象
+    writeFileSync(join(cfgDir, 'config.toml'), 'model = "step-3.7-flash"\n', 'utf8');
+    expect(loadConfig(dir).mediaKeepRecentImages).toBeUndefined();
+    // 正整数正常解析
+    writeFileSync(join(cfgDir, 'config.toml'), 'media_keep_recent = 5\n', 'utf8');
+    expect(loadConfig(dir).mediaKeepRecentImages).toBe(5);
+    // 小数向下取整、负数钳到 0
+    writeFileSync(join(cfgDir, 'config.toml'), 'media_keep_recent = 4.9\n', 'utf8');
+    expect(loadConfig(dir).mediaKeepRecentImages).toBe(4);
+    writeFileSync(join(cfgDir, 'config.toml'), 'media_keep_recent = -2\n', 'utf8');
+    expect(loadConfig(dir).mediaKeepRecentImages).toBe(0);
+    // 非法值（非数字）不进结果对象
+    writeFileSync(join(cfgDir, 'config.toml'), 'media_keep_recent = "abc"\n', 'utf8');
+    expect(loadConfig(dir).mediaKeepRecentImages).toBeUndefined();
   });
 
   it('config 带 subagent 与 compaction 字段', () => {

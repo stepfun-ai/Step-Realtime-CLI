@@ -114,6 +114,52 @@ describe('applyReprojectionLevel 档位行为', () => {
     expect(out[1]).toEqual(history[1]);
   });
 
+  it('media-degraded 保留最近 N 张：旧图换占位、最近 N 张原样保留', () => {
+    // 按消息逆序数：msg3 的 imgC/imgB、msg2 的 imgA 是最近 3 张之前的全部。
+    // keep=2 时保留 imgC、imgB（msg3 内也按逆序，C 比 B 新），imgA 换占位。
+    const imgA = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'a' } } as unknown as Anthropic.ImageBlockParam;
+    const imgB = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'b' } } as unknown as Anthropic.ImageBlockParam;
+    const imgC = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'c' } } as unknown as Anthropic.ImageBlockParam;
+    const msgs: Anthropic.MessageParam[] = [
+      { role: 'user', content: [imgA, { type: 'text', text: '第一张' }] },
+      { role: 'assistant', content: [{ type: 'text', text: '看到了' }] },
+      { role: 'user', content: [imgB, imgC, { type: 'text', text: '再看这两张' }] },
+    ];
+    const out = applyReprojectionLevel(msgs, 'media-degraded', 2);
+    // 最旧的 imgA 被换占位
+    expect((out[0]!.content as Anthropic.ContentBlockParam[])[0]).toEqual({
+      type: 'text',
+      text: '[image omitted: model has no image input]',
+    });
+    // 最近两张（imgB、imgC）原样保留
+    const last = out[2]!.content as Anthropic.ContentBlockParam[];
+    expect(last[0]).toBe(imgB);
+    expect(last[1]).toBe(imgC);
+    // 文本块与 assistant 消息不动
+    expect(out[1]).toEqual(msgs[1]);
+  });
+
+  it('media-degraded keep=0 时维持旧行为（全部换占位）', () => {
+    const out = applyReprojectionLevel(history, 'media-degraded', 0);
+    const content = out[0]!.content as Anthropic.ContentBlockParam[];
+    expect(content[0]).toEqual({ type: 'text', text: '[image omitted: model has no image input]' });
+  });
+
+  it('media-degraded 保留计数只算 image，document 块仍换占位', () => {
+    const doc = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'd' } } as unknown as Anthropic.ContentBlockParam;
+    const msgs: Anthropic.MessageParam[] = [
+      { role: 'user', content: [imageBlock] },
+      { role: 'user', content: [doc] },
+    ];
+    const out = applyReprojectionLevel(msgs, 'media-degraded', 1);
+    // image 是最近 1 张，保留；document 不参与计数，换占位
+    expect((out[0]!.content as Anthropic.ContentBlockParam[])[0]).toBe(imageBlock);
+    expect((out[1]!.content as Anthropic.ContentBlockParam[])[0]).toEqual({
+      type: 'text',
+      text: '[document omitted: model has no document input]',
+    });
+  });
+
   it('media-stripped：媒体块移除，thinking 与 cache_control 保留', () => {
     const out = applyReprojectionLevel(history, 'media-stripped');
     expect((out[0]!.content as unknown[]).length).toBe(1);

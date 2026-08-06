@@ -34,6 +34,7 @@ export const CONFIG_TOP_LEVEL_KEYS = [
   'proxy',
   'agents_paths',
   'agents_md_max_bytes',
+  'media_keep_recent',
   'extra_skill_dirs',
   'disabled_skills',
   'models',
