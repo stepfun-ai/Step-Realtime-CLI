@@ -22,6 +22,8 @@ Key capabilities:
 - **Context compaction + session persistence**: resume days later with full history
 - **Skills, plugins, and MCP**: lazily loaded external capabilities on demand
 - **Background execution**: long commands and entire sub-agents can be moved to the background
+- **Media degradation on all providers**: when an image limit is hit, the most recent N images are kept and older ones replaced with placeholders, with consistent behavior across anthropic / openai / openai_responses
+- **Image paste and path readback**: Alt+V pastes from the clipboard; read_media reads images by path and supports probe-based chunk planning
 - **Thinking visibility**: the thinking process is rendered in the TUI — streaming preview while running, a collapsed block when done; when the model returns only a thinking signature with no visible text, the status line still shows "thinking…", so a long silence is distinguishable from a stuck request
 
 ## Quick start

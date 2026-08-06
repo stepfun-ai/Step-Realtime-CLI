@@ -10,12 +10,8 @@ Step Code 的源码由本项目自行编写，在设计阶段参考并受到下�
 |------|---------------|--------|-----------|
 | OpenAI Codex CLI（openai/codex） | OpenAI | Apache-2.0 | `codex-Apache-2.0-LICENSE.txt` |
 | OpenCode（sst/opencode） | opencode | MIT | `opencode-MIT-LICENSE.txt` |
-
-## 关于 Claude Code
-
-Claude Code 是 Anthropic 的**专有软件，并非开源项目**，没有可供收录的开源许可证。
-本项目在产品形态与交互设计层面参考了它作为「终端 coding agent」的公开理念，
-但**未使用其任何源代码**。因此本目录不收录其许可证，也不构成对其代码的复制或分发。
+| MoonshotAI/kimi-code | Moonshot AI | MIT | `kimi-code-MIT-LICENSE.txt` |
+| xai-org/grok-build | xAI (SpaceXAI) | Apache-2.0 | `grok-build-Apache-2.0-LICENSE.txt` |
 
 ## 说明
 

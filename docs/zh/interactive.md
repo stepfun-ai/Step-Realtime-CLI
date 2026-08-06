@@ -177,6 +177,8 @@ manual / auto 下需要确认时弹出竖向编号列表，四个选项：
 
 `/model <别名>` 是文本直切，跳过选择器。两种方式确认后都会按别名的合并配置重建 provider，上下文窗口随之跟随，状态栏显示新模型的显示名。确认后会把 config.toml 顶层 `model` 一并更新为所选别名，下次启动新会话即沿用（`step --model` 命令行覆盖与 `/resume` 恢复旧会话两种情况不写回）。
 
+**Shift+Enter 仅本会话切换**：在选择器里按 Shift+Enter 确认模型切换但不写回 config.toml——适合「这轮试试别的模型，下次还是用原来的」的场景。Enter 是「切换并设为默认」，Shift+Enter 是「切换仅本会话」。
+
 `/think` 控制思考深度（仅 anthropic 协议且已启用 `[thinking]` 的渠道可用）：无参打开档位选择器（会话忙时退化为文本列表），`/think <档位>` 直切，`/think off` 本会话不再发送 thinking 字段。档位表来自 `[thinking.levels]`（缺省 low/medium/high = 1024/4096/32000），状态栏模型名旁显示当前档位。切换只影响当前会话，不写回 config.toml（持久化用 `default_level`）；会话已有历史时切换会提示 prompt cache 失效。切到的档位在当前 `max_tokens` 下正文余量不足时会给出警告，但不硬拦。
 
 ## 切换服务商
