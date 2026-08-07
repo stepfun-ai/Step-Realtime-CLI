@@ -12,17 +12,21 @@
 
 全部产物都在 GitHub 上，不经过 npm 公共 registry。
 
+> **Release 状态说明**：当前尚未发布 GitHub Release，单文件可执行与 Release tarball 暂不可用。推荐用 npm 装预构建分支或源码安装。
+
 | 方式 | 前置 | 装完是什么 | 适合 |
 |------|------|-----------|------|
-| [单文件可执行](#单文件可执行无需-node-环境) | 无 | 一个可执行文件，自带 Node 运行时 | 不想装 Node、想下载即用 |
 | [npm 装预构建分支](#npm-装预构建分支最快) | Node 22+ | 一个打包好的单文件 + npm 管理的 `step` 命令 | 有 Node，想一条命令装好 |
 | [npm 装源码分支](#npm-装源码分支跟随最新主干) | Node 22+ | 在你机器上编译出的 `dist/` | 要跟最新主干、能接受本机编译 |
-| [Release tarball](#release-tarball) | Node 22+ | 与预构建分支相同，但锁定某个版本 | 要固定版本、可复现安装 |
 | [从源码安装](#从源码安装) | Node 22+ 与 pnpm | 完整开发环境 + 软链的 `step` | 参与开发、要改代码 |
+| [单文件可执行](#单文件可执行无需-node-环境)（未发布） | 无 | 一个可执行文件，自带 Node 运行时 | 不想装 Node、想下载即用 |
+| [Release tarball](#release-tarball)（未发布） | Node 22+ | 与预构建分支相同，但锁定某个版本 | 要固定版本、可复现安装 |
 
 ## 单文件可执行（无需 Node 环境）
 
-从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases) 下载对应平台的产物：
+> 尚未发布。等 Release 打 tag 后，从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases) 下载对应平台产物。
+
+计划发布的产物形态：
 
 | 平台 | 产物名 |
 |------|--------|
@@ -39,8 +43,6 @@ chmod +x step
 # macOS 从浏览器下载的文件带隔离属性，首次运行前先摘掉
 xattr -d com.apple.quarantine step 2>/dev/null || true
 ```
-
-> Releases 页面为空说明还没打过发布 tag，此时用下面的分支安装方式。
 
 ## npm 装预构建分支（最快）
 
@@ -68,7 +70,7 @@ npm 会先克隆仓库、安装构建依赖，再通过 `prepare` 钩子在本�
 
 ## Release tarball
 
-需要固定某个版本时，直接装该 tag 的 tarball：
+> 尚未发布。等 Release 打 tag 后，可直接装该 tag 的 tarball：
 
 ```bash
 npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.0/step-code-0.1.0.tgz

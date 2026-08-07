@@ -44,6 +44,7 @@ import { loadConfig, resolveModelEntry, type ConfigLoadDiagnostics, type StepCod
 import { runDoctorConfig } from './config/doctor.js';
 import { collectConfigWarnings } from './config/diagnostics.js';
 import { renderConfigDiagnostics } from './tui/configWarningText.js';
+import { FirstRunSetup, type FirstRunResult } from './tui/FirstRunSetup.js';
 import { setLocale, t } from './i18n.js';
 import { discoverPlugins, defaultPluginsDir } from './plugin/manager.js';
 import { pluginsStatePath, readPluginsState } from './plugin/manage.js';
@@ -335,8 +336,43 @@ let provider: ChatProvider;
 try {
   provider = createProvider(config);
 } catch (e) {
-  logError((e as Error).message);
-  process.exit(1);
+  const msg = (e as Error).message;
+  // 交互模式 + 缺 API key：不直接退出，给一次现场配置的机会（对齐主流 CLI 的引导体验）
+  if (opts.print === undefined && opts.reflect !== true && msg.includes('缺少 API key')) {
+    const configured = await runFirstRunSetup();
+    if (configured !== null) {
+      // 重新加载配置（用户刚写入的 api_key 已落盘）
+      config = loadConfig(cwd, { provider: opts.provider, model: opts.model });
+      provider = createProvider(config);
+    } else {
+      // 用户选择退出或取消
+      process.exit(0);
+    }
+  } else {
+    logError(msg);
+    process.exit(1);
+  }
+}
+
+/**
+ * 首次运行引导：渲染 FirstRunSetup 组件，等待用户粘贴 API key 或取消。
+ * 返回 null 表示用户取消/退出；返回 void 表示 key 已写入配置文件。
+ */
+async function runFirstRunSetup(): Promise<null | void> {
+  return new Promise((resolve) => {
+    const { unmount } = render(
+      <FirstRunSetup
+        onDone={(result: FirstRunResult) => {
+          unmount();
+          if (result.kind === 'configured') {
+            resolve();
+          } else {
+            resolve(null);
+          }
+        }}
+      />,
+    );
+  });
 }
 
 // 压缩摘要绑定（`[compaction] model`）：命中 [models.<别名>] 时按该别名的渠道建独立 provider，

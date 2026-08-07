@@ -7,13 +7,11 @@ when_to_use: 用户想安装、构建、升级、卸载 Step Code，或安装过
 本 skill 只讲一件事：把 Step Code 装到能跑起来。功能怎么用不在这里，装完见仓库 `docs/`（中文 `docs/zh/`、英文 `docs/en/`）。
 
 > **五种安装方式，按需选择**：
-> - **单文件可执行**（无需 Node 环境）：从 GitHub Releases 下载对应平台产物，放进 PATH。
 > - **npm 装预构建分支**（最快，推荐）：`npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm`，约 12 秒，不编译不拉依赖。需 Node 22+。
 > - **npm 装源码分支**（跟最新主干）：`npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore`，约 1 分钟，本机编译。需 Node 22+。
-> - **Release tarball**（固定版本）：`npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.0/step-code-0.1.0.tgz`。需 Node 22+。
 > - **从源码安装**（参与开发）：clone + `pnpm install && pnpm build && pnpm link --global`。需 Node 22+ 与 pnpm。
 >
-> 详细步骤与故障排查见下方各节。
+> 单文件可执行与 Release tarball 尚未发布，上述三种方式覆盖全部使用场景。详细步骤与故障排查见下方各节。
 
 > **怎么让你的 agent 用上它**：本目录不在自动扫描路径里（刻意如此，避免与工具目录冲突）。两种用法——把 `skills/step-code-install/` 整个拷进你 agent 的技能目录（本项目原生目录是 `.step-code/skills/`，兼容目录是 `.agents/skills/`）；或者直接把本文件路径丢给 agent 让它读。
 
@@ -36,7 +34,9 @@ Node 版本不够时，用版本管理器装 22（如 fnm、nvm、Volta），不
 
 ### 单文件可执行（无需 Node 环境）
 
-从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases) 下载对应平台的产物：
+> 尚未发布。等 Release 打 tag 后，从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases) 下载对应平台产物。
+
+计划发布的产物形态：
 
 | 平台 | 产物名 |
 |------|--------|
@@ -53,8 +53,6 @@ chmod +x step
 # macOS 从浏览器下载的文件带隔离属性，首次运行前先摘掉
 xattr -d com.apple.quarantine step 2>/dev/null || true
 ```
-
-> Releases 页面为空说明还没打过发布 tag，此时用下面的分支安装方式。
 
 ### npm 装预构建分支（最快）
 
@@ -82,7 +80,7 @@ npm 会先克隆仓库、安装构建依赖，再通过 `prepare` 钩子在本�
 
 ### Release tarball
 
-需要固定某个版本时，直接装该 tag 的 tarball：
+> 尚未发布。等 Release 打 tag 后，可直接装该 tag 的 tarball：
 
 ```bash
 npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.0/step-code-0.1.0.tgz
@@ -142,6 +140,8 @@ api_key = "<your-key>"
 ```
 
 key 的完整解析优先级、多渠道多模型配置、以及用 `api_key_env` 间接引用环境变量（密钥不落盘）的写法，见 `docs/zh/configuration.md`。
+
+> 首次启动时如果未配置 key，step-code 会提示配置方式，可直接粘贴 key 自动写入配置文件。
 
 ## 验证安装
 
