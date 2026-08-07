@@ -116,6 +116,21 @@ export interface SearchConfig {
 }
 
 /**
+ * 网页结果缓存容量配置（[tools.web] 段）。
+ *
+ * 三个维度任一传 `0` 表示该维度不限制（等价于不配）。
+ * 缺省值见 WebResultCache 模块级常量。
+ */
+export interface WebCacheConfig {
+  /** 条目数上限。 */
+  maxSize?: number;
+  /** 缓存总字节上限（估算值）。 */
+  maxBytes?: number;
+  /** 单条字节上限（估算值）；超过则整条不入缓存。 */
+  maxEntryBytes?: number;
+}
+
+/**
  * thinking（推理过程）请求配置（[thinking] 段）。
  *
  * enabled 默认 false：不主动发 thinking 字段，保持既有请求行为（部分服务端对该字段 400）。
@@ -243,6 +258,8 @@ export interface StepCodeConfig {
   thinking?: ThinkingConfig;
   /** 联网搜索配置（[search] 段）。loadConfig 恒赋值（可能为空对象 {}），消费方按「专用段 → 通用段 → 主会话渠道」解析。 */
   search?: SearchConfig;
+  /** 网页结果缓存容量配置（[tools.web] 段）。未配置时使用内置默认值（条目数 100 / 总字节 32MB / 单条 2MB）。 */
+  web?: WebCacheConfig;
   /** 界面语言（TUI/CLI 给人看的文案）。缺省 'zh'；给模型看的文案恒中文，不受其影响。 */
   language?: Locale;
   /**
@@ -476,6 +493,7 @@ interface TomlConfigShape {
   background?: unknown;
   thinking?: unknown;
   search?: unknown;
+  tools?: unknown;
   language?: unknown;
   permission_mode?: unknown;
   proxy?: unknown;
@@ -756,6 +774,24 @@ export function resolveSearchEndpoint(
     url: sub?.url ?? cfg?.url,
     key: sub?.key ?? cfg?.key,
   };
+}
+
+/**
+ * 从 [tools.web] 段解析网页结果缓存容量配置。纯函数，便于单测。
+ *
+ * 三个字段全部可选，全部是数字；未配置或类型非法时键不进结果对象（下游 toEqual 精确断言依赖此形态）。
+ * 值取整并 clamp ≥ 0（负数视为 0 = 不限制）。
+ *
+ * @param raw config.toml 里 [tools.web] 段的原始值（可能为 undefined / 非对象）。
+ */
+export function resolveWebCacheConfig(raw: unknown): WebCacheConfig | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const t = raw as Record<string, unknown>;
+  const maxSize = clampInt(t['max_size'], 0, 1_000_000, 0);
+  const maxBytes = clampInt(t['max_bytes'], 0, 1024 * 1024 * 1024, 0);
+  const maxEntryBytes = clampInt(t['max_entry_bytes'], 0, 100 * 1024 * 1024, 0);
+  if (maxSize === 0 && maxBytes === 0 && maxEntryBytes === 0) return undefined;
+  return { maxSize, maxBytes, maxEntryBytes };
 }
 
 /**
@@ -1121,6 +1157,9 @@ export function loadConfig(
   cfg.thinking = resolveThinkingConfig(toml.thinking, cfg.maxTokens);
   // 联网搜索配置：所有字段可选，缺省时消费方缺省回退主会话渠道（零配置默认策略）
   cfg.search = resolveSearchConfig(toml.search);
+  // 网页结果缓存容量：三个维度全部可选，未配置时使用内置默认值
+  const webCache = resolveWebCacheConfig(toml.tools);
+  if (webCache !== undefined) cfg.web = webCache;
   // 自定义加载路径：未配置或非法时键不进结果对象（下游 toEqual 精确断言依赖此形态）
   const agentsPaths = resolveStringArray(toml.agents_paths);
   if (agentsPaths !== undefined) cfg.agentsPaths = agentsPaths;
@@ -1406,4 +1445,111 @@ export function saveLanguage(l: Locale): void {
 export function saveDefaultModel(modelOrAlias: string, current?: string): void {
   if (current !== undefined && current === modelOrAlias) return;
   saveTopLevelKey('model', modelOrAlias);
+}
+
+/**
+ * 改写/追加 ~/.step-code/config.toml 指定 TOML section 内的一个字段。
+ * 只动目标那一行，其余内容（注释、其他字段、其他 section）原样保留。
+ * 文件不存在时创建最小内容。保留原文件的换行风格（CRLF/LF）。
+ *
+ * section 不存在时在文件末尾追加 `[section]\nkey = value\n`；
+ * section 已存在时在 section 范围内改/插字段，插在 section 头正下方。
+ * 注释掉的行（`# key = ...`）不匹配，会在其上方新插一行，旧注释保留。
+ * 数字值不加引号（TOML 原生数字），字符串值加引号。
+ *
+ * @param sectionHeader section 全名（含方括号），如 `[thinking]` / `[providers.foo]`
+ * @param key 字段名
+ * @param value 字段值（数字或字符串）
+ */
+function saveSectionKey(sectionHeader: string, key: string, value: string | number): void {
+  const dir = join(homedir(), '.step-code');
+  const tomlPath = join(dir, 'config.toml');
+  const safeValue =
+    typeof value === 'number' ? String(value) : String(value).replace(/[\r\n]+/g, '');
+  const line = `  ${key} = ${typeof value === 'number' ? safeValue : `"${safeValue}"`}`;
+  const text = existsSync(tomlPath) ? readFileSync(tomlPath, 'utf8') : '';
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/) || [];
+
+  // 先定位目标 section 的起止行索引
+  let sectionStart = -1;
+  let sectionEnd = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i]!.trim();
+    if (trimmed === sectionHeader) {
+      sectionStart = i;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j]!.trim().startsWith('[')) {
+          sectionEnd = j;
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  const out = [...lines];
+  if (sectionStart === -1) {
+    // section 不存在：在文件末尾追加
+    while (out.length > 0 && out[out.length - 1]!.trim() === '') out.pop();
+    out.push('', sectionHeader, line, '');
+  } else {
+    const keyPattern = new RegExp(`^${key.replace(/[.*+?^=!:{}()|[\]/\\]/g, (m) => `\\${m}`)}\\s*=`);
+    let written = false;
+    for (let i = sectionStart + 1; i < sectionEnd; i++) {
+      const trimmed = out[i]!.trim();
+      if (!written && keyPattern.test(trimmed) && !trimmed.startsWith('#')) {
+        out[i] = line;
+        written = true;
+      }
+    }
+    if (!written) {
+      out.splice(sectionStart + 1, 0, line);
+    }
+  }
+
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(tomlPath, out.join(newline), 'utf8');
+}
+
+/**
+ * 把默认思考档位写回 ~/.step-code/config.toml 的 [thinking] default_level。
+ *
+ * 'off' 不写入——off 是会话级临时关闭，不应污染全局默认。
+ * 幂等：与当前值相同则不写（省掉无谓的文件写入）。
+ * 失败只提示不阻断——本次切换已在内存生效，配置写入只影响下次启动。
+ *
+ * @param level 合法档位名（low / medium / high）；'off' 被静默忽略
+ */
+export function saveDefaultThinkingLevel(level: ThinkingLevelName | 'off'): void {
+  if (level === 'off') return;
+  const current = (() => {
+    try {
+      const { toml } = loadTomlConfig();
+      const raw = (toml as Record<string, unknown>)['thinking'];
+      if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+        const val = (raw as Record<string, unknown>)['default_level'];
+        if (typeof val === 'string' && isThinkingLevelName(val)) return val;
+      }
+    } catch {
+      // 配置文件不存在或解析失败：继续写入（create-or-update 语义）
+    }
+    return undefined;
+  })();
+  if (current !== undefined && current === level) return;
+  saveSectionKey('[thinking]', 'default_level', level);
+}
+
+/**
+ * 把默认服务商标识写回 ~/.step-code/config.toml 的顶层 `provider`。
+ *
+ * 幂等：与当前值相同则不写（省掉无谓的文件写入）。
+ * 失败只提示不阻断——本次切换已在内存生效，配置写入只影响下次启动。
+ *
+ * @param provider 服务商预设名（如 'stepfun' / 'anthropic' / 'openai'）
+ * @param current 当前顶层 provider 值（用于幂等判断，缺省时不判断）
+ */
+export function saveDefaultProvider(provider: string, current?: string): void {
+  if (current !== undefined && current === provider) return;
+  saveTopLevelKey('provider', provider);
 }

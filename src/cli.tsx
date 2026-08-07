@@ -43,6 +43,7 @@ import { buildAgentRegistry } from './agent/subagent/registry.js';
 import { loadConfig, resolveModelEntry, TomlParseError, type ConfigLoadDiagnostics, type StepCodeConfig } from './config/config.js';
 import { runDoctorConfig } from './config/doctor.js';
 import { collectConfigWarnings } from './config/diagnostics.js';
+import { configureWebResultCache } from './tools/webCache.js';
 import { renderConfigDiagnostics } from './tui/configWarningText.js';
 import { FirstRunSetup, type FirstRunResult } from './tui/FirstRunSetup.js';
 import { setLocale, t } from './i18n.js';
@@ -182,6 +183,9 @@ process.env.NODE_USE_ENV_PROXY ??= '1';
 // 界面语言：loadConfig 之后立即生效（此后所有给人看的输出走 t() 查表）。
 // commander 帮助定义在模块顶层、早于本行，v1 固定中文（已知限制）。
 setLocale(config.language ?? 'zh');
+
+// 网页结果缓存容量：[tools.web] 段即时生效（后续 web_search / web_fetch 走新配额）。
+configureWebResultCache(config);
 
 // 配置启动自检：把 loadConfig 静默跳过/降级的项摆到用户面前（正常配置下零输出）。
 // 规则与 `step doctor config` 共用 collectConfigWarnings，两个入口不会给出不同结论。
@@ -682,6 +686,7 @@ const reloadConfig = (): { config: StepCodeConfig } | { error: string } => {
     return { error: (e as Error).message };
   }
   config = next;
+  configureWebResultCache(next);
   ctx.apiKey = next.apiKey;
   ctx.baseUrl = next.baseUrl;
   ctx.capabilities = next.capabilities;

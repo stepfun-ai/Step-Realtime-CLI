@@ -213,6 +213,14 @@ export interface DoctorConfigResult {
 /** max_tokens 缺省基准（= config.ts 的 DEFAULT_MAX_TOKENS，未导出，此处保持一致）。 */
 const DEFAULT_MAX_TOKENS = 65536;
 
+/** 字节数人类可读格式化（仅用于 doctor 输出）。 */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)}GB`;
+}
+
 /**
  * 校验一份 config.toml：语法错误 / thinking 语义错误 → code 1；
  * 未知顶层键、非法渠道 type、hooks 非法 event 等 → 警告（code 0，逐条列出）。
@@ -264,6 +272,22 @@ export async function runDoctorConfig(
     lines.push(`info: media_keep_recent = ${n}（媒体降级时保留最近 ${n} 张图，0 = 全部换占位）`);
   } else {
     lines.push(`info: media_keep_recent 未配置，缺省 10（媒体降级时保留最近 10 张图）`);
+  }
+
+  // [tools.web] 网页结果缓存配置提示
+  const tools = t['tools'] as Record<string, unknown> | undefined;
+  const webCfg = tools?.web as Record<string, unknown> | undefined;
+  const maxSize = typeof webCfg?.max_size === 'number' ? Math.max(0, Math.floor(webCfg.max_size as number)) : undefined;
+  const maxBytes = typeof webCfg?.max_bytes === 'number' ? Math.max(0, Math.floor(webCfg.max_bytes as number)) : undefined;
+  const maxEntryBytes = typeof webCfg?.max_entry_bytes === 'number' ? Math.max(0, Math.floor(webCfg.max_entry_bytes as number)) : undefined;
+  if (maxSize !== undefined || maxBytes !== undefined || maxEntryBytes !== undefined) {
+    const parts: string[] = [];
+    if (maxSize !== undefined) parts.push(`max_size=${maxSize}`);
+    if (maxBytes !== undefined) parts.push(`max_bytes=${formatBytes(maxBytes)}`);
+    if (maxEntryBytes !== undefined) parts.push(`max_entry_bytes=${formatBytes(maxEntryBytes)}`);
+    lines.push(`info: [tools.web] ${parts.join(', ')}（网页结果缓存容量）`);
+  } else {
+    lines.push(`info: [tools.web] 未配置，缺省 100 条目 / 32MB 总字节 / 2MB 单条上限`);
   }
 
   // capabilities 实测（可选）：发真实请求验证 image_in 是否真实支持

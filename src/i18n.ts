@@ -193,6 +193,7 @@ const zh = {
   'app.think.levelLine': '  {name} — {detail}',
   'app.think.followDefault': '跟随配置默认',
   'app.think.autoDowngrade': 'thinking 预算已耗尽，自动降档至 {to} 重试…（原档位：{from}）',
+  'app.think.persistFailed': '思考档位未能写入配置（本次会话仍已切换）：{message}',
 
   // --- /history（/undo 别名）命令与统一回顾回退面板（HistoryPanel）---
   'app.history.title': '本会话输入回顾与回退',
@@ -306,6 +307,7 @@ const zh = {
   'app.provider.deleted': '已删除渠道 {id} 及其 {count} 个模型别名{pointer}（备份：{backup}）。/reload 后配置生效。',
   'app.provider.deletedPointer': '，顶层默认模型指针已一并清除',
   'app.provider.deleteFailed': '删除渠道失败：{message}',
+  'app.provider.persistFailed': '服务商标识未能写入配置（本次会话仍已切换）：{message}',
   'app.provider.deletedCurrent': '当前会话仍在使用该渠道（内存实例继续可用），重启或切换后失效。',
 
   // --- /provider 渠道管理面板（ProviderManager）---
@@ -867,6 +869,7 @@ const en: Record<keyof typeof zh, string> = {
   'app.think.levelLine': '  {name} — {detail}',
   'app.think.followDefault': 'follow config default',
   'app.think.autoDowngrade': 'Thinking budget exhausted; auto-downgrading to {to} and retrying… (was: {from})',
+  'app.think.persistFailed': 'Could not write thinking level to config (this session is still switched): {message}',
 
   // --- /history (alias /undo) command and unified review/backtrack panel (HistoryPanel) ---
   'app.history.title': 'Review and backtrack inputs of this session',
@@ -963,6 +966,7 @@ const en: Record<keyof typeof zh, string> = {
   'app.provider.deleted': 'Deleted channel {id} and its {count} model alias(es){pointer} (backup: {backup}). Takes effect after /reload.',
   'app.provider.deletedPointer': ', and the top-level default model pointer was cleared too',
   'app.provider.deleteFailed': 'Failed to delete channel: {message}',
+  'app.provider.persistFailed': 'Could not write provider to config (this session is still switched): {message}',
   'app.provider.deletedCurrent': 'The current session still uses this channel (the in-memory instance keeps working); it lapses on restart or switch.',
 
   // --- /provider 渠道管理面板（ProviderManager）---

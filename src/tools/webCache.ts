@@ -60,10 +60,10 @@ export const DEFAULT_MAX_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_MAX_ENTRY_BYTES = 2 * 1024 * 1024;
 
 export class WebResultCache {
-  private readonly cache = new Map<string, CacheEntry>();
-  private readonly maxSize: number;
-  private readonly maxBytes: number;
-  private readonly maxEntryBytes: number;
+  private cache = new Map<string, CacheEntry>();
+  private maxSize: number;
+  private maxBytes: number;
+  private maxEntryBytes: number;
   /** 当前总字节数（估算）。与 cache 同步维护，避免每次淘汰都重算全表。 */
   private totalBytes = 0;
 
@@ -71,6 +71,14 @@ export class WebResultCache {
     this.maxSize = limits.maxSize ?? DEFAULT_MAX_SIZE;
     this.maxBytes = limits.maxBytes ?? DEFAULT_MAX_BYTES;
     this.maxEntryBytes = limits.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
+  }
+
+  /** 运行时重配缓存容量（loadConfig 之后调用，让 [tools.web] 段生效）。清空已有缓存。 */
+  configure(limits: WebResultCacheLimits): void {
+    this.maxSize = limits.maxSize ?? DEFAULT_MAX_SIZE;
+    this.maxBytes = limits.maxBytes ?? DEFAULT_MAX_BYTES;
+    this.maxEntryBytes = limits.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
+    this.clear();
   }
 
   /**
@@ -156,3 +164,16 @@ export class WebResultCache {
 
 /** 全局单例（进程级）。会话切换时调用 clear() 清空。 */
 export const webResultCache = new WebResultCache();
+
+/**
+ * 用 StepCodeConfig 的 [tools.web] 段重配全局 webResultCache。
+ * 未配置 web 段时保持内置默认值（等价于空对象传入 configure）。
+ * 每次 loadConfig / reloadConfig 后调用一次即可。
+ */
+export function configureWebResultCache(config: { web?: { maxSize?: number; maxBytes?: number; maxEntryBytes?: number } }): void {
+  webResultCache.configure({
+    maxSize: config.web?.maxSize,
+    maxBytes: config.web?.maxBytes,
+    maxEntryBytes: config.web?.maxEntryBytes,
+  });
+}

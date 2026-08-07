@@ -11,7 +11,7 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 import { getLocale, I18N_TABLES, setLocale, t } from '../src/i18n.js';
-import { resolveLanguage, saveDefaultModel, saveLanguage } from '../src/config/config.js';
+import { resolveLanguage, saveDefaultModel, saveDefaultProvider, saveDefaultThinkingLevel, saveLanguage } from '../src/config/config.js';
 import { SLASH_COMMANDS } from '../src/tui/commands.js';
 
 afterEach(() => {
@@ -272,6 +272,99 @@ describe('saveDefaultModel（/model 切换写回默认模型指针）', () => {
     const parsed = parse(readFileSync(tomlPath, 'utf8')) as Record<string, unknown>;
     expect(parsed['model']).toBe('explore');
     expect((parsed['models'] as Record<string, Record<string, unknown>>)['explore']!['model']).toBe('step-3.7-flash');
+  });
+});
+
+describe('saveDefaultThinkingLevel（/think 切换写回 [thinking] default_level）', () => {
+  let dir: string;
+  let tomlPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'stepcode-think-'));
+    fakeHome = dir;
+    tomlPath = join(dir, '.step-code', 'config.toml');
+    mkdirSync(join(dir, '.step-code'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('新建 [thinking] 段并写入 default_level', () => {
+    writeFileSync(tomlPath, 'model = "flash"\n');
+    saveDefaultThinkingLevel('high');
+    // section 追加在末尾，字段带 2 空格缩进
+    expect(readFileSync(tomlPath, 'utf8')).toBe('model = "flash"\n\n[thinking]\n  default_level = "high"\n');
+  });
+
+  it('已有 [thinking] 段时只改 default_level 行，其余字段保留', () => {
+    writeFileSync(tomlPath, '[thinking]\nenabled = true\ndefault_level = "low"\n');
+    saveDefaultThinkingLevel('high');
+    // section 内字段统一加 2 空格缩进（saveSectionKey 规范）
+    expect(readFileSync(tomlPath, 'utf8')).toBe('[thinking]\nenabled = true\n  default_level = "high"\n');
+  });
+
+  it('幂等：当前值相同则不写文件', () => {
+    writeFileSync(tomlPath, '[thinking]\ndefault_level = "medium"\n');
+    const before = readFileSync(tomlPath, 'utf8');
+    saveDefaultThinkingLevel('medium');
+    expect(readFileSync(tomlPath, 'utf8')).toBe(before);
+  });
+
+  it("'off' 被静默忽略，不写文件", () => {
+    writeFileSync(tomlPath, '[thinking]\ndefault_level = "medium"\n');
+    const before = readFileSync(tomlPath, 'utf8');
+    saveDefaultThinkingLevel('off');
+    expect(readFileSync(tomlPath, 'utf8')).toBe(before);
+  });
+
+  it('文件不存在时创建最小内容并写入', () => {
+    saveDefaultThinkingLevel('low');
+    const text = readFileSync(tomlPath, 'utf8');
+    // saveSectionKey 新建 section 时尾部追加：前面有一个空行分隔，section 内字段带 2 空格缩进
+    expect(text).toBe('\n[thinking]\n  default_level = "low"\n');
+  });
+});
+
+describe('saveDefaultProvider（/provider 切换写回顶层 provider）', () => {
+  let dir: string;
+  let tomlPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'stepcode-provider-'));
+    fakeHome = dir;
+    tomlPath = join(dir, '.step-code', 'config.toml');
+    mkdirSync(join(dir, '.step-code'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('改写顶层 provider 行，其余内容逐字保留', () => {
+    writeFileSync(tomlPath, 'provider = "stepfun"\nmodel = "step-3.7-flash"\n');
+    saveDefaultProvider('anthropic');
+    expect(readFileSync(tomlPath, 'utf8')).toBe('provider = "anthropic"\nmodel = "step-3.7-flash"\n');
+  });
+
+  it('[providers.*] 段内的 provider 字段不被误改', () => {
+    writeFileSync(tomlPath, '[providers.foo]\ntype = "openai"\nprovider = "bar"\n');
+    saveDefaultProvider('anthropic');
+    const text = readFileSync(tomlPath, 'utf8');
+    expect(text).toBe('provider = "anthropic"\n[providers.foo]\ntype = "openai"\nprovider = "bar"\n');
+  });
+
+  it('幂等：传入 current 与新值相同则不写文件', () => {
+    writeFileSync(tomlPath, 'provider = "stepfun"\n');
+    const before = readFileSync(tomlPath, 'utf8');
+    saveDefaultProvider('stepfun', 'stepfun');
+    expect(readFileSync(tomlPath, 'utf8')).toBe(before);
+  });
+
+  it('current 不同则写入', () => {
+    writeFileSync(tomlPath, 'provider = "stepfun"\n');
+    saveDefaultProvider('anthropic', 'stepfun');
+    expect(readFileSync(tomlPath, 'utf8')).toBe('provider = "anthropic"\n');
   });
 });
 

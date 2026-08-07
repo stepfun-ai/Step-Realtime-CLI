@@ -49,6 +49,7 @@ const UPDATE_CONFIG_BODY = `# update-config：step-code 自身配置的查询与
 | extra_skill_dirs | string[] | 无 | 追加的 skill 扫描目录，同名 skill 追加目录胜出 |
 | disabled_skills | string[] | 无 | 按名排除的 skill 清单，任何来源的同名 skill 都不加载 |
 | continuation | table | 无 | 输出截断自动续写配置（[continuation] 段） |
+| tools | table | 无 | 网页结果缓存配置（[tools.web] 段），未配置时使用内置默认值 |
 
 顶层没有 api_key 键。密钥只能配在 [providers.<id>] 渠道或 [models.<别名>] 上，或由环境变量提供
 （STEP_CODE_API_KEY，或按 provider 类型的惯例变量：anthropic→ANTHROPIC_API_KEY、
@@ -127,6 +128,18 @@ STEP_CODE_BASE_URL。
 | [search.image] | table | 无 | 文搜图专用段（url / key），覆盖通用段 |
 
 endpoint 解析优先级：[search.web]/[search.image] → [search] → 主会话渠道。未配置时回退主会话渠道 base_url + api_key（零配置默认策略：缺省回退主会话渠道）。
+
+### [tools.web] 网页结果缓存
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| max_size | number | 100 | 缓存条目数上限；0 = 不限制条目数 |
+| max_bytes | number | 33554432（32MB） | 缓存总字节上限（V8 堆估算值）；0 = 不限制总字节 |
+| max_entry_bytes | number | 2097152（2MB） | 单条内容字节上限，超限则整条不入缓存；0 = 不限制单条 |
+
+字节按 ${'`'}字符串长度 × 2${'`'} 估算（V8 对含非 Latin1 字符的串用 2 字节/字符）。
+三个维度任一传 ${'`'}0${'`'} 表示该维度不限制（等价于不配）。
+未配置 ${'`'}[tools.web]${'`'} 时使用内置默认值（100 条目 / 32MB / 2MB）。
 
 ### [models.<别名>] 模型别名表（渠道与模型分离）
 

@@ -425,6 +425,29 @@ key = "sp-xxxxxxxx"
 
 Once `[search]` is configured, changes take effect immediately (`/reload` hot-reloads it), and search availability no longer depends on the main session's model channel.
 
+### `[tools.web]`: web result cache
+
+`web_search` (content search) and `web_fetch` (full-text extraction) share a process-level cache to avoid fetching the same URL repeatedly.
+`[tools.web]` controls cache capacity with three dimensions; setting any of them to `0` removes that limit.
+
+```toml
+[tools.web]
+max_size = 100            # entry count limit, default 100
+max_bytes = 33_554_432    # total byte limit (estimated), default 32MB (32 * 1024 * 1024)
+max_entry_bytes = 2_097_152  # per-entry byte limit (estimated), default 2MB; oversized entries are dropped entirely
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `max_size` | `100` | Maximum number of cached entries. `0` = unlimited entries |
+| `max_bytes` | `33554432` (32MB) | Total cache byte limit (V8 heap estimate, not UTF-8 bytes). `0` = unlimited total bytes |
+| `max_entry_bytes` | `2097152` (2MB) | Per-entry byte limit; entries exceeding this are not cached at all (large pages have low cache benefit and high memory cost). `0` = unlimited per-entry |
+
+Bytes are estimated as `string length × 2` (V8 uses 2 bytes/character for strings containing non-Latin1 characters).
+When `[tools.web]` is not configured, built-in defaults are used; no manual changes required.
+
+For long sessions or when many sub-agents fetch pages in parallel, reduce `max_bytes` to fit your memory budget; if you mostly fetch large pages, increase `max_entry_bytes`.
+
 ## `[[hooks]]`: lifecycle hooks
 
 Run your shell commands at lifecycle event points, for observation or for blocking. Declared as a `[[hooks]]` array, with four fields per entry:
