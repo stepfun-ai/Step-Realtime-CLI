@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Anthropic from '@anthropic-ai/sdk';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stored } from '../../src/agent/message.js';
 import { SessionStore, workdirKey, deriveTitle, derivePreview } from '../../src/session/store.js';
 import { isStepref } from '../../src/session/attachments.js';
@@ -527,14 +527,23 @@ describe('SessionStore 索引缓存（_index.json）', () => {
   });
 
   it('list 按 updatedAt 倒序', () => {
-    const a = store.create(cwd, 'm');
-    store.save(a);
-    const b = store.create(cwd, 'm');
-    b.messages.push(stored({ role: 'user', content: 'b' }, { kind: 'user' }));
-    store.save(b);
+    // save() 用真实时钟刷新 updatedAt；快速机器上两次 save 可能同毫秒，导致次序不稳定。
+    // 用假时钟把 b 的保存时间明确推进 1ms，消除对真实时钟间隔的依赖。
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-07T00:00:00.000Z'));
+      const a = store.create(cwd, 'm');
+      store.save(a);
+      vi.setSystemTime(new Date('2026-08-07T00:00:00.001Z'));
+      const b = store.create(cwd, 'm');
+      b.messages.push(stored({ role: 'user', content: 'b' }, { kind: 'user' }));
+      store.save(b);
 
-    const metas = store.list(cwd);
-    expect(metas.map((m) => m.id)).toEqual([b.id, a.id]);
+      const metas = store.list(cwd);
+      expect(metas.map((m) => m.id)).toEqual([b.id, a.id]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('delete 后索引同步移除', () => {
