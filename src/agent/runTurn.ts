@@ -235,9 +235,16 @@ export async function* runTurn(
 
   // --- 流式请求（边流边 yield 的手动重试：仅在尚未吐字时才重试） ---
   let final: Anthropic.Message | undefined;
+  // think-only 恢复路径自己管理 messages 落盘（thinking 与正文分成多条 assistant，
+  // 注入的 user 消息也落盘），与循环外的统一 messages.push(final) 互斥。
+  // 该路径即时落盘后把此标记置 true，跳过循环外的统一 push，避免重复落盘。
+  let skipFinalPush = false;
   // thinking 预算耗尽自动降档：首轮 thinkingExhausted 时把 thinking 降到 low 重试 1 次。
   // 成功后恢复原档位；失败退到 loop 的提示路径。最多 1 次，防死循环。
   let retriedDowngrade = false;
+  // think-only 自动恢复：降档重试仍耗尽时，把耗尽轮次的 thinking 落盘为 assistant 消息，
+  // 注入「直接回答」user 消息，用同一份 messages 发新请求。最多 1 次，防死循环。
+  let retriedThinkOnly = false;
   // thinking 流死循环：流式检测命中后，中止当前流、用「诱导跳出」提示重试 1 次。
   // 注入会污染上下文（reasoning leakage 风险），故用「终止+新请求」而非同流续写。
   // loopRetryMessages 非空时表示本次重试要用注入后的消息序列。
@@ -360,7 +367,72 @@ export async function* runTurn(
             if (signal?.aborted) return { stopReason: 'aborted' };
             const retryMsg = await retryStream.finalMessage();
             if (isEmptyResponse(retryMsg) && retryMsg.stop_reason === 'max_tokens') {
-              // 降级重试后仍耗尽：不再重试，退到 loop 的提示路径
+              // 降级重试后仍耗尽：尝试 think-only 自动恢复（落盘 thinking + 注入直接回答）
+              if (!retriedThinkOnly && thinking !== null && thinking !== undefined) {
+                retriedThinkOnly = true;
+                // 落盘的是原始耗尽轮次（msg）的 thinking——那是「最初的长思考」，
+                // 是注入提示里「基于已有的分析」所指的分析主体；降档轮（retryMsg）
+                // 的 thinking 是 low 档的再尝试，信息量更少，不作为恢复依据落盘。
+                const thinkingBlocks = msg.content.filter(
+                  (b: Anthropic.ContentBlock): b is Anthropic.ThinkingBlock => b.type === 'thinking',
+                );
+                // 即时落盘：耗尽轮次的 thinking 单独成一条 assistant 消息，
+                // 注入的「直接回答」user 消息也落盘（供 resume / 排查 / 下次请求复用同一份历史）。
+                if (thinkingBlocks.length > 0) {
+                  messages.push(stored({ role: 'assistant', content: thinkingBlocks }, { kind: 'assistant' }));
+                }
+                messages.push(
+                  stored(
+                    { role: 'user', content: [{ type: 'text', text: t('turn.thinkOnlyInjectAnswer') }] },
+                    { kind: 'user' },
+                  ),
+                );
+                yield { type: 'thinking_recover', retried: false };
+                const recoverStream = provider.stream({
+                  system,
+                  tools,
+                  messages: toWire(messages, wireOpts),
+                  signal,
+                  model,
+                  thinking,
+                });
+                let recoverThinkingIndex: number | undefined;
+                for await (const event of recoverStream) {
+                  if (signal?.aborted) break;
+                  if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                    emittedText = true;
+                    yield { type: 'text', text: event.delta.text };
+                  } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
+                    yield { type: 'thinking_delta', text: event.delta.thinking };
+                  } else if (
+                    event.type === 'content_block_start' &&
+                    (event.content_block.type === 'thinking' || event.content_block.type === 'redacted_thinking')
+                  ) {
+                    recoverThinkingIndex = event.index;
+                    yield { type: 'thinking_start' };
+                  } else if (event.type === 'content_block_stop' && event.index === recoverThinkingIndex) {
+                    recoverThinkingIndex = undefined;
+                    yield { type: 'thinking_end' };
+                  }
+                }
+                // 中断：thinking 与注入消息已落盘（中止前轮已落定），正文未成不落盘，直接 aborted。
+                if (signal?.aborted) return { stopReason: 'aborted' };
+                const recoverMsg = await recoverStream.finalMessage();
+                // 注入恢复后仍耗尽：不再重试，退到提示路径。thinking 与注入消息已落盘，
+                // 恢复轮次的空 thinking 不落盘（与正常路径「空响应不落盘」一致）。
+                if (isEmptyResponse(recoverMsg) && recoverMsg.stop_reason === 'max_tokens') {
+                  final = recoverMsg;
+                  skipFinalPush = true; // 恢复轮次无正文，且 thinking/注入已落盘，跳过统一 push
+                  break;
+                }
+                // 注入恢复成功：恢复正文即时落盘为独立 assistant 消息（thinking 已单独落盘，
+                // 二者不合并——保留「前轮只思考、后轮直接作答」的轨迹分界，供 resume 与排查）。
+                messages.push(stored({ role: 'assistant', content: recoverMsg.content }, { kind: 'assistant' }));
+                final = recoverMsg;
+                skipFinalPush = true; // 已即时落盘，跳过统一 push
+                break;
+              }
+              // 不可恢复（thinking 为 null/undefined / 已重试过）：直接落 final，走提示路径
               final = retryMsg;
               break;
             }
@@ -426,7 +498,9 @@ export async function* runTurn(
   }
   const usage = final.usage;
 
-  messages.push(stored({ role: 'assistant', content: final.content }, { kind: 'assistant' }));
+  if (!skipFinalPush) {
+    messages.push(stored({ role: 'assistant', content: final.content }, { kind: 'assistant' }));
+  }
 
   // 输出达 max_tokens 上限被截断：截断响应里的 tool_use 不执行——
   // 半截 JSON 参数可能解析出错误输入，执行有副作用风险。assistant 消息保留进历史，

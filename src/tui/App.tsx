@@ -1255,6 +1255,10 @@ export function App({
           // thinking 流死循环：告知用户检测到循环并已注入诱导提示重试，构成消息边界
           next.push({ kind: 'note', text: t('turn.thinkingLoop'), boundary: true });
           break;
+        case 'thinking_recover':
+          // think-only 自动恢复：告知用户正在基于前序分析直接作答，构成消息边界
+          next.push({ kind: 'note', text: t('turn.thinkOnlyRecover'), boundary: true });
+          break;
         case 'usage':
           // 记录此真实/估算值覆盖的 history 前缀长度与基准 token：真实 usage 带 messages.length，
           // 压缩估算带压缩后全长；省略时退化为当前长度（尾部为空）。随后重算显示值 = 基准 + 尾部估算。

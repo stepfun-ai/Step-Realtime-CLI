@@ -28,6 +28,11 @@ export type AgentEvent =
    */
   | { type: 'thinking_downgrade'; fromLevel: string | undefined; toLevel: string }
   /**
+   * think-only 自动恢复：降档重试仍耗尽时，把耗尽轮次的 thinking 落盘为 assistant 消息，
+   * 注入「直接回答」user 消息，用同一份 messages 发新请求。retried=true 表示这是注入后的重试。
+   */
+  | { type: 'thinking_recover'; retried: boolean }
+  /**
    * thinking 流死循环：流式检测发现思考在周期性重复（sample 为重复单元预览），
    * 当前流已中止，客户端自动以「诱导跳出」提示重试一次。注入会污染上下文
    * （reasoning leakage 风险，arXiv:2510.11713），故采用「终止当前流 + 新请求重试」
