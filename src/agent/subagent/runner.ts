@@ -227,8 +227,8 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       }
       deps.onEvent?.(sid, ev);
     };
-    // 工具调用次数与墙钟耗时。
-    // 只报 token 无法区分「卡在慢工具」与「烧在长上下文」，这两个维度补上这个盲区。
+    // 工具调用次数与墙钟耗时：只报 token 无法区分「卡在慢工具」与「烧在长上下文」，
+    // 这两个维度补上这个盲区。
     // 定义在 try 外：catch 分支补发终态时也要带上这两个统计。
     let toolUses = 0;
     const startedAt = Date.now();

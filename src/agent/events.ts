@@ -84,8 +84,7 @@ export type SubagentProgressEvent =
    * 终态。除 isError 外的字段是给程序消费方的（stream-json 外部脚本、TUI 统计）：
    * - summary：子 agent 产出的结论文本，对外消费方最想要的东西——没有它，外部只知道
    *   「跑完了、没出错」，拿不到干了什么。中断/无产出等路径给占位说明而非空串。
-   * - toolUses / durationMs：工具调用次数与墙钟耗时。
-   * 只报 token 无法回答「是卡在慢工具还是烧在长上下文」。
+   * - toolUses / durationMs：工具调用次数与墙钟耗时。只报 token 无法回答「是卡在慢工具还是烧在长上下文」。
    * - sessionId：summary 在 wire 上会被截断，消费方凭它取回完整产出，也是 resume 入口。
    * 均为可选：TUI 等既有消费方不读也不受影响，新增字段不构成 breaking change。
    */
