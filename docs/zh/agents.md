@@ -23,7 +23,7 @@
 | `run_in_background` | `true` 则后台异步派生，立即返回 `task_id`，用 `task_output` 取结果 |
 | `resume` | 子会话 id：从历史断点续跑该子会话，`prompt` 作为新指令追加进已有历史（不新建会话、不占派生配额）；目标子会话正在运行时会被拒绝 |
 
-子 agent 的返回串会带上子会话 id——需要它在已有工作基础上继续时，把这个 id 传给 `resume` 即可。子 agent 完成后返回的摘要若短于 200 字符，会被追加一轮要求展开（最多一次），避免"干了很多但只回一句"。子 agent 的过程历史完整落盘：出错或想追查细节时用 `step subagents show <id>` 完整回看，或在 `/resume` 选择器的「子 agent 会话」区下钻（见[会话管理](./sessions.md#子-agent-会话)）。
+子 agent 的返回串会带上子会话 id——需要它在已有工作基础上继续时，把这个 id 传给 `resume` 即可。子 agent 完成后返回的摘要若短于 200 字符，会被追加一轮要求展开（最多一次），避免"干了很多但只回一句"。子 agent 的过程历史完整落盘：出错或想追查细节时用 `step subagents show <id>` 完整回看，或在交互界面用 `/agents` 命令下钻（列出当前会话派生的子 agent，见[会话管理](./sessions.md#子-agent-会话)）。
 
 ### 自定义 agent 定义格式
 

@@ -27,7 +27,7 @@ When you resume a session (`step -r` / `/resume`), the conversation history is r
 
 Type `/` to bring up the command menu: ↑↓ to select (wrapping around), Tab to complete, Enter to execute, Esc to close the menu and clear the input box. Matching rules: prefix matching takes priority; with exactly 2 characters a subsequence fallback is additionally enabled, covering abbreviations like `cp` → `compact`. The menu shows 6 entries per screen; beyond that it scrolls in a window and shows `(current/total)`.
 
-All 24 commands (the table below has 25 rows, because `/skill reload` is listed separately: it is a subcommand of `/skill`, not a command of its own):
+All 25 commands (the table below has 26 rows, because `/skill reload` is listed separately: it is a subcommand of `/skill`, not a command of its own):
 
 | Command | What it does |
 |------|------|
@@ -46,9 +46,10 @@ All 24 commands (the table below has 25 rows, because `/skill reload` is listed 
 | `/compact` | Compact the context manually, printing the token count before and after |
 | `/history [N]` (alias `/undo`) | With no argument, opens the input history panel for this session (Enter backtracks to that turn and recalls the original text for resending, Tab only recalls the text); with an argument, undoes the last N turns directly without opening the panel |
 | `/reflect` | Review the full session history, distill reusable methodology, and print it |
+| `/agents` | List sub-agent sessions spawned from the current session; select one to drill in and read back its history |
 | `/export-debug-zip` | Export a session debug bundle (session body + redacted config + runtime logs) |
 | `/usage [--all]` | Show per-model token usage and cache hit rate for this session; `--all` aggregates every session in this working directory (including crash leftovers that have an event log but no snapshot). Read-only, runs instantly while busy |
-| `/resume [id]` (alias `/sessions`) | With no argument, opens the interactive session picker; with an id, switches directly |
+| `/resume [id]` (alias `/sessions`) | With no argument, opens the interactive session picker (main sessions only); with an id, resumes directly |
 | `/lang [zh\|en]` | With no argument, shows the current language; with an argument, switches the interface between Chinese and English and writes `language` back to `config.toml` |
 | `/mcp` | Check MCP server connection status and tool counts |
 | `/skill [name] [args]` | With no argument, opens the interactive skill picker (type to filter, ↑↓ to select, Enter to activate, Esc to cancel); with an argument, activates one manually |
@@ -64,7 +65,7 @@ Plugins can register their own commands in the form `/<pluginId>:<commandName>`;
 
 Commands typed while the model is running are not all queued. They split into two paths based on whether they change state the current turn depends on:
 
-- **Executed immediately**: `/help`, `/goal`, `/loop`, `/sessions`, `/lang`, `/mcp`, `/plugin`, `/tasks`, plus the **argument-free query form** of `/model`, `/provider`, `/permission`, `/skill`, and `/think`. Unknown commands also report immediately, with no need to wait for the turn to end.
+- **Executed immediately**: `/help`, `/goal`, `/loop`, `/sessions`, `/agents`, `/lang`, `/mcp`, `/plugin`, `/tasks`, plus the **argument-free query form** of `/model`, `/provider`, `/permission`, `/skill`, and `/think`. Unknown commands also report immediately, with no need to wait for the turn to end.
 - **Queued to the turn boundary**: every other command (those that change history, the session, the model, permissions, or plan mode, or that trigger an exit) joins the send queue just like an ordinary message.
 
 While busy, `/model` with no argument does not open the picker, it only prints a note; `/think` with no argument degrades to a text list of levels; `/fork` and `/export-debug-zip` are refused outright while busy, with a note to try again later.

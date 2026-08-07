@@ -89,7 +89,7 @@ step subagents show <id>     # 完整回看子 agent 历史
 step subagents delete <id>   # 删除（正在运行、持活跃锁的会被拒绝）
 ```
 
-界面内 `/resume` 弹出的选择器下方有「子 agent 会话」区，选中即下钻查看该子 agent 的完整历史（只读，不切换当前会话）。
+界面内 `/resume` 弹出的选择器只列主会话，选中直接恢复该会话（详见上节交互式选择器说明）。子 agent 会话由 `/agents` 命令独立管理：列出当前会话派生的子 agent 会话，选中可下钻查看该子 agent 的完整历史（只读，不切换当前会话）。通过 `step subagents list` / `step subagents show <id>` 可无头访问。
 
 **续跑**：`spawn_agent` 工具支持 `resume=<子会话 id>` 参数，从历史断点继续执行——新指令追加为一条 user 消息，不替换已有历史；已完成与失败的子会话都可续跑，唯一限制是目标会话当前没在运行（持活跃锁会被明确拒绝）。resume 不是新派生，不占单会话派生配额。工具返回串里带有子会话 id，模型后续可自行引用续跑。
 

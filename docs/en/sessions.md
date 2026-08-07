@@ -94,7 +94,7 @@ step subagents show <id>     # replay a subagent's full history
 step subagents delete <id>   # delete (refused while the session is running and holds its lock)
 ```
 
-Inside the TUI, the `/resume` picker shows a "Subagent sessions" section below the main sessions; selecting one drills into that subagent's full history (read-only, current session unchanged).
+Inside the TUI, the `/resume` picker shows main sessions only; selecting one resumes that session directly (see the interactive picker section above for details). Sub-agent sessions are managed separately by the `/agents` command: it lists sub-agent sessions spawned from the current session, and selecting one drills into that sub-agent's full history (read-only, current session unchanged). Headless access is available via `step subagents list` / `step subagents show <id>`.
 
 **Resuming**: the `spawn_agent` tool accepts `resume=<subagent session id>` to continue from where the session left off — the new instruction is appended as a user message instead of replacing the history. Finished and failed sessions can both be resumed; the only gate is that the target session is not currently running (an active lock yields an explicit refusal). Resuming is not a new spawn and does not consume the per-session spawn quota. Tool results carry the subagent session id so the model can reference it later.
 
