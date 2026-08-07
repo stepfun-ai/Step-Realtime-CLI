@@ -64,6 +64,8 @@ export interface DiffRenderOptions {
   maxLines?: number;
   /** 展开提示里的按键名，默认 Ctrl+O。 */
   expandKeyHint?: string;
+  /** 调用方接收截断元信息：是否发生截断、被隐藏的改动行数（供替换提示文案）。 */
+  result?: { truncated: boolean; hidden: number };
 }
 
 interface Cluster {
@@ -177,6 +179,10 @@ export function renderDiffClustered(
 
   if (truncated) {
     const hidden = changedCount - shownChanges;
+    if (opts.result) {
+      opts.result.truncated = true;
+      opts.result.hidden = hidden;
+    }
     if (hidden > 0) {
       out.push(`     … ${hidden} more change${hidden > 1 ? 's' : ''} hidden (${hint} to expand)`);
     }
