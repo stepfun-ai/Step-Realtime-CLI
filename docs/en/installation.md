@@ -19,10 +19,10 @@ All artifacts are hosted on GitHub; they do not go through the npm public regist
 
 | Method | Prerequisites | What you get | Best for |
 |--------|--------------|--------------|----------|
-| [Standalone executable](#standalone-executable-no-node-required) | None | A single executable file with a bundled Node runtime | No Node installed; download and run immediately |
+| [Standalone executable](#standalone-executable-no-node-required) (not yet published) | None | A single executable file with a bundled Node runtime | No Node installed; download and run immediately |
 | [npm install prebuilt branch](#npm-install-prebuilt-branch-fastest) | Node 22+ | A packaged single file + `step` command managed by npm | Have Node; want a one-command install |
 | [npm install source branch](#npm-install-source-branch-follow-main) | Node 22+ | `dist/` compiled on your machine | Follow latest mainline; accept local compilation |
-| [Release tarball](#release-tarball) | Node 22+ | Same as prebuilt branch, but pinned to a specific version | Need a fixed version; reproducible installs |
+| [Release tarball](#release-tarball) (not yet published) | Node 22+ | Same as prebuilt branch, but pinned to a specific version | Need a fixed version; reproducible installs |
 | [Install from source](#install-from-source) | Node 22+ and pnpm | Full development environment + symlinked `step` | Contributing; modifying code |
 
 ## Standalone executable (no Node required)
