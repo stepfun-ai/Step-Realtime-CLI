@@ -55,7 +55,9 @@ describe('NODE_ENV 分流的加载结构约束', () => {
     // （理由见 src/main.ts 该行注释），但本用例守的是「先设置、后加载」的顺序，
     // 不该绑定具体成员访问语法。
     const envIdx = src.search(NODE_ENV_ASSIGN);
-    const loadIdx = src.indexOf("await import('./cli.js')");
+    // 匹配 `import('./cli.js')`（不论顶层 await 还是 .then 形式）：本用例守的是
+    // 「先设置 NODE_ENV、后加载」的顺序，不绑定是否顶层 await。
+    const loadIdx = src.indexOf("import('./cli.js')");
     expect(envIdx).toBeGreaterThanOrEqual(0);
     expect(loadIdx).toBeGreaterThanOrEqual(0);
     expect(envIdx).toBeLessThan(loadIdx);
