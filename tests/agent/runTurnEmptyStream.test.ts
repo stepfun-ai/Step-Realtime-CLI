@@ -12,6 +12,10 @@ import {
 import { collect, makeFakeProvider, textBlock, thinkingBlock } from '../helpers/fakeProvider.js';
 
 /** 与 SDK MessageStream 空流时抛出的错误同形（不带 HTTP status 的 AnthropicError）。 */
+function repeat(unit: string, n: number): string {
+  return unit.repeat(n);
+}
+
 const emptyStreamErr = () =>
   new AnthropicSDK.AnthropicError('stream ended without producing a Message with role=assistant');
 
@@ -193,6 +197,47 @@ describe('runAgent 空流/空响应重试', () => {
     expect((notice as { message: string }).message).toContain('思考消耗');
     expect((notice as { message: string }).message).not.toContain('空响应');
     expect(events.at(-1)!.type).toBe('turn_done');
+  });
+});
+
+describe('thinking 流死循环检测与诱导跳出（thinking_loop）', () => {
+  it('思考逐字复读触发检测 → 中止当前流 + 注入诱导提示重试，第二次正常产出', async () => {
+    const { provider, streamCalls, streamParams } = makeFakeProvider([
+      // 首轮：thinking 大量重复（触发检测），且因检测中止，不会走到 finalMessage
+      { thinkingChunks: [repeat('的', 600)], textChunks: [], finalContent: [thinkingBlock('循环')], stopReason: 'max_tokens' },
+      // 注入诱导后重试：正常产出正文
+      { textChunks: ['直接给答案'], finalContent: [textBlock('直接给答案')] },
+    ]);
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
+    );
+
+    // 中止当前流 + 注入重试 = 2 次 stream 调用
+    expect(streamCalls()).toBe(2);
+    // 透出 thinking_loop 事件
+    expect(events.some((e) => e.type === 'thinking_loop')).toBe(true);
+    // 第二次请求的消息序列尾部是注入的诱导提示
+    const second = streamParams()[1] as { messages?: Array<{ role: string; content: unknown }> };
+    const lastMsg = second.messages?.at(-1);
+    expect(lastMsg?.role).toBe('user');
+    expect(String(lastMsg?.content)).toContain('周期性重复');
+    // 正文正常流出
+    expect(events.filter((e) => e.type === 'text')).toEqual([{ type: 'text', text: '直接给答案' }]);
+  });
+
+  it('注入重试后再次触发循环 → 不再二次注入（最多 1 次），走原路径', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      { thinkingChunks: [repeat('的', 600)], textChunks: [], finalContent: [thinkingBlock('循环')], stopReason: 'max_tokens' },
+      // 重试仍循环：检测器 fired 后不二次触发，正常收尾（这里给 max_tokens 空响应）
+      { thinkingChunks: [repeat('的', 600)], textChunks: [], finalContent: [thinkingBlock('仍循环')], stopReason: 'max_tokens' },
+    ]);
+    const events = await collect(
+      runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
+    );
+    // 只注入重试 1 次：总共 2 次 stream 调用
+    expect(streamCalls()).toBe(2);
+    // thinking_loop 事件只发 1 次
+    expect(events.filter((e) => e.type === 'thinking_loop')).toHaveLength(1);
   });
 });
 
