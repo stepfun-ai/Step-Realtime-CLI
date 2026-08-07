@@ -920,8 +920,7 @@ async function runPrint(prompt: string): Promise<void> {
   // agent 循环的异常兜底：没有这层，任何冒泡异常会走 Node 默认未捕获 rejection——
   // stream-json 消费方只会拿到半截 JSON 流 + stderr 里一坨堆栈，收不到任何结构化 error 事件，
   // 且下方的落盘与 resume 提示会被整个跳过（会话丢失、无法 resume）。
-  // 对照 Claude Agent SDK 的「错误提升」（query.py:340-349）：异常必须转成调用方可消费的
-  // 结构化错误，而不是只留一个无信息的非零退出码。
+  // 设计取向：异常必须转成调用方可消费的结构化错误，而不是只留一个无信息的非零退出码。
   try {
     do {
       if (pendingInject !== null) {

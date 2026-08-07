@@ -71,7 +71,7 @@ CI 在 Ubuntu、Windows、macOS 三平台运行 typecheck、build 与 test。开
 
 ## 致谢
 
-Step Code 在设计阶段参考了 **OpenAI Codex CLI**、**Claude Code**、**OpenCode** 等优秀项目的架构思路与交互设计（计划模式、技能懒加载、自主目标等尤其受 Codex 与 Claude Code 启发）。本项目源码自行编写，与上述项目无隶属、赞助或背书关系；相关开源许可证收录于 [`licenses/`](./licenses/) 目录，详见 [`licenses/NOTICE.md`](./licenses/NOTICE.md)。
+Step Code 的源码由本项目自行编写，与任何第三方项目无隶属、赞助或背书关系。第三方开源许可证原文收录于 [`licenses/`](./licenses/) 目录作为合规留痕，详见 [`licenses/NOTICE.md`](./licenses/NOTICE.md)。
 
 ## 许可证
 

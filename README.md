@@ -73,7 +73,7 @@ CI runs typecheck, build, and test on Ubuntu, Windows, and macOS. Development co
 
 ## Acknowledgements
 
-While designing Step Code we studied the architecture and interaction design of **OpenAI Codex CLI**, **Claude Code**, and **OpenCode**, among others (plan mode, lazily loaded skills, and autonomous goals owe particular debts to Codex and Claude Code). The source code here is written from scratch; this project is not affiliated with, sponsored by, or endorsed by any of them. Relevant open-source licenses are collected under [`licenses/`](./licenses/), with details in [`licenses/NOTICE.md`](./licenses/NOTICE.md).
+The source code of Step Code is written from scratch by this project; it is not affiliated with, sponsored by, or endorsed by any third-party project. Third-party open-source license texts are collected under [`licenses/`](./licenses/) for compliance, with details in [`licenses/NOTICE.md`](./licenses/NOTICE.md).
 
 ## License
 

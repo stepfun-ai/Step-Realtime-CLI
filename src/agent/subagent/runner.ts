@@ -387,9 +387,8 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       subSession.status = 'error';
       persist();
       // 终态事件必须在所有退出路径发出：`start` 已发过，若这里只 throw 不发 `end`，
-      // 消费方（TUI 条目、stream-json 外部程序）会永久等不到终态。
-      // 对照 Claude Agent SDK 0.2.101 的同类缺陷：后台任务被杀只发 task_updated 不发
-      // task_notification，只监听后者的消费方直接 hang。幂等由 endSent 保证。
+      // 消费方（TUI 条目、stream-json 外部程序）会永久等不到终态——只发中间态事件
+      // 而不发终态的实现，会让只监听终态的消费方直接挂起。幂等由 endSent 保证。
       progress({
         kind: 'end',
         isError: true,

@@ -4,8 +4,8 @@ import type { SubagentProgressEvent } from '../agent/events.js';
  * stream-json 输出信封（`-p --output-format stream-json`）。
  *
  * 契约：**每行一个 JSON 对象，顶层恒有 `type` 字段做判别式**，消费方按 `type` 分派即可，
- * 不需要递归解包。这与 Claude Agent SDK 的做法一致（其 `parent_tool_use_id` / `tool_use_id`
- * 平铺在顶层，而非把子事件嵌套进父事件的 payload）。
+ * 不需要递归解包。关联字段（如 `parent_tool_use_id` / `tool_use_id`）平铺在顶层，
+ * 而非把子事件嵌套进父事件的 payload。
  *
  * 三个事件族共用一个平坦命名空间，靠 `type` 前缀区分来源：
  * - agent 循环事件：`AgentEvent` 原样输出（`text` / `tool_start` / `usage` / ...），无前缀
@@ -36,7 +36,7 @@ export type SubagentStreamEvent =
        * 子 agent 的结论文本。外部消费方靠它知道「干了什么」，而非只知道跑完了。
        * 超过 `SUBAGENT_SUMMARY_MAX` 时截断——实测子 agent 结论常达数百至上千字符，
        * 整段塞进逐行 JSON 会让单行体积失控。截断时置 `summary_truncated: true`，
-       * 完整文本可凭 `session_id` 从子会话读取（同 Claude 用 output_file 指向完整产出的思路）。
+       * 完整文本可凭 `session_id` 从子会话读取（信封只带指针，不内嵌完整产出）。
        */
       summary?: string;
       /** summary 是否被截断。仅在真的截断时出现。 */
@@ -101,8 +101,7 @@ export function toSubagentStreamEvent(
  * stream-json 消费方只拿到半截 JSON 流加一坨堆栈，收不到任何可判别的错误事件，
  * 且会话落盘与 resume 提示被整个跳过（会话丢失）。
  *
- * 对照 Claude Agent SDK 的「错误提升」（`query.py:340-349`）：CLI 报错时先发结构化
- * 错误再非零退出，SDK 用结构化文本替换无信息的 "exit code 1"。同一个取向——
+ * 设计取向：CLI 报错时先发结构化错误事件再非零退出——
  * **调用方拿到的必须是可消费的错误，不是一个孤零零的退出码。**
  *
  * 非 Error 抛出物（字符串、对象）一律 String 化，保证 message 恒为字符串。
