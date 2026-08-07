@@ -27,6 +27,13 @@ export type AgentEvent =
    * 失败退到 loop 的提示路径。fromLevel 为 undefined 表示构造默认（[thinking] default_level）。
    */
   | { type: 'thinking_downgrade'; fromLevel: string | undefined; toLevel: string }
+  /**
+   * thinking 流死循环：流式检测发现思考在周期性重复（sample 为重复单元预览），
+   * 当前流已中止，客户端自动以「诱导跳出」提示重试一次。注入会污染上下文
+   * （reasoning leakage 风险，arXiv:2510.11713），故采用「终止当前流 + 新请求重试」
+   * 而非在同流内续写。retried=true 表示这是注入后的重试。
+   */
+  | { type: 'thinking_loop'; sample: string; repeats: number; retried: boolean }
   | { type: 'aborted' }
   /** goal 等自主续接：本 run 结束，inject 为下一轮注入文本。 */
   | { type: 'continuation'; inject: string }

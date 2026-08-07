@@ -14,6 +14,7 @@ import {
   RETRY_MAX_ATTEMPTS,
 } from '../provider/retry.js';
 import type { ChatProvider, ThinkingParam } from '../provider/types.js';
+import { createThinkingLoopDetector } from './thinkingLoop.js';
 import { t } from '../i18n.js';
 import { executeTool, toolAccessOf } from '../tools/index.js';
 import type { ToolAccess } from '../tools/access.js';
@@ -237,6 +238,12 @@ export async function* runTurn(
   // thinking 预算耗尽自动降档：首轮 thinkingExhausted 时把 thinking 降到 low 重试 1 次。
   // 成功后恢复原档位；失败退到 loop 的提示路径。最多 1 次，防死循环。
   let retriedDowngrade = false;
+  // thinking 流死循环：流式检测命中后，中止当前流、用「诱导跳出」提示重试 1 次。
+  // 注入会污染上下文（reasoning leakage 风险），故用「终止+新请求」而非同流续写。
+  // loopRetryMessages 非空时表示本次重试要用注入后的消息序列。
+  let retriedLoop = false;
+  let loopRetryMessages: typeof messages | undefined;
+  let loopDetector = createThinkingLoopDetector();
   for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
     /**
      * 本次尝试是否已流出**正文**（text_delta）。它是重试禁令的唯一判据：
@@ -248,9 +255,12 @@ export async function* runTurn(
      * 思考重复展示的代价远小于让用户手动重发，故两个口径分开。
      */
     let emittedText = false;
+    // thinking 流死循环：命中后中止当前流走注入重试（见循环尾部处理）。
+    let loopAborted = false;
     try {
       const wireOpts = ctx.attachments !== undefined ? { attachments: ctx.attachments, cwd: ctx.cwd } : undefined;
-      const stream = provider.stream({ system, tools, messages: toWire(messages, wireOpts), signal, model, thinking });
+      const wireMessages = loopRetryMessages ?? messages;
+      const stream = provider.stream({ system, tools, messages: toWire(wireMessages, wireOpts), signal, model, thinking });
       // 在途 thinking 块的 index：content_block_start[thinking] 记下，同 index 的 content_block_stop 清掉。
       // 边界事件独立上抛，使「只吐 signature、不吐可见思考」的模型也能被 UI 显示为思考中。
       let thinkingIndex: number | undefined;
@@ -263,6 +273,15 @@ export async function* runTurn(
           // 思考增量上抛给 UI（流式预览）。**不置 emittedText**：思考不是正文，
           // 重试只会让思考重复展示一次，而阻断重试会把偶发空响应变成用户必须手动重发的硬错误。
           yield { type: 'thinking_delta', text: event.delta.thinking };
+          // thinking 流死循环检测：命中即中止当前流（下方走注入诱导重试）。
+          // 已吐正文时不中止：撤回正文违背「正文不进重试」的铁律。
+          if (!emittedText && !retriedLoop) {
+            const verdict = loopDetector.ingest(event.delta.thinking);
+            if (verdict.looping) {
+              loopAborted = true;
+              break;
+            }
+          }
         } else if (
           event.type === 'content_block_start' &&
           // redacted_thinking（加密思考）同样一个字都不吐，是「无痕思考」的另一种来源
@@ -279,6 +298,23 @@ export async function* runTurn(
         // 随 assistant 消息进历史并原样回灌（Anthropic 协议要求 tool-use 轮带 signature）。
       }
       if (signal?.aborted) return { stopReason: 'aborted' };
+      // thinking 流死循环命中：中止当前流，构造「诱导跳出」注入消息，重试 1 次。
+      // 注入放在新请求的 user 消息尾部（客户端可控的最后位置），明确要求直接给答案。
+      // 用「终止+新请求」而非同流续写：注入会污染上下文，原流已陷入循环不可救。
+      if (loopAborted) {
+        retriedLoop = true;
+        const sample = loopDetector.text().slice(-80);
+        const repeats = 0; // 检测器内部已确认，这里只传 sample 供展示
+        yield { type: 'thinking_loop', sample, repeats, retried: false };
+        // 构造注入消息：在最后一条 user 消息后追加一条 user 消息（同角色追加，符合协议）。
+        // 诱导文案：指出循环事实 + 要求基于已有分析直接给答案。
+        const injected = t('turn.thinkingLoopInject');
+        loopRetryMessages = [
+          ...messages,
+          stored({ role: 'user', content: injected }, { kind: 'user' }),
+        ];
+        continue; // 回到 for 循环，用注入后的消息重试
+      }
       const msg = await stream.finalMessage();
       // 空响应契约：流正常结束但无正文也无工具调用。先按 stop_reason 分型：
       // - stop_reason==='max_tokens'：思考吃满了输出预算，正文没空间生成（配置性问题，
