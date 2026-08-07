@@ -234,6 +234,7 @@ const zh = {
   // --- App 会话与图片提示 ---
   'app.resumed': '已恢复会话 {id}{nameSuffix}（{turns} 轮 · {count} 条消息）。',
   'app.resume.nameSuffix': '「{name}」',
+  'app.resumedEmpty': '已恢复会话 {id}，但没有历史消息（上次可能崩溃时未落盘）。',
   // 命令独占一行：终端里三击可整行选中，复制时不会带上前缀文字
   'exit.resumeHint': '恢复本会话：\n{command}',
   'app.replay.folded': '（更早的 {folded} 轮历史已折叠，共 {total} 轮）',
@@ -868,6 +869,7 @@ const en: Record<keyof typeof zh, string> = {
 
   'app.resumed': 'Resumed session {id}{nameSuffix} ({turns} turns · {count} messages).',
   'app.resume.nameSuffix': ' "{name}"',
+  'app.resumedEmpty': 'Resumed session {id}, but it has no message history (may not have been saved before a crash).',
   'exit.resumeHint': 'To resume this session:\n{command}',
   'app.replay.folded': '({folded} earlier turns folded, {total} turns total)',
   'app.image.reading': 'Reading clipboard image…',

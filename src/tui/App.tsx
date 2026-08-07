@@ -153,6 +153,8 @@ export interface AppProps {
   session: SessionData;
   /** 启动恢复带回的已送达通知幂等键集合（main 的 resume 产物）：App 挂载时做后台任务对账补投判定。新建会话为空集。 */
   resumeDelivered?: ReadonlySet<string>;
+  /** 启动时是否成功恢复了一个已存在的会话（区别于 resume 失败后 fallback 新建）。 */
+  resumeHit?: boolean;
   maxContextSize: number;
   /** MCP 连接管理器（组合根注入，供 /mcp 状态面板查询）。缺失表示未配置 MCP。 */
   mcp?: McpManager;
@@ -184,6 +186,7 @@ export function App({
   store,
   session,
   resumeDelivered,
+  resumeHit,
   maxContextSize: initialMaxContextSize,
   mcp,
   hookEngineRef,
@@ -195,8 +198,14 @@ export function App({
   const { exit } = useApp();
   const { stdout } = useStdout();
   const resumed = session.messages.length > 0;
+  /** 恢复命中但历史为空（崩溃空壳）：与「全新会话」区分，给用户一条明确提示。 */
+  const resumedEmpty = !resumed && resumeHit === true;
   const [items, setItems] = useState<DisplayItem[]>(() => {
-    if (!resumed) return [];
+    if (!resumed) {
+      return resumedEmpty
+        ? [{ kind: 'note', text: t('app.resumedEmpty', { id: session.id }) }]
+        : [];
+    }
     const replay = historyToDisplayItems(session.messages);
     const tail: DisplayItem[] = [];
     if (replay.foldedTurns > 0) {
