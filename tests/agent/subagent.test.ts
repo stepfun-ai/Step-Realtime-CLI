@@ -615,22 +615,31 @@ describe('SubagentStore', () => {
   });
 
   it('create + saveSnapshot 后索引同步更新，list 立即可见', () => {
-    const subStore = makeSubagentStore();
-    const cwd = process.cwd();
-    const a = subStore.create(cwd, { model: 'ma', agentType: 'explore', depth: 1 });
-    subStore.appendMessages(cwd, a.id, [stored({ role: 'user', content: 'a' }, { kind: 'user' })]);
-    subStore.saveSnapshot(a);
+    // 假时钟错开 updatedAt：同毫秒下倒序并列不稳定（Linux CI 实测 flaky），
+    // 与主 store list 倒序测试同款的消除方式
+    vi.useFakeTimers();
+    try {
+      const subStore = makeSubagentStore();
+      const cwd = process.cwd();
+      vi.setSystemTime(new Date('2026-08-07T00:00:00.000Z'));
+      const a = subStore.create(cwd, { model: 'ma', agentType: 'explore', depth: 1 });
+      subStore.appendMessages(cwd, a.id, [stored({ role: 'user', content: 'a' }, { kind: 'user' })]);
+      subStore.saveSnapshot(a);
 
-    const b = subStore.create(cwd, { model: 'mb', agentType: 'general', depth: 2, parentId: a.id });
-    subStore.appendMessages(cwd, b.id, [stored({ role: 'user', content: 'b' }, { kind: 'user' })]);
-    subStore.saveSnapshot(b);
+      vi.setSystemTime(new Date('2026-08-07T00:00:00.001Z'));
+      const b = subStore.create(cwd, { model: 'mb', agentType: 'general', depth: 2, parentId: a.id });
+      subStore.appendMessages(cwd, b.id, [stored({ role: 'user', content: 'b' }, { kind: 'user' })]);
+      subStore.saveSnapshot(b);
 
-    // 两次 saveSnapshot 都更新了索引，list 立即看到两条
-    const metas = subStore.list(cwd);
-    expect(metas).toHaveLength(2);
-    expect(metas.map((m) => m.id)).toEqual([b.id, a.id]); // updatedAt 倒序
-    expect(metas[0].agentType).toBe('general');
-    expect(metas[1].agentType).toBe('explore');
+      // 两次 saveSnapshot 都更新了索引，list 立即看到两条
+      const metas = subStore.list(cwd);
+      expect(metas).toHaveLength(2);
+      expect(metas.map((m) => m.id)).toEqual([b.id, a.id]); // updatedAt 倒序
+      expect(metas[0].agentType).toBe('general');
+      expect(metas[1].agentType).toBe('explore');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('delete 后索引同步移除，list 不再返回已删会话', () => {
