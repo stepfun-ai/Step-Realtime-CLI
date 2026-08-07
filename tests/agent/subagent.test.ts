@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SubagentProgressEvent } from '../../src/agent/events.js';
 import { buildAgentRegistry, parseAgentMarkdown } from '../../src/agent/subagent/registry.js';
 import { closeDanglingToolUse } from '../../src/agent/wirelog.js';
@@ -589,6 +589,110 @@ describe('SubagentStore', () => {
     expect(metas.map((m) => m.id)).toEqual([a.id]); // b 未落盘
     expect(metas[0]!.status).toBe('running');
     expect(metas[0]!.agentType).toBe('explore');
+  });
+
+  it('索引缓存：首次 list 建索引，二次 list 走缓存不重读快照（readFileSync 不额外调用）', () => {
+    const subStore = makeSubagentStore();
+    const cwd = process.cwd();
+    const s = subStore.create(cwd, { model: 'm', agentType: 'general', depth: 1 });
+    subStore.appendMessages(cwd, s.id, [stored({ role: 'user', content: 'hi' }, { kind: 'user' })]);
+    subStore.saveSnapshot(s);
+
+    // 首次 list：全量扫描 + 建索引
+    const first = subStore.list(cwd);
+    expect(first.map((m) => m.id)).toEqual([s.id]);
+
+    // 对 readFileSync 设 spy：追踪后续是否还有读快照的行为
+    const spy = vi.spyOn(require('node:fs'), 'readFileSync');
+
+    // 二次 list：索引未过期，应直接返回缓存，不再读任何快照文件
+    const second = subStore.list(cwd);
+    expect(second.map((m) => m.id)).toEqual([s.id]);
+    // 断言：readFileSync 未被调用（索引命中，无文件 IO）
+    expect(spy).not.toHaveBeenCalled();
+
+    spy.mockRestore();
+  });
+
+  it('create + saveSnapshot 后索引同步更新，list 立即可见', () => {
+    const subStore = makeSubagentStore();
+    const cwd = process.cwd();
+    const a = subStore.create(cwd, { model: 'ma', agentType: 'explore', depth: 1 });
+    subStore.appendMessages(cwd, a.id, [stored({ role: 'user', content: 'a' }, { kind: 'user' })]);
+    subStore.saveSnapshot(a);
+
+    const b = subStore.create(cwd, { model: 'mb', agentType: 'general', depth: 2, parentId: a.id });
+    subStore.appendMessages(cwd, b.id, [stored({ role: 'user', content: 'b' }, { kind: 'user' })]);
+    subStore.saveSnapshot(b);
+
+    // 两次 saveSnapshot 都更新了索引，list 立即看到两条
+    const metas = subStore.list(cwd);
+    expect(metas).toHaveLength(2);
+    expect(metas.map((m) => m.id)).toEqual([b.id, a.id]); // updatedAt 倒序
+    expect(metas[0].agentType).toBe('general');
+    expect(metas[1].agentType).toBe('explore');
+  });
+
+  it('delete 后索引同步移除，list 不再返回已删会话', () => {
+    const subStore = makeSubagentStore();
+    const cwd = process.cwd();
+    const a = subStore.create(cwd, { model: 'm', agentType: 'general', depth: 1 });
+    subStore.saveSnapshot(a);
+    const b = subStore.create(cwd, { model: 'm', agentType: 'explore', depth: 1 });
+    subStore.saveSnapshot(b);
+
+    expect(subStore.delete(cwd, a.id)).toBe('deleted');
+
+    // 索引已同步移除 a；list 只返回 b
+    const metas = subStore.list(cwd);
+    expect(metas).toHaveLength(1);
+    expect(metas[0].id).toBe(b.id);
+  });
+
+  it('索引文件损坏（非 JSON）→ 自动重建不报错', () => {
+    const subStore = makeSubagentStore();
+    // 访问 subStore 内部共享的 SessionStore 实例（同一 temp 目录）
+    const sessions = (subStore as unknown as { sessions: SessionStore }).sessions;
+    const cwd = process.cwd();
+    const s = subStore.create(cwd, { model: 'm', agentType: 'general', depth: 1 });
+    subStore.appendMessages(cwd, s.id, [stored({ role: 'user', content: 'hi' }, { kind: 'user' })]);
+    subStore.saveSnapshot(s);
+
+    // 确认索引已建立
+    expect(subStore.list(cwd).map((m) => m.id)).toEqual([s.id]);
+
+    // 写入损坏的索引文件：非 JSON 内容
+    const indexFile = join(sessions.subagentDirFor(cwd), '_index.json');
+    writeFileSync(indexFile, 'not json{{', 'utf8');
+
+    // list 不抛错，自动重建索引
+    const metas = subStore.list(cwd);
+    expect(metas.map((m) => m.id)).toEqual([s.id]);
+
+    // 重建后的索引文件是合法 JSON 且版本正确
+    const raw = readFileSync(indexFile, 'utf8');
+    const parsed = JSON.parse(raw);
+    expect(parsed.version).toBe(1);
+    expect(parsed.sessions).toHaveLength(1);
+  });
+
+  it('索引版本号不匹配 → 重建而非复用', () => {
+    const subStore = makeSubagentStore();
+    // 访问 subStore 内部共享的 SessionStore 实例（同一 temp 目录）
+    const sessions = (subStore as unknown as { sessions: SessionStore }).sessions;
+    const cwd = process.cwd();
+    const s = subStore.create(cwd, { model: 'm', agentType: 'general', depth: 1 });
+    subStore.saveSnapshot(s);
+
+    // 写入版本号为 99 的假索引
+    const indexFile = join(sessions.subagentDirFor(cwd), '_index.json');
+    writeFileSync(indexFile, JSON.stringify({ version: 99, rebuiltAt: new Date().toISOString(), sessions: [] }), 'utf8');
+
+    // 版本不匹配触发重建，返回正确数据
+    const metas = subStore.list(cwd);
+    expect(metas.map((m) => m.id)).toEqual([s.id]);
+    // 重建后版本已修正
+    expect(JSON.parse(readFileSync(indexFile, 'utf8')).version).toBe(1);
   });
 });
 

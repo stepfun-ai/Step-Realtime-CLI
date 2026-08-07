@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type StoredMessage } from '../message.js';
 import { deriveTitle, type SessionData, type SessionMeta, type SessionStore } from '../../session/store.js';
@@ -18,6 +18,18 @@ export interface SubagentLock {
 
 /** delete 的结果：deleted = 已删；locked = 持有活跃锁拒删；missing = 不存在。 */
 export type SubagentDeleteResult = 'deleted' | 'locked' | 'missing';
+
+/** 子会话列表索引结构（与主 SessionStore 的 SessionIndex 同构，独立命名空间）。 */
+interface SubagentIndex {
+  version: typeof SUBAGENT_INDEX_VERSION;
+  rebuiltAt: string;
+  sessions: SessionMeta[];
+}
+
+/** 子会话目录下索引文件固定名。 */
+const SUBAGENT_INDEX_FILE = '_index.json';
+/** 子会话索引格式版本。 */
+const SUBAGENT_INDEX_VERSION = 1;
 
 /**
  * 子 agent 会话持久层：与主会话同一套「快照 + 全量日志双写」语义，落在独立命名空间。
@@ -44,6 +56,132 @@ export class SubagentStore {
 
   private dir(cwd: string): string {
     return this.sessions.subagentDirFor(cwd);
+  }
+
+  private indexPathFor(cwd: string): string {
+    return join(this.dir(cwd), SUBAGENT_INDEX_FILE);
+  }
+
+  /** 读取索引；不存在或解析失败返回 null。 */
+  private readIndex(cwd: string): SubagentIndex | null {
+    const file = this.indexPathFor(cwd);
+    if (!existsSync(file)) return null;
+    try {
+      const raw = readFileSync(file, 'utf8');
+      const parsed = JSON.parse(raw) as SubagentIndex;
+      if (parsed.version !== SUBAGENT_INDEX_VERSION) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 写入索引（原子写：tmp + rename）。 */
+  private writeIndex(cwd: string, index: SubagentIndex): void {
+    mkdirSync(this.dir(cwd), { recursive: true });
+    const file = this.indexPathFor(cwd);
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(index), 'utf8');
+    renameSync(tmp, file);
+  }
+
+  /**
+   * 索引是否过期：true = 需要重建。
+   *
+   * 口径与主 SessionStore 一致：扫描子会话目录下所有文件（快照 .json、日志 .jsonl、锁 .lock），
+   * 跳过索引文件本身；若有任何文件的 mtime 晚于索引 rebuiltAt，则视为过期。
+   * 锁文件变动（acquire/release 写/删 .lock）会更新目录 mtime，持锁/释锁也会触发索引刷新。
+   */
+  private isIndexStale(cwd: string, index: SubagentIndex): boolean {
+    const dir = this.dir(cwd);
+    if (!existsSync(dir)) return false;
+    try {
+      const rebuiltAt = new Date(index.rebuiltAt).getTime();
+      if (Number.isNaN(rebuiltAt)) return true;
+      let latestMtime = 0;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        if (entry.name === SUBAGENT_INDEX_FILE) continue;
+        const full = join(dir, entry.name);
+        try {
+          const mtime = statSync(full).mtimeMs;
+          if (mtime > latestMtime) latestMtime = mtime;
+        } catch {
+          // 忽略读取失败的文件
+        }
+      }
+      return latestMtime > rebuiltAt;
+    } catch {
+      return true;
+    }
+  }
+
+  /** 全量重建索引并写入磁盘：只收录 <id>.json 快照，跳过 .lock / .jsonl。 */
+  private rebuildIndex(cwd: string): SessionMeta[] {
+    const dir = this.dir(cwd);
+    const sessions: SessionMeta[] = [];
+    if (existsSync(dir)) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        // 仅处理 .json 快照；.lock（锁文件）和 .jsonl（全量日志）不属于会话元信息
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+        if (entry.name === SUBAGENT_INDEX_FILE) continue;
+        try {
+          const data = JSON.parse(readFileSync(join(dir, entry.name), 'utf8')) as SessionData;
+          const messages = data.messages ?? [];
+          sessions.push({
+            id: data.id,
+            cwd: data.cwd,
+            model: data.model,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+            messageCount: data.messageCount ?? messages.length,
+            title: data.title ?? deriveTitle(messages),
+            parentId: data.parentId,
+            depth: data.depth,
+            agentType: data.agentType,
+            status: data.status,
+          });
+        } catch {
+          // 跳过损坏的快照文件
+        }
+      }
+    }
+    sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const index: SubagentIndex = {
+      version: SUBAGENT_INDEX_VERSION,
+      rebuiltAt: new Date().toISOString(),
+      sessions,
+    };
+    this.writeIndex(cwd, index);
+    return sessions;
+  }
+
+  /** 增量更新索引中的单个会话（upsert）。 */
+  private updateIndexEntry(cwd: string, entry: SessionMeta): void {
+    const index = this.readIndex(cwd) ?? {
+      version: SUBAGENT_INDEX_VERSION,
+      rebuiltAt: new Date().toISOString(),
+      sessions: [],
+    };
+    const idx = index.sessions.findIndex((s) => s.id === entry.id);
+    if (idx >= 0) {
+      index.sessions[idx] = entry;
+    } else {
+      index.sessions.push(entry);
+    }
+    // 保持倒序
+    index.sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    index.rebuiltAt = new Date().toISOString();
+    this.writeIndex(cwd, index);
+  }
+
+  /** 从索引中移除单个会话。 */
+  private removeIndexEntry(cwd: string, id: string): void {
+    const index = this.readIndex(cwd);
+    if (index === null) return;
+    index.sessions = index.sessions.filter((s) => s.id !== id);
+    index.rebuiltAt = new Date().toISOString();
+    this.writeIndex(cwd, index);
   }
 
   private fileFor(cwd: string, id: string): string {
@@ -79,7 +217,7 @@ export class SubagentStore {
     };
   }
 
-  /** 保存子会话快照（tmp + rename 原子覆写）。更新 updatedAt / messageCount，缺 title 时派生。 */
+  /** 保存子会话快照（tmp + rename 原子覆写）。更新 updatedAt / messageCount，缺 title 时派生，同步更新索引。 */
   saveSnapshot(session: SessionData): void {
     const dir = this.dir(session.cwd);
     mkdirSync(dir, { recursive: true });
@@ -97,6 +235,20 @@ export class SubagentStore {
     const tmp = `${file}.tmp`;
     writeFileSync(tmp, JSON.stringify(toWrite, null, 2), 'utf8');
     renameSync(tmp, file);
+    // 同步更新索引
+    this.updateIndexEntry(session.cwd, {
+      id: toWrite.id,
+      cwd: toWrite.cwd,
+      model: toWrite.model,
+      createdAt: toWrite.createdAt,
+      updatedAt: toWrite.updatedAt,
+      messageCount: toWrite.messageCount,
+      title: toWrite.title,
+      parentId: toWrite.parentId,
+      depth: toWrite.depth,
+      agentType: toWrite.agentType,
+      status: toWrite.status,
+    });
   }
 
   /**
@@ -157,35 +309,17 @@ export class SubagentStore {
     return out;
   }
 
-  /** 列出该工作目录下的子会话元信息，按 updatedAt 倒序。 */
+  /** 列出该工作目录下的子会话元信息，按 updatedAt 倒序。优先读索引缓存，缺失或过期时自动重建。 */
   list(cwd: string): SessionMeta[] {
     const dir = this.dir(cwd);
     if (!existsSync(dir)) return [];
-    const metas: SessionMeta[] = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-      try {
-        const data = JSON.parse(readFileSync(join(dir, entry.name), 'utf8')) as SessionData;
-        const messages = data.messages ?? [];
-        metas.push({
-          id: data.id,
-          cwd: data.cwd,
-          model: data.model,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
-          messageCount: data.messageCount ?? messages.length,
-          title: data.title ?? deriveTitle(messages),
-          parentId: data.parentId,
-          depth: data.depth,
-          agentType: data.agentType,
-          status: data.status,
-        });
-      } catch {
-        // 跳过损坏文件
-      }
+    // 优先读索引
+    const index = this.readIndex(cwd);
+    if (index !== null && !this.isIndexStale(cwd, index)) {
+      return index.sessions;
     }
-    metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return metas;
+    // 索引不存在或过期：全量重建
+    return this.rebuildIndex(cwd);
   }
 
   /** 判定锁文件是否持有存活进程：解析 pid 后用 process.kill(pid, 0) 探测；解析失败/pid 已死均视为 stale。 */
@@ -221,6 +355,8 @@ export class SubagentStore {
       rmSync(file, { force: true });
       rmSync(this.fullFileFor(cwd, id), { force: true });
       this.fullSeen.delete(`${cwd}${id}`);
+      // 同步更新索引
+      this.removeIndexEntry(cwd, id);
       return 'deleted';
     } catch {
       return 'missing';
