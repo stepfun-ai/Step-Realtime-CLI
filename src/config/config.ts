@@ -1262,6 +1262,83 @@ export function saveProviderKey(providerName: string, key: 'base_url' | 'api_key
 }
 
 /**
+ * 改写/追加 ~/.step-code/config.toml 的 `[models.<alias>]` section 内的字段。
+ * 只动目标那一行，其余内容（注释、其他字段、其他 section）原样保留，不做整文件重序列化。
+ * 文件不存在时创建最小内容。保留原文件的换行风格（CRLF/LF）。
+ *
+ * TOML section 边界：从 `[models.<alias>]` 头到下一个 `[` 开头行为止，是此 section 的管辖范围。
+ * section 不存在时在文件末尾追加 `[models.<alias>]\nkey = "value"\n`。
+ *
+ * 为什么单独写这个函数而不复用 saveProviderKey：providers 与 models 是两个独立段，
+ * 且 models 段字段名（provider / model / max_context_size / display_name）与 providers 段
+ * （base_url / api_key）完全不同；另外首次运行引导需要把「刚选的渠道」与「刚选的模型」
+ * 显式绑定写入 [models.<alias>]，否则顶层 model 别名无法解析到正确渠道，正是本次修复的设计缺陷。
+ */
+export function saveModelAlias(
+  alias: string,
+  fields: Record<string, string | number>,
+): void {
+  const dir = join(homedir(), '.step-code');
+  const tomlPath = join(dir, 'config.toml');
+  const sectionHeader = `[models.${alias}]`;
+  const text = existsSync(tomlPath) ? readFileSync(tomlPath, 'utf8') : '';
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/) || [];
+
+  // 先定位目标 section 的起止行索引
+  let sectionStart = -1;
+  let sectionEnd = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i]!.trim();
+    if (trimmed === sectionHeader) {
+      sectionStart = i;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j]!.trim().startsWith('[')) {
+          sectionEnd = j;
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  const out = [...lines];
+  if (sectionStart === -1) {
+    while (out.length > 0 && out[out.length - 1]!.trim() === '') out.pop();
+    out.push('', sectionHeader);
+    for (const [key, value] of Object.entries(fields)) {
+      const safeValue =
+        typeof value === 'number' ? String(value) : String(value).replace(/[\r\n]+/g, '');
+      out.push(`  ${key} = ${typeof value === 'number' ? safeValue : `"${safeValue}"`}`);
+    }
+    out.push('');
+  } else {
+    for (const [key, value] of Object.entries(fields)) {
+      const safeValue =
+        typeof value === 'number' ? String(value) : String(value).replace(/[\r\n]+/g, '');
+      const targetLine = `  ${key} = ${typeof value === 'number' ? safeValue : `"${safeValue}"`}`;
+      const keyPattern = new RegExp(
+        `^${key.replace(/[.*+?^=!:{}()|[\]/\\]/g, (m) => `\\${m}`)}\\s*=`,
+      );
+      let written = false;
+      for (let i = sectionStart + 1; i < sectionEnd; i++) {
+        const trimmed = out[i]!.trim();
+        if (!written && keyPattern.test(trimmed) && !trimmed.startsWith('#')) {
+          out[i] = targetLine;
+          written = true;
+        }
+      }
+      if (!written) {
+        out.splice(sectionStart + 1, 0, targetLine);
+      }
+    }
+  }
+
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(tomlPath, out.join(newline), 'utf8');
+}
+
+/**
  * 改写/追加 ~/.step-code/config.toml 的一个顶层字符串键：只动目标那一行，
  * 其余内容（注释、其他字段、[section]）原样保留，不做整文件重序列化。
  * 文件不存在时创建最小内容。保留原文件的换行风格（CRLF/LF）。
