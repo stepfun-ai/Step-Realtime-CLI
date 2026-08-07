@@ -62,14 +62,11 @@ describe('runAgent 后台通知 step 边界注入', () => {
     expect(note!.origin.taskId).toBeDefined();
     expect(note!.origin.notificationId).toMatch(/^task:.+:(completed|failed|killed)$/);
     expect(note!.origin.startsPromptTurn).toBe(false);
-    // 送达事件随注入落盘（taskId/status/notificationId 与消息 origin 一致）
+    // 送达事件不再由 loop 在注入时落盘（待办 #17：事件先写而消息本体回合末 persist 才落盘，
+    // 中间崩溃会让对账误判已送达）——统一由 persist 与消息本体同刻补写（pendingDeliveredEvents）。
+    // 此层只保证消息带结构化 origin 进历史，补写可寻址。
     const delivered = wireEvents.filter((e) => e.type === 'background.notify_delivered');
-    expect(delivered).toHaveLength(1);
-    expect(delivered[0]).toMatchObject({
-      taskId: note!.origin.taskId,
-      status: 'completed',
-      notificationId: note!.origin.notificationId,
-    });
+    expect(delivered).toHaveLength(0);
     // 已 drain，不留残余
     expect(background.drainSettled()).toEqual([]);
   });

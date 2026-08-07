@@ -39,6 +39,34 @@ export function notifyDedupKeyFromOrigin(taskId: string | undefined, notificatio
 }
 
 /**
+ * 扫描会话历史中带 background_task origin 的通知消息，为尚未写过 delivered 事件的
+ * 生成补写事件（delivered 与消息本体同刻落盘，消除「事件在、消息不在」的崩溃窗口——
+ * 见待办 #17）。written 集会被就地更新（add-only），调用方跨 persist 持有以防重复写。
+ */
+export function pendingDeliveredEvents(
+  messages: readonly StoredMessage[],
+  written: Set<string>,
+  ts: string,
+): WireEvent[] {
+  const out: WireEvent[] = [];
+  for (const m of messages) {
+    const o = m.origin;
+    if (o.kind !== 'background_task' || o.notificationId === undefined) continue;
+    const key = notifyDedupKeyFromOrigin(o.taskId, o.notificationId);
+    if (written.has(key)) continue;
+    written.add(key);
+    out.push({
+      type: 'background.notify_delivered',
+      ts,
+      taskId: o.taskId ?? '',
+      status: /^task:.+:([a-z]+)$/.exec(o.notificationId)?.[1] ?? '',
+      notificationId: o.notificationId,
+    });
+  }
+  return out;
+}
+
+/**
  * wire.jsonl 事件判别联合。只覆盖 step-code 状态机真实拥有的状态种类，
  * 不预支用不到的事件类型（restore 分支随种类只增不减，种类越少兼容面越小）。
  */

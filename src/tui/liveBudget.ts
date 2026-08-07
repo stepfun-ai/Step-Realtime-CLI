@@ -112,6 +112,16 @@ export function displayWidth(text: string): number {
   return width;
 }
 
+/**
+ * 按显示宽度填充到目标列数（宽字符按 2 列计，补齐用 ASCII 空格）。
+ * 直接使用 String.padEnd 会在 CJK 混排时因字符数与显示宽度不一致而错位。
+ */
+export function padEndByWidth(text: string, budget: number): string {
+  const dw = displayWidth(text);
+  if (dw >= budget) return text;
+  return text + ' '.repeat(budget - dw);
+}
+
 /** 一条逻辑行在终端内折行后的行数（宽字符按 2 列）；宽度未知时退化为 1 行。弹层行数估算统一入口。 */
 export function wrappedRows(text: string, width: number | undefined): number {
   if (width === undefined || width <= 0) return 1;

@@ -10,8 +10,8 @@ import { stored, type StoredMessage } from '../agent/message.js';
 import { historyToDisplayItems } from './historyReplay.js';
 import { decide, planModeDenyReason, type PermissionMode } from '../agent/permission/mode.js';
 import { BackgroundManager, type BackgroundTask } from '../agent/background/manager.js';
-import { buildSettleMessage, decideNotifyRoute, notificationIdFor, type NotifiableTask } from '../agent/background/notify.js';
-import type { WireEvent } from '../agent/wirelog.js';
+import { buildSettleMessage, decideNotifyRoute, type NotifiableTask } from '../agent/background/notify.js';
+import { notifyDedupKeyFromOrigin, pendingDeliveredEvents, type WireEvent } from '../agent/wirelog.js';
 import { emitTerminalNotification } from '../agent/background/terminal-notify.js';
 import { GoalMode, type GoalState } from '../agent/goal/mode.js';
 import { assembleGoalInject, decideGoalTurn } from '../agent/goal/drive.js';
@@ -28,7 +28,10 @@ import {
   PROVIDER_PRESETS,
   resolveModelEntry,
   saveDefaultModel,
+  saveDefaultProvider,
+  saveDefaultThinkingLevel,
   saveLanguage,
+  type ThinkingLevelName,
 } from '../config/config.js';
 import { getLocale, setLocale, t, type Locale } from '../i18n.js';
 import { createProvider } from '../provider/factory.js';
@@ -485,6 +488,10 @@ export function App({
   // 发送缓冲队列中的后台通知文本 → 预装配消息本体（多条各自独立入队）：
   // shift 发出时取回本体注入 history（带 background_task origin），并带 recordHistory:false。
   const notifyMsgRef = useRef<Map<string, StoredMessage>>(new Map());
+  // 已落盘 delivered 事件的通知幂等键（delivered 写入集中在 persist 补写，
+  // 见 persist 内注释——待办 #17：事件即时写而消息本体回合末才落盘，
+  // 中间崩溃会让对账误判已送达、通知丢失）。初值 = resume 时的已送达集合。
+  const deliveredWrittenRef = useRef<Set<string>>(new Set(resumeDelivered ?? []));
   // busy 时入队的系统合成注入（cron prompt / skill 正文 / goal 续跑文本）的文本登记：
   // queue 是 string[] 存不下标记，drain 时据此还原 silent，避免系统正文被当真人输入渲染成气泡。
   // 后台通知不靠它——通知有 notifyMsgRef 的预装配本体，drain 时按 prepared 判定。
@@ -501,21 +508,15 @@ export function App({
 
   /**
    * 把终态/对账补投通知装配入发送队列：XML 信封消息本体登记（shift 时带 origin 注入 history）、
-   * 正文进队列、delivered 事件落盘。startsPromptTurn=true：队列派发即唤醒一个新的 prompt 回合。
+   * 正文进队列。delivered 事件不在此落盘——统一延迟到 persist 与消息本体同刻补写（待办 #17），
+   * 消除「事件已落盘、消息未落盘」的崩溃误判窗口。Esc 丢弃队列处显式补写（丢弃即送达）。
    */
   const queueNotification = useCallback((task: NotifiableTask): void => {
     const msg = buildSettleMessage(task, { startsPromptTurn: true });
     const text = typeof msg.message.content === 'string' ? msg.message.content : '';
-    appendWireEvent({
-      type: 'background.notify_delivered',
-      ts: msg.ts,
-      taskId: task.id,
-      status: task.status,
-      notificationId: notificationIdFor(task),
-    });
     notifyMsgRef.current.set(text, msg);
     queue.current.push(text);
-  }, [appendWireEvent]);
+  }, []);
   // 会话级 goal 管理器：自主目标，跨轮持有；挂载时从 session 快照恢复（active 降级 paused，防重启自动续跑）
   const goal = useRef(new GoalMode());
   const goalRestored = useRef(false);
@@ -584,6 +585,18 @@ export function App({
       // 全量历史日志：按 id 去重追加 history.current 中尚未写过的消息。
       // 压缩后 history.current 变短，但已落盘的 JSONL 保留被压缩掉的行，不受影响。
       store.appendFull(sessionRef.current.cwd, sessionRef.current.id, history.current);
+      // delivered 事件在此统一补写（待办 #17）：通知消息本体随 appendFull 落盘的同一
+      // 时刻写送达事件，两者同生共死——崩溃只可能丢「都还没写」的，对账会正确补投；
+      // 不再允许「事件已落盘、消息没落盘」的中间态。幂等键内存去重防 wire 膨胀；
+      // 事件若丢而消息已落盘，对账的消息回填通道（store.ts）仍判送达，双通道互为冗余。
+      const pendingDelivered = pendingDeliveredEvents(
+        history.current,
+        deliveredWrittenRef.current,
+        new Date().toISOString(),
+      );
+      if (pendingDelivered.length > 0) {
+        store.appendWire(sessionRef.current.cwd, sessionRef.current.id, pendingDelivered);
+      }
       store.save(sessionRef.current);
     } catch {
       // 持久化失败不应打断会话
@@ -1131,9 +1144,27 @@ export function App({
       if (queue.current.length > 0) {
         // 系统合成注入（后台通知信封 / cron prompt / skill 正文）不进输入框草稿：正文是给模型
         // 看的，用户既不该编辑也读不懂，灌进去只会得到一段 XML。这些条目随队列一起丢弃（与本
-        // 分支原有的清空语义一致，不额外保留，否则 Esc 永远进不到下面的回退分支），但单独报数：
-        // 被丢弃的通知不会再补投，delivered 事件在 queueNotification 入队时已落盘，对账认定已送达。
-        const dropped = queue.current.filter(isSystemInjectedText).length;
+        // 分支原有的清空语义一致，不额外保留，否则 Esc 永远进不到下面的回退分支），但单独报数。
+        // 被丢弃的通知不再补投——在此显式落盘 delivered 事件（丢弃即送达），因为它们的
+        // 消息本体永远不会进 history，走不到 persist 的统一补写（待办 #17 新时序下的例外点）。
+        const droppedTexts = queue.current.filter(isSystemInjectedText);
+        for (const text of droppedTexts) {
+          const o = notifyMsgRef.current.get(text)?.origin;
+          if (o?.kind === 'background_task' && o.notificationId !== undefined) {
+            const key = notifyDedupKeyFromOrigin(o.taskId, o.notificationId);
+            if (!deliveredWrittenRef.current.has(key)) {
+              deliveredWrittenRef.current.add(key);
+              appendWireEvent({
+                type: 'background.notify_delivered',
+                ts: new Date().toISOString(),
+                taskId: o.taskId ?? '',
+                status: /^task:.+:([a-z]+)$/.exec(o.notificationId)?.[1] ?? '',
+                notificationId: o.notificationId,
+              });
+            }
+          }
+        }
+        const dropped = droppedTexts.length;
         const drafts = queue.current.filter((s) => !isSystemInjectedText(s));
         queue.current = [];
         notifyMsgRef.current.clear();
@@ -1479,6 +1510,12 @@ export function App({
           ? t('app.provider.presetModel', { model: nextModel })
           : t('app.provider.noPresetModel');
       pushItem({ kind: 'note', text: t('app.provider.switched', { provider: name, modelNote }) });
+      // 写回 config.toml 顶层 provider：幂等判断（同 saveDefaultProvider 内部逻辑）
+      try {
+        saveDefaultProvider(name, providerNameRef.current === name ? undefined : providerNameRef.current);
+      } catch (e) {
+        pushItem({ kind: 'note', text: t('app.provider.persistFailed', { message: (e as Error).message }) });
+      }
     },
     [model, pushItem],
   );
@@ -1507,12 +1544,19 @@ export function App({
       switch (target.kind) {
         case 'alias':
           applyModelAlias(target.alias);
+          // 自定义渠道 id 选定后写回顶层 provider
+          try {
+            saveDefaultProvider(target.providerId, providerNameRef.current === target.providerId ? undefined : providerNameRef.current);
+          } catch (e) {
+            pushItem({ kind: 'note', text: t('app.provider.persistFailed', { message: (e as Error).message }) });
+          }
           return;
         case 'noAlias':
           pushItem({ kind: 'note', text: t('app.provider.noAlias', { id: target.providerId }) });
           return;
         case 'preset':
           applyPresetSwitch(target.name);
+          // applyPresetSwitch 内部已写回，此处不再重复
           return;
         case 'unknown':
           pushItem({ kind: 'note', text: t('app.provider.unknown', { provider: arg, list: target.available.join(' / ') }) });
@@ -1697,10 +1741,21 @@ export function App({
    * 即时生效（下一轮请求经 runAgent 的 thinking 参数透传），不重建会话、不动 provider；
    * 会话已有历史时追加 prompt cache 失效提示（对齐 /model 的措辞意图）。
    * name 必为合法档位名或 'off'（文本路径已经 parseThinkArgs 校验，弹层由 items 装配保证）。
+   *
+   * 写回策略：Enter 确认即写回 config.toml [thinking] default_level（单层语义，ThinkPicker 无 Shift+Enter 分支）。
+   * 'off' 不写回（会话级临时关闭，不污染全局默认）。失败只提示不阻断。
    */
   const applyThinkLevel = useCallback(
-    (name: string): void => {
+    (name: ThinkingLevelName | 'off'): void => {
       setThinkOverrideBoth(name);
+      // 思考档位写回 config.toml：让下次启动的新会话沿用本次选择（单层写回，off 不写入）
+      if (name !== 'off') {
+        try {
+          saveDefaultThinkingLevel(name);
+        } catch (e) {
+          pushItem({ kind: 'note', text: t('app.think.persistFailed', { message: (e as Error).message }) });
+        }
+      }
       // 思考档位是会话级状态：切换即落盘，恢复会话时读回（与 /model、/permission 同口径）
       persist();
       const levels = thinkLevelsOf(configRef.current.thinking);
@@ -1772,7 +1827,7 @@ export function App({
             break;
           }
           if (result.kind === 'set') {
-            applyThinkLevel(result.override);
+            applyThinkLevel(result.override as ThinkingLevelName | 'off');
             break;
           }
           // 无参：busy 中退化为文本展示（只读，busy 时经 busyRoute 即时分发到此处）；空闲唤起选择器
@@ -2794,17 +2849,10 @@ export function App({
       return;
     }
     if (decideNotifyRoute(busyRef.current) === 'submit') {
-      // 空闲：取出全部待投递通知，各自独立提交（多条不合并）；startsPromptTurn=true，唤醒新回合
+      // 空闲：取出全部待投递通知，各自独立提交（多条不合并）；startsPromptTurn=true，唤醒新回合。
+      // delivered 事件不在此落盘——由 submit 回合末 persist 与消息本体同刻补写（待办 #17）。
       for (const task of background.current.drainSettled()) {
         const msg = buildSettleMessage(task, { startsPromptTurn: true });
-        // 送达事件落盘：通知进历史即视为送达（与 append_message 回填互为冗余）
-        appendWireEvent({
-          type: 'background.notify_delivered',
-          ts: msg.ts,
-          taskId: task.id,
-          status: task.status,
-          notificationId: notificationIdFor(task),
-        });
         const text = typeof msg.message.content === 'string' ? msg.message.content : '';
         // silent：通知正文是给模型看的 XML 信封，不能作为用户气泡显示——那等于系统冒充用户
         // 打了一段话进输入区。用户侧的可见性由上方 pushItem 的 note 条目承担（人读格式）。
@@ -2887,6 +2935,9 @@ export function App({
   // 那时 Ink 放弃原地重绘改全量清屏，每次移动高亮都整屏抖动并清掉 scrollback。
   // 预留 = 状态栏 + 动态区最小 1 行（弹层期间对话区可压到最小，但不能压成 0）。
   const sessionVisibleRows = resolveVisibleRows(stdout?.rows, sessionPickerSubs.length, STATUS_BAR_ROWS + 1);
+  // ModelPicker / ThinkPicker 同口径：无子 agent 区；chrome 结构略不同（多 tabBar/缓存警告行），
+  // 保守多减 1 行余量（防小终端弹层越线走全量清屏分支）。
+  const pickerVisibleRows = Math.max(1, resolveVisibleRows(stdout?.rows, 0, STATUS_BAR_ROWS + 1) - 1);
   if (pendingQuestion !== null) {
     promptRows = estimateQuestionRows(pendingQuestion, stdout?.columns);
   } else if (pendingPlan !== null) {
@@ -3168,6 +3219,7 @@ export function App({
           items={modelPickerItems}
           hasHistory={history.current.length > 0}
           initialChannel={modelPickerInitialChannel}
+          visibleRows={pickerVisibleRows}
           onSelect={(alias, sessionOnly) => {
             setModelPickerOpen(false);
             setModelPickerInitialChannel(undefined);
@@ -3178,9 +3230,10 @@ export function App({
         <ThinkPicker
           items={thinkPickerItems}
           hasHistory={history.current.length > 0}
+          visibleRows={pickerVisibleRows}
           onSelect={(name) => {
             setThinkPickerOpen(false);
-            if (name !== null) applyThinkLevel(name);
+            if (name !== null) applyThinkLevel(name as ThinkingLevelName | 'off');
           }}
         />
       ) : skillPickerOpen ? (

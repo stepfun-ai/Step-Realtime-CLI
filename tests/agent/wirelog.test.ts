@@ -7,6 +7,7 @@ import {
   notifyDedupKey,
   notifyDedupKeyFromOrigin,
   parseWireLine,
+  pendingDeliveredEvents,
   replayWireEvents,
   type WireEvent,
 } from '../../src/agent/wirelog.js';
@@ -119,6 +120,46 @@ describe('notifyDedupKeyFromOrigin', () => {
     const odd = notifyDedupKeyFromOrigin('task-1', 'custom-id');
     expect(odd).toBe(notifyDedupKey('task-1', '', 'custom-id'));
     expect(notifyDedupKeyFromOrigin('task-1', 'custom-id')).toBe(odd); // 幂等
+  });
+});
+
+describe('pendingDeliveredEvents（待办 #17：delivered 与消息本体同刻落盘）', () => {
+  const note = (taskId: string, status: string) =>
+    stored(
+      { role: 'user', content: `<notification id="task:${taskId}:${status}">…</notification>` },
+      { kind: 'background_task', taskId, notificationId: `task:${taskId}:${status}` },
+    );
+
+  it('为历史中的通知消息生成 delivered 事件，幂等键去重不重复写', () => {
+    const written = new Set<string>();
+    const messages = [
+      stored({ role: 'user', content: 'hi' }, { kind: 'user' }),
+      note('t1', 'completed'),
+      note('t2', 'failed'),
+    ];
+    const first = pendingDeliveredEvents(messages, written, TS);
+    expect(first).toHaveLength(2);
+    expect(first[0]).toMatchObject({
+      type: 'background.notify_delivered',
+      taskId: 't1',
+      status: 'completed',
+      notificationId: 'task:t1:completed',
+    });
+    // 同一 written 集再次扫描：已写过的不再生成（persist 每轮都调，防 wire 膨胀）
+    expect(pendingDeliveredEvents(messages, written, TS)).toHaveLength(0);
+    // 新通知出现后只补写新的那条
+    const third = pendingDeliveredEvents([...messages, note('t3', 'killed')], written, TS);
+    expect(third).toHaveLength(1);
+    expect(third[0]).toMatchObject({ taskId: 't3', status: 'killed' });
+  });
+
+  it('非通知消息与无 notificationId 的 origin 不产生事件', () => {
+    const written = new Set<string>();
+    const messages = [
+      stored({ role: 'user', content: 'hi' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: 'yo' }, { kind: 'assistant' }),
+    ];
+    expect(pendingDeliveredEvents(messages, written, TS)).toHaveLength(0);
   });
 });
 

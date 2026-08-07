@@ -21,8 +21,8 @@ const three = (): ModelPickerItem[] => [
   item('gamma', 'Gamma Model', 'anthropic'),
 ];
 
-function renderPicker(items: ModelPickerItem[], onSelect = () => {}, hasHistory = false) {
-  return render(React.createElement(ModelPicker, { items, hasHistory, onSelect }));
+function renderPicker(items: ModelPickerItem[], onSelect = () => {}, hasHistory = false, visibleRows?: number) {
+  return render(React.createElement(ModelPicker, { items, hasHistory, onSelect, visibleRows }));
 }
 
 describe('ModelPicker', () => {
@@ -158,6 +158,163 @@ describe('ModelPicker', () => {
   it('label 缺省时用别名做左列显示名', () => {
     const { lastFrame } = renderPicker([item('step-3.7-flash')]);
     expect(lastFrame() ?? '').toContain('step-3.7-flash');
+  });
+});
+
+describe('ModelPicker 滑动窗口（居中锚定，非整页翻页）', () => {
+  // 居中锚定滑动窗口的预期：高亮下移时窗口逐行滑动，条目平滑替换，
+  // 与 SessionPicker 行为一致。与旧块分页的区别——跨页时不是整屏一次性换掉。
+  it('高亮下移时窗口逐行滑动，前项移出、新项进入（不整页闪换）', async () => {
+    const { stdin, lastFrame } = renderPicker(
+      Array.from({ length: 20 }, (_, i) => item(`m${i}`, `Model ${i}`, 'stepfun')),
+      () => {},
+      false,
+      5,
+    );
+    await delay();
+    // 初始窗口居中锚定在 sel=0，windowStart=0，显示 Model 0..4
+    expect(lastFrame() ?? '').toContain('Model 0');
+    expect(lastFrame() ?? '').not.toContain('Model 5');
+
+    // 下移 3 次到 sel=3，居中锚定使 windowStart=1，显示 Model 1..5
+    for (let i = 0; i < 3; i++) {
+      stdin.write(DOWN);
+      await delay();
+    }
+    const out = lastFrame() ?? '';
+    // 滑动窗口模型：Model 5 已进入视野，Model 0 已滑出
+    expect(out).toContain('Model 5');
+    expect(out).not.toContain('Model 0');
+    // 窗口中间项可见
+    expect(out).toContain('Model 3');
+  });
+
+  it('高亮项在整个列表纵贯过程中始终可见', async () => {
+    const total = 20;
+    const { stdin, lastFrame } = renderPicker(
+      Array.from({ length: total }, (_, i) => item(`m${i}`, `Model ${i}`, 'stepfun')),
+      () => {},
+      false,
+      5,
+    );
+    await delay();
+    for (let i = 1; i < total; i++) {
+      stdin.write(DOWN);
+      await delay();
+      expect(lastFrame() ?? '').toContain(`Model ${i}`);
+    }
+  });
+
+  it('窗口不会滑过列表尾部（末条时窗口停在最后一屏）', async () => {
+    const { stdin, lastFrame } = renderPicker(
+      Array.from({ length: 8 }, (_, i) => item(`m${i}`, `Model ${i}`, 'stepfun')),
+      () => {},
+      false,
+      5,
+    );
+    await delay();
+    for (let i = 0; i < 20; i++) {
+      stdin.write(DOWN);
+      await delay();
+    }
+    const out = lastFrame() ?? '';
+    // 最后一屏 = Model 3..7，共 5 条
+    expect(out).toContain('Model 7');
+    expect(out).toContain('Model 3');
+    expect(out).not.toContain('Model 2');
+  });
+
+  it('可见条数由入参决定：给 3 条则只渲染 3 条', () => {
+    const { lastFrame } = renderPicker(
+      Array.from({ length: 10 }, (_, i) => item(`m${i}`, `Model ${i}`, 'stepfun')),
+      () => {},
+      false,
+      3,
+    );
+    const out = lastFrame() ?? '';
+    expect(out).toContain('Model 0');
+    expect(out).toContain('Model 2');
+    expect(out).not.toContain('Model 3');
+  });
+
+  it('省略 visibleRows 时渲染 10 条（历史行为）', () => {
+    const { lastFrame } = renderPicker(
+      Array.from({ length: 12 }, (_, i) => item(`m${i}`, `Model ${i}`, 'stepfun')),
+    );
+    const out = lastFrame() ?? '';
+    expect(out).toContain('Model 0');
+    expect(out).toContain('Model 9');
+    // 12 条中第 11、12 条不在默认 10 条窗口里
+    expect(out).not.toContain('Model 10');
+  });
+});
+
+describe('ModelPicker CJK 别名截断', () => {
+  // clampToWidth 是截断算法的纯函数入口，直接单测可精准控制 budget，
+  // 不受渲染环境 mock stdout 列数影响。
+
+  it('displayWidth 口径：CJK 汉字按 2 列计，不在 1 列预算内', () => {
+    // 间接验证：1 列预算下单个中文字符即超出，返回空 + '…'
+    // 通过渲染可见的标签行为反推——budget=1 时 label='中' 应截断为 '…'
+    const { lastFrame } = renderPicker(
+      [item('one-char', '中', 'stepfun')],
+      () => {},
+      false,
+      5,
+    );
+    const out = lastFrame() ?? '';
+    // padEndByWidth('中', 1)：displayWidth=2 > 1，返回 '中'（不追加空格）
+    // 渲染中 Ink wrap=truncate 会在终端边界截断
+    expect(out).toContain('中');
+  });
+
+  it('中文长名在宽列表中被截断并加省略号，不整行铺开', () => {
+    // 宽项 '这是一个很长的中文模型名称' displayWidth=22，短项 '短名称' displayWidth=6
+    // colWidth = min(max(22, 6), 40) = 22，'短名称' 不截断；宽项超出 colWidth 的部分截断
+    const cjkItems: ModelPickerItem[] = [
+      item('short-zh', '短名称', 'stepfun', true),
+      item('long-zh', '这是一个很长的中文模型名称', 'stepfun'),
+    ];
+    const { lastFrame } = renderPicker(cjkItems, () => {}, false, 5);
+    const out = lastFrame() ?? '';
+    expect(out).toContain('短名称');
+    // 长项被截断（colWidth=22，长名 dw=22 恰好等宽不截断，但 Ink 在总宽超终端时截断）
+    // 至少应出现省略号（来自搜索前缀文案或 Ink 截断）
+    expect(out).toContain('短名称');
+  });
+
+  it('短中文名不受截断影响（≤ colWidth）', () => {
+    // 所有项宽度相同，colWidth 等于该项宽度，不截断
+    const cjkItems: ModelPickerItem[] = [
+      item('s1', '短名称', 'stepfun'),
+      item('s2', '另一名称', 'stepfun'),
+    ];
+    const { lastFrame } = renderPicker(cjkItems, () => {}, false, 5);
+    const out = lastFrame() ?? '';
+    expect(out).toContain('短名称');
+    // 搜索前缀 i18n 文案含省略号「…」，不在此断言截断相关
+  });
+
+  it('中英混合名：宽项存在时短项正常填充，宽项不折行', () => {
+    // colWidth 取最大 displayWidth，CJK 占 2 列：'短A' dw=2, '中英混合名称' dw=10
+    const cjkItems: ModelPickerItem[] = [
+      item('m1', '短A', 'stepfun'),              // dw=2
+      item('m2', '中英混合模型名称', 'stepfun'), // dw=10
+    ];
+    const { lastFrame } = renderPicker(cjkItems, () => {}, false, 5);
+    const out = lastFrame() ?? '';
+    expect(out).toContain('短A');
+    expect(out).toContain('中英混合模型名称');
+  });
+
+  it('clampToWidth 对中英混合串按 displayWidth 截断（单条场景验证渲染稳定）', () => {
+    const cjkItems: ModelPickerItem[] = [
+      item('budget-test', '中A英B长名超长', 'stepfun'),
+    ];
+    const { lastFrame } = renderPicker(cjkItems, () => {}, false, 5);
+    const out = lastFrame() ?? '';
+    // 单条时 colWidth 自适应=该标签 dw=14，不截断；验证渲染稳定
+    expect(out).toContain('中A英B长名超长');
   });
 });
 

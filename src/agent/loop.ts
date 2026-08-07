@@ -19,7 +19,7 @@ import { EmptyResponseError } from '../provider/retry.js';
 import type { AgentEvent } from './events.js';
 import { type LoopHooks, resolveContinuation } from './hooks.js';
 import { type StoredMessage, stored } from './message.js';
-import { buildSettleMessage, notificationIdFor } from './background/notify.js';
+import { buildSettleMessage } from './background/notify.js';
 import type { WireEvent } from './wirelog.js';
 import { runTurn } from './runTurn.js';
 import { emptyContinuationState, advanceContinuation, checkContinuationSafety } from './continuation.js';
@@ -328,14 +328,9 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         // XML 信封 + 结构化 origin（background_task）：回合中途注入，不单独开轮（startsPromptTurn=false）
         const msg = buildSettleMessage(task, { startsPromptTurn: false });
         messages.push(msg);
-        // 送达事件落盘：通知进历史即视为送达（与 append_message 回填互为冗余）
-        opts.onWireEvent?.({
-          type: 'background.notify_delivered',
-          ts: msg.ts,
-          taskId: task.id,
-          status: task.status,
-          notificationId: notificationIdFor(task),
-        });
+        // delivered 事件不在此落盘：消息本体要等回合末 persist 才落盘，事件先写会留下
+        // 「事件在、消息不在」的崩溃窗口——对账误判已送达，通知丢失（待办 #17）。
+        // 统一由 persist 与消息本体同刻补写；消息带 background_task origin，补写可寻址。
       }
     }
     // 发请求前的压缩预检。**这是本轮补上的缺口**：原先压缩只挂在 `tool_use` 分支

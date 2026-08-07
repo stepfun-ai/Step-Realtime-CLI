@@ -1,5 +1,6 @@
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useMemo, useState } from 'react';
+import { displayWidth, padEndByWidth } from './liveBudget.js';
 import { t } from '../i18n.js';
 
 /** 模型选择器的单条候选项（由 App 从 [models.<别名>] 表装配）。 */
@@ -35,9 +36,6 @@ export function buildModelPickerItems(
   }));
 }
 
-/** 每页展示的模型条数（对齐 SessionPicker）。 */
-const PAGE_SIZE = 10;
-
 /** 渠道 tab 的「全部」id（恒第一 tab，不做渠道预过滤）。 */
 const ALL_TAB = 'all';
 
@@ -63,12 +61,16 @@ function searchKey(m: ModelPickerItem): string {
  * tab 条总宽超终端时右端截断并加 … 占位（v1 不做滚动窗口）。
  * 会话已有历史时顶部显示 prompt cache 失效警告。
  * initialChannel 用于「新增渠道后自动拉起并预选到该渠道 tab」的场景，缺省从「全部」起。
+ *
+ * 可见条数由上层通过 visibleRows 传入；省略时默认 10 条（历史行为），
+ * 与 SessionPicker 同一设计原则——组件内不读终端尺寸，行数预算与实际渲染用同一组数。
  */
 export function ModelPicker({
   items,
   hasHistory,
   onSelect,
   initialChannel,
+  visibleRows,
 }: {
   items: ModelPickerItem[];
   /** 会话已有历史时为 true，顶部显示 cache 失效警告。 */
@@ -76,6 +78,8 @@ export function ModelPicker({
   onSelect: (alias: string | null, sessionOnly?: boolean) => void;
   /** 打开时预选到对应渠道 tab（无该渠道 tab 时退回「全部」）；缺省行为不变。 */
   initialChannel?: string;
+  /** 列表区屏幕可见条数（上层按终端行数解出）；省略用兜底值 10（历史行为）。 */
+  visibleRows?: number;
 }): React.ReactElement {
   const { stdout } = useStdout();
 
@@ -107,13 +111,19 @@ export function ModelPicker({
     return channelItems.filter((m) => terms.every((term) => searchKey(m).includes(term)));
   }, [channelItems, query]);
 
-  // query 变化后 sel 可能越界，渲染期钳制；页窗口跟随高亮项
+  // 居中锚定滑动窗口：高亮往哪移窗口就往哪滑，高亮始终落在窗口中部。
+  // 不用整页翻页，因为那样游标跨页时整屏条目会一次性换掉、高亮从末行弹回首行。
+  const pageSize = visibleRows ?? 10;
   const clampedSel = Math.min(sel, Math.max(filtered.length - 1, 0));
-  const pageStart = Math.floor(clampedSel / PAGE_SIZE) * PAGE_SIZE;
-  const page = filtered.slice(pageStart, pageStart + PAGE_SIZE);
-  // 左列宽 = 当页最长显示名，上限终端宽一半（防长名把渠道列挤出屏幕）
+  const windowStart = Math.max(
+    0,
+    Math.min(clampedSel - Math.floor(pageSize / 2), Math.max(0, filtered.length - pageSize)),
+  );
+  const page = filtered.slice(windowStart, windowStart + pageSize);
+
+  // 左列宽：当前页最长显示名的显示宽度（宽字符按 2 列），上限终端宽一半（防长名把渠道列挤出屏幕）
   const colWidth = Math.min(
-    Math.max(...page.map((m) => m.label.length), 0),
+    Math.max(...page.map((m) => displayWidth(m.label)), 0),
     Math.max(Math.floor((stdout?.columns ?? 80) / 2), 8),
   );
 
@@ -224,8 +234,9 @@ export function ModelPicker({
         <Text color="gray">{t('modelPicker.empty')}</Text>
       ) : (
         page.map((m, i) => {
-          const active = pageStart + i === clampedSel;
-          const label = m.label.length > colWidth ? m.label.slice(0, colWidth) : m.label.padEnd(colWidth);
+          const active = windowStart + i === clampedSel;
+          // 用 displayWidth 截断/填充，CJK 宽字符按 2 列计，避免折行或截断位置错误
+          const label = padEndByWidth(m.label, colWidth);
           return (
             <Text key={m.alias} color={active ? 'cyan' : 'white'} inverse={active}>
               {active ? '› ' : '  '}
@@ -237,11 +248,11 @@ export function ModelPicker({
           );
         })
       )}
-      {filtered.length > PAGE_SIZE && (
+      {filtered.length > pageSize && (
         <Text color="gray">
           {t('sessionPicker.pageInfo', {
-            start: pageStart + 1,
-            end: Math.min(pageStart + PAGE_SIZE, filtered.length),
+            start: windowStart + 1,
+            end: Math.min(windowStart + pageSize, filtered.length),
             total: filtered.length,
           })}
         </Text>
