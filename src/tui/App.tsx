@@ -2997,7 +2997,7 @@ export function App({
       todos.current.length > 0 ? 5 + Math.min(todos.current.length, 5) + (todos.current.length > 5 ? 1 : 0) : 0,
     // AgentGroup 行数由组件自身导出（渲染结构与行数公式同文件维护，防漂移）。
     // 漏算会让帧高越过 rows−1 红线 → Ink 全量清屏（\x1b[3J）清掉 scrollback → 向上滚动被拽回顶部。
-    agentRows: agentGroupRows(subagents),
+    agentRows: agentGroupRows(subagents, busy),
     // QueuePreview：标题 1 + 前 3 条每条 ≤ 2 行 + 「还有 N 条」1 + ↑ 取回提示 1
     queueRows:
       queueLen > 0
@@ -3017,7 +3017,7 @@ export function App({
           : 0,
     // WorkingStatus 忙碌态状态行：margin 1 + spinner 行 1 + tip 行 1（busy 且已记起始时间才显示）
     workingRows: busy && turnStartAt > 0 ? 3 : 0,
-  });
+  }, busy);
   logRenderBudget(stdout?.rows, budget);
   // stdout.rows 随 resize 自动更新，预算随之重算；非 TTY / 测试环境无 rows → undefined 不窗口化
   const liveMaxRows = budget.liveMaxRows;
@@ -3061,7 +3061,7 @@ export function App({
         <MessageList items={liveItems} busy={busy} maxRows={liveMaxRows} termWidth={termWidth} />
       )}
       {!overlayOpen && budget.thinkingRows > 0 ? <ThinkingPreview text={thinkingPreview} maxLines={budget.thinkingRows - 1} /> : null}
-      {!overlayOpen ? <AgentGroup agents={subagents} /> : null}
+      {!overlayOpen ? <AgentGroup agents={subagents} busy={busy} /> : null}
       {!overlayOpen && budget.showTodos ? <TodoPanel todos={todos.current} /> : null}
       {!overlayOpen && budget.showQueue ? (
         <QueuePreview queue={queue.current} isSystemInjected={isSystemInjectedText} />

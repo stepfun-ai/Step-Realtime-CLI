@@ -85,6 +85,39 @@ describe('computeLiveBudget 动态区高度预算', () => {
     expect(computeLiveBudget(30, blocks).liveMaxRows).toBe(16);
     expect(computeLiveBudget(20, blocks).liveMaxRows).toBe(6);
   });
+
+  // --- busy 时 chrome 面板让位测试 ---
+  it('busy 时 TodoPanel / QueuePreview 隐藏、AgentGroup 压缩为 1 行、thinking 压缩到 2', () => {
+    // 30 个子 agent（8 条限高约 20 行）+ todo 7 + queue 5 + thinking 4 + status 2 + prompt 4 = 42
+    const b = computeLiveBudget(50, { ...base, todoRows: 7, queueRows: 5, agentRows: 20, thinkingRows: 4 }, true);
+    expect(b.showTodos).toBe(false);
+    expect(b.showQueue).toBe(false);
+    // thinking 压缩到 2
+    expect(b.thinkingRows).toBe(2);
+    // agentRows=20 但 busy 时不参与降级计算（由调用方传入压缩后值）
+    expect(b.chromeRows).toBe(2 + 4 + 20 + 2); // status+prompt+agent+thinking
+    expect(b.liveMaxRows).toBeGreaterThanOrEqual(50 - 1 - b.chromeRows);
+  });
+
+  it('busy 时 liveMaxRows 增大：30 子 agent busy 时 ≈ termRows - 10', () => {
+    // status 2 + prompt 4 + agent 1（busy 压缩）+ thinking 2 = 9；busy 时无 todo/queue
+    const b = computeLiveBudget(30, { ...base, agentRows: 1, thinkingRows: 2 }, true);
+    expect(b.chromeRows).toBe(9);
+    expect(b.liveMaxRows).toBe(20); // 30 - 1 - 9
+  });
+
+  it('idle 时保持原有降级逻辑（busy=false 默认值）', () => {
+    // 与现有降级测试等价：rows 14 → chrome 上限 12 → 丢 queue 后 17 仍超，再丢 todos 后 10 ≤ 12
+    const b = computeLiveBudget(14, { ...base, todoRows: 7, queueRows: 5, thinkingRows: 4 });
+    expect(b.showQueue).toBe(false);
+    expect(b.showTodos).toBe(false);
+    expect(b.thinkingRows).toBe(4);
+  });
+
+  it('busy 时 thinking 已为 0 保持 0，不为负', () => {
+    const b = computeLiveBudget(30, { ...base, thinkingRows: 0 }, true);
+    expect(b.thinkingRows).toBe(0);
+  });
 });
 
 describe('displayWidth 终端显示宽度', () => {
