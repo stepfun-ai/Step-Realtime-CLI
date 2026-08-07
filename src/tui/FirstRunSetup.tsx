@@ -46,7 +46,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     name: 'stepfun',
     label: 'StepFun API 按量',
-    baseUrl: 'https://api.stepfun.com',
+    baseUrl: 'https://api.stepfun.com/v1',
     models: [
       { alias: 'step37', modelId: 'step-3.7-flash', displayName: 'Step 3.7 Flash' },
       { alias: 'step35', modelId: 'step-3.5-flash-2603', displayName: 'Step 3.5 Flash 2603' },

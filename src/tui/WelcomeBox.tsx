@@ -1,8 +1,9 @@
 import { Box, Text } from 'ink';
 import { t } from '../i18n.js';
 
-// 红色像素小生物 logo（两只眼睛 + 小腿），呼应阶跃 AI 的 space-invader 风格图标。
-const LOGO_LINES = [' ▟█▙ ', '█▀█▀█', '▘▘ ▘▘'];
+// 红色像素小生物 logo：沿用经典 space-invader 造型为基底，头部最左端叠加
+// ▖→▗ 两级斜向上的角（左低右高渐变）。最终稿选定记录见产品设计文档「step-code-logo设计.md」。
+const LOGO_LINES = ['▖', '▗▐▛███▜▌', '▝▜█████▛▘', '  ▘▘ ▝▝'];
 
 /** 顶部欢迎框：灰色边框 + 红色像素 logo，列出工作目录 / 会话 / 模型 / 版本。开场 banner（灰框、克制配色）。 */
 export function WelcomeBox({
@@ -32,7 +33,7 @@ export function WelcomeBox({
             </Text>
           ))}
         </Box>
-        <Box flexDirection="column">
+        <Box flexDirection="column" justifyContent="center">
           <Text bold>{t('welcome.title')}</Text>
           <Text color="gray">{t('welcome.helpHint')}</Text>
         </Box>
