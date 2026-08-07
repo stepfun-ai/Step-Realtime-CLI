@@ -119,6 +119,9 @@ export async function injectPrimitives(sandbox: DynamicWorkflowSandbox, opts: In
     const deferred = ctx.newPromise();
     spawn(prompt, agentOpts).then(
       (summary) => {
+        // 沙箱已销毁（中断/超时后的 finally dispose）时不再触碰 ctx，
+        // 否则 deferred.resolve 指向已释放的 QuickJS context 会触发 UseAfterFree 并使整个进程崩溃。
+        if (sandbox.isDisposed) return;
         if (summary === null) {
           deferred.resolve(ctx.null);
         } else {
@@ -128,6 +131,7 @@ export async function injectPrimitives(sandbox: DynamicWorkflowSandbox, opts: In
         }
       },
       (err: unknown) => {
+        if (sandbox.isDisposed) return;
         // reject 一个真正的 Error，脚本 catch 后能拿到 e.message。
         const h = ctx.newError(err instanceof Error ? err.message : String(err));
         deferred.reject(h);

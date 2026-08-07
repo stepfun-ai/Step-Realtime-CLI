@@ -577,28 +577,45 @@ function resumeSession(
 const resolveResume = (r: { session: SessionData; delivered: ReadonlySet<string> } | null): { session: SessionData; delivered: ReadonlySet<string> } =>
   r ?? { session: store.create(cwd, config.model), delivered: new Set() };
 let resolved: { session: SessionData; delivered: ReadonlySet<string> };
+/** 恢复是否成功命中了一个已存在的会话（区别于 resume 失败后 fallback 新建）。 */
+let resumeHit = false;
 if (opts.resume !== undefined) {
   if (typeof opts.resume === 'string') {
     // 带 id：直接恢复；找不到则新建
-    resolved = resolveResume(resumeSession(store, cwd, opts.resume));
+    const r = resumeSession(store, cwd, opts.resume);
+    resumeHit = r !== null;
+    resolved = resolveResume(r);
   } else if (process.stdin.isTTY) {
     // 无 id + TTY：弹交互选择器
     const picked = await pickSession();
-    resolved = resolveResume(picked !== null ? resumeSession(store, cwd, picked) : null);
+    const r = picked !== null ? resumeSession(store, cwd, picked) : null;
+    resumeHit = r !== null;
+    resolved = resolveResume(r);
   } else {
     // 无 id + 非 TTY（管道/CI）：退回最近一个（等同 -c）
     const newest = store.list(cwd)[0];
-    resolved = resolveResume(newest !== undefined ? resumeSession(store, cwd, newest.id) : null);
+    const r = newest !== undefined ? resumeSession(store, cwd, newest.id) : null;
+    resumeHit = r !== null;
+    resolved = resolveResume(r);
   }
 } else if (opts.session !== undefined) {
-  resolved = resolveResume(resumeSession(store, cwd, opts.session));
+  const r = resumeSession(store, cwd, opts.session);
+  resumeHit = r !== null;
+  resolved = resolveResume(r);
 } else if (opts.continue === true) {
   const newest = store.list(cwd)[0];
-  resolved = resolveResume(newest !== undefined ? resumeSession(store, cwd, newest.id) : null);
+  const r = newest !== undefined ? resumeSession(store, cwd, newest.id) : null;
+  resumeHit = r !== null;
+  resolved = resolveResume(r);
 } else {
   resolved = resolveResume(null);
 }
 const session = resolved.session;
+// 恢复命中但消息为空：会话是崩溃/中断留下的空壳（消息没落盘进程就死了），
+// 用户大概率以为恢复错了 id。提前在 stderr 提示，避免进 TUI 后才发现历史是空的。
+if (resumeHit && session.messages.length === 0) {
+  process.stderr.write(`⚠ 会话 ${session.id} 已恢复，但没有历史消息（可能是上次崩溃时未落盘）。\n`);
+}
 /** 本次恢复带回的已送达通知幂等键集合（TUI 组合根交给 App 做后台任务对账；新建会话为空集）。 */
 const resumeDelivered: ReadonlySet<string> = resolved.delivered;
 // 模型来源优先级：命令行 --model 显式覆盖 > 会话存储的 model（恢复时保留）> config 默认。
@@ -1011,6 +1028,7 @@ if (opts.reflect === true) {
       store={store}
       session={session}
       resumeDelivered={resumeDelivered}
+      resumeHit={resumeHit}
       maxContextSize={sessionMaxContextSize}
       mcp={mcpManager}
       hookEngineRef={hookEngineRef}

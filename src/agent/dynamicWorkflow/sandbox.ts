@@ -166,6 +166,11 @@ export class DynamicWorkflowSandbox {
     }
   }
 
+  /** 沙箱是否已销毁：在途宿主异步回调（如 __agent 的 spawn.then）据此短路，避免 UseAfterFree。 */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
