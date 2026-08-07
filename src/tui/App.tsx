@@ -1143,13 +1143,16 @@ export function App({
       return;
     }
     // 思考块结束事件、或任何非思考事件到来 = 思考块已结束：收起「思考中」，
-    // 已累积的思考文本落成定稿条目（暗色斜体块）
+    // 已累积的思考文本落成定稿条目（暗色斜体块）。
+    // text 事件是特例：thinking 落成与正文追加必须原子落在同一次 setItems（见下），
+    // 故 text 分支不走这里的独立 setItems，避免 thinking 单独成为末尾的瞬间被
+    // countSettledItems 全量定稿（Static 双渲染根因，见 20260807 设计文档）。
     setThinkingActive(false);
-    if (thinkingRef.current !== '') {
-      const thinkingText = thinkingRef.current;
+    const pendingThinking = thinkingRef.current;
+    if (ev.type !== 'text' && pendingThinking !== '') {
       thinkingRef.current = '';
       setThinkingPreview('');
-      setItems((prev) => [...prev, { kind: 'thinking', text: thinkingText }]);
+      setItems((prev) => [...prev, { kind: 'thinking', text: pendingThinking }]);
     }
     if (ev.type === 'thinking_end') return;
     // dynamic_workflow 工具调用跟踪：start 入栈 / end 出栈，供 onWorkflowStep 的 phase 事件定位动态面板。
@@ -1164,11 +1167,20 @@ export function App({
       setTurnOutputChars(turnOutputCharsRef.current);
     }
     setItems((prev) => {
-      const next = [...prev];
+      // text 事件：先把待落定的 thinking 并入（同一帧原子落定），再追加正文。
+      // 这样 thinking 与首个 text 在同一 items 快照里相邻出现，countSettledItems
+      // 看到的末尾是 assistant 而非 thinking，不会在途 assistant 被搬进 Static。
+      let base = prev;
+      if (ev.type === 'text' && pendingThinking !== '') {
+        thinkingRef.current = '';
+        setThinkingPreview('');
+        base = [...prev, { kind: 'thinking', text: pendingThinking }];
+      }
+      const next = [...base];
       switch (ev.type) {
         case 'text':
           // 流式正文追加（越过 UI 侧提示续接，不把一条消息劈成两截）
-          return appendStreamText(prev, ev.text);
+          return appendStreamText(base, ev.text);
         case 'tool_start': {
           const item: Extract<DisplayItem, { kind: 'tool' }> = {
             kind: 'tool',
