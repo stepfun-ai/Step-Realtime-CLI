@@ -102,8 +102,9 @@ export function formatDetachedHandoff(agents: readonly SubagentProgress[]): stri
  * Ink 走全量清屏分支（clearTerminal 含 \x1b[3J）清掉 scrollback，
  * 表现为「向上滚动被拽回顶部」。同文件同步维护，杜绝这类漂移。
  */
-export function agentGroupRows(agents: readonly SubagentProgress[]): number {
+export function agentGroupRows(agents: readonly SubagentProgress[], busy: boolean = false): number {
   if (agents.length === 0) return 0;
+  if (busy) return 1; // busy 时只有 1 行摘要
   const sorted = sortForDisplay(agents);
   const visible = sorted.slice(0, MAX_VISIBLE_AGENTS);
   const bodyRows = visible.reduce(
@@ -123,7 +124,26 @@ export function agentGroupRows(agents: readonly SubagentProgress[]): number {
  *
  * 改动渲染结构时同步改 agentGroupRows（见其注释）。
  */
-export function AgentGroup({ agents }: { agents: SubagentProgress[] }): React.ReactElement | null {
+export function AgentGroup({
+  agents,
+  busy = false,
+}: {
+  agents: SubagentProgress[];
+  busy?: boolean;
+}): React.ReactElement | null {
+  // busy 时压缩为单行摘要，让位给流式正文
+  if (busy && agents.length > 0) {
+    const running = agents.filter((a) => a.status === 'running').length;
+    const done = agents.filter((a) => a.status === 'done').length;
+    return (
+      <Box marginTop={1}>
+        <Text color="gray" wrap="truncate">
+          ⠶ {t('agentGroup.busySummary', { total: agents.length, running, done })}
+        </Text>
+      </Box>
+    );
+  }
+
   const sorted = sortForDisplay(agents);
   const visible = sorted.slice(0, MAX_VISIBLE_AGENTS);
   const hidden = sorted.slice(MAX_VISIBLE_AGENTS);

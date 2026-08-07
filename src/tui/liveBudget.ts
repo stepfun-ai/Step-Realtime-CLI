@@ -47,7 +47,11 @@ export interface LiveBudget {
 /** 思考预览降级下限：标题 + 至少 1 行正文，给不出来就整块隐藏。 */
 const MIN_THINKING_ROWS = 2;
 
-export function computeLiveBudget(termRows: number | undefined, blocks: ChromeBlocks): LiveBudget {
+export function computeLiveBudget(
+  termRows: number | undefined,
+  blocks: ChromeBlocks,
+  busy: boolean = false,
+): LiveBudget {
   const todoRows = blocks.todoRows ?? 0;
   const agentRows = blocks.agentRows ?? 0;
   const queueRows = blocks.queueRows ?? 0;
@@ -57,8 +61,17 @@ export function computeLiveBudget(termRows: number | undefined, blocks: ChromeBl
   let showTodos = todoRows > 0;
   let showQueue = queueRows > 0;
   let degraded = false;
+
+  // busy 时 chrome 面板让位给流式正文：隐藏 TodoPanel / QueuePreview，AgentGroup 压缩为 1 行，
+  // thinking preview 保留但压缩到 ≤2 行。
+  if (busy) {
+    showTodos = false;
+    showQueue = false;
+    thinkingRows = Math.min(thinkingRows, 2);
+  }
+
   const fixedRows = blocks.statusRows + blocks.promptRows + agentRows + imageRows + workingRows;
-  let chromeRows = fixedRows + todoRows + queueRows + thinkingRows;
+  let chromeRows = fixedRows + (busy ? 0 : todoRows + queueRows) + thinkingRows;
 
   if (termRows !== undefined) {
     // 总高预算 rows − 1，再减 live 视口保底 1 行，得 chrome 上限。

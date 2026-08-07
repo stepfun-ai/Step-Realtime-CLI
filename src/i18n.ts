@@ -126,6 +126,7 @@ const zh = {
   'agentGroup.backgroundHint': '（Ctrl+B 转后台运行）',
   'agentGroup.collapsed': '⠶ 并行子 agent：{shown} 个（{running} 运行中，{done} 已完成）· 还有 {hidden} 个，/tasks 查看全部',
   'agentGroup.detachedHandoff': '⏻ {count} 个子 agent 转入后台继续运行（bg 徽章可见，/tasks 查看进度，完成后通知）',
+  'agentGroup.busySummary': '并行子 agent：{total} 个（{running} 运行中，{done} 已完成）· /tasks 查看全部',
 
   // --- dynamic_workflow 动态阶段面板（DynamicWorkflowPanel / ToolCall）---
   'dynamicWorkflow.title': 'dynamic_workflow「{name}」',
@@ -779,6 +780,7 @@ const en: Record<keyof typeof zh, string> = {
   'agentGroup.backgroundHint': '(Ctrl+B to run in background)',
   'agentGroup.collapsed': '⠶ Parallel subagents: {shown} ({running} running, {done} done) · {hidden} more, /tasks to view all',
   'agentGroup.detachedHandoff': '⏻ {count} subagent(s) moved to background (see bg badge, /tasks for progress, notified on completion)',
+  'agentGroup.busySummary': 'Parallel subagents: {total} ({running} running, {done} done) · /tasks to view all',
 
   'dynamicWorkflow.title': 'dynamic_workflow "{name}"',
   'dynamicWorkflow.summary': 'dynamic_workflow "{name}" · {phases} phases',

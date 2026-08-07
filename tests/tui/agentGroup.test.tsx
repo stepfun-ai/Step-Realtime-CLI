@@ -61,6 +61,53 @@ describe('AgentGroup 面板', () => {
     expect(lastFrame() ?? '').toBe('');
   });
 
+  // --- busy 时单行摘要测试 ---
+  it('busy 时 8 个子 agent 压缩为 1 行摘要', () => {
+    const agents = Array.from({ length: 8 }, (_, i) => ({
+      id: String(i),
+      type: 'explore',
+      description: `task ${i + 1}`,
+      status: 'running' as const,
+      toolCount: 1,
+      startedAt: Date.now(),
+    }));
+    const { lastFrame } = render(React.createElement(AgentGroup, { agents, busy: true }));
+    const out = lastFrame() ?? '';
+    expect(out).toContain('并行子 agent：8 个');
+    expect(out).toContain('8 运行中');
+    expect(out).toContain('/tasks 查看全部');
+    // marginTop 1 + 文本 1 = 2 行
+    expect(out.split('\n').length).toBeLessThanOrEqual(2);
+  });
+
+  it('busy 时混合态摘要含 running/done 计数', () => {
+    const agents = [
+      { id: '1', type: 'explore', description: 'a', status: 'done', toolCount: 1, startedAt: 0, endedAt: 1000 },
+      { id: '2', type: 'explore', description: 'b', status: 'running', toolCount: 1, startedAt: Date.now() },
+      { id: '3', type: 'explore', description: 'c', status: 'done', toolCount: 1, startedAt: 0, endedAt: 1000 },
+    ];
+    const { lastFrame } = render(React.createElement(AgentGroup, { agents, busy: true }));
+    const out = lastFrame() ?? '';
+    expect(out).toContain('并行子 agent：3 个');
+    expect(out).toContain('1 运行中');
+    expect(out).toContain('2 已完成');
+  });
+
+  it('busy 时空列表不渲染', () => {
+    const { lastFrame } = render(React.createElement(AgentGroup, { agents: [], busy: true }));
+    expect(lastFrame() ?? '').toBe('');
+  });
+
+  it('idle 时恢复完整列表（busy 默认 false）', () => {
+    const agents = [
+      { id: '1', type: 'explore', description: '搜索', status: 'running', toolCount: 1, startedAt: Date.now() },
+    ];
+    const { lastFrame } = render(React.createElement(AgentGroup, { agents }));
+    const out = lastFrame() ?? '';
+    expect(out).toContain('子 agent 运行中');
+    expect(out).toContain('搜索');
+  });
+
   it('行格式：tools · 时长 · tok 三段（分钟级带秒、千进制 tok）', () => {
     // startedAt 留 800ms 余量：满负载并跑时渲染延迟不跨秒界（500ms 曾在全量运行下抖动）
     const { lastFrame } = render(
