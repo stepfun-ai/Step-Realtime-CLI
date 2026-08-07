@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -530,7 +531,7 @@ describe('SubagentStore', () => {
     expect(subStore.delete(cwd, s.id)).toBe('missing');
   });
 
-  it('锁 stale 检测：pid 已死则回收后 acquire / delete 成功；pid 活着则拒绝；旧锁无 pid 也回收', () => {
+  it('锁 stale 检测：pid 已死则回收后 acquire / delete 成功；pid 活着则拒绝；旧锁无 pid 也回收', async () => {
     const { sessions, subStore } = makeStores();
     const cwd = process.cwd();
     const s = subStore.create(cwd, { model: 'm', agentType: 'general', depth: 1, parentId: 'p' });
@@ -540,7 +541,16 @@ describe('SubagentStore', () => {
     const lockDir = sessions.subagentDirFor(cwd);
     const lockPath = join(lockDir, `${s.id}.lock`);
 
-    // pid 已死（-1 通常不存在）→ stale，acquire 回收后成功
+    // pid 已死 → stale，acquire 回收后成功。
+    // 用一个真实启动后立即退出的子进程 pid（不能用 -1：POSIX 下 kill(-1, 0)
+    // 是「发信号给全部进程」的特殊语义，会误判为存活，Linux/macOS 上假失败）
+    const dead = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    await new Promise((resolve) => dead.on('exit', resolve));
+    writeFileSync(lockPath, JSON.stringify({ pid: dead.pid, startedAt: new Date().toISOString() }), 'utf8');
+    expect(subStore.acquireLock(cwd, s.id)).toBe(true);
+    subStore.releaseLock(cwd, s.id);
+
+    // pid ≤ 0 的非法锁 → 按 stale 回收（实现侧防御，见 isLockAlive）
     writeFileSync(lockPath, JSON.stringify({ pid: -1, startedAt: new Date().toISOString() }), 'utf8');
     expect(subStore.acquireLock(cwd, s.id)).toBe(true);
     subStore.releaseLock(cwd, s.id);

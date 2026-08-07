@@ -194,6 +194,9 @@ export class SubagentStore {
       const raw = readFileSync(lockPath, 'utf8');
       const lock = JSON.parse(raw) as SubagentLock;
       if (typeof lock.pid !== 'number') return false; // 旧锁无 pid，保守视为 stale
+      // pid ≤ 0 是非法数据（POSIX 下 -1 是「发信号给全部进程」的特殊值，
+      // kill(-1, 0) 会误判为存活），按 stale 处理
+      if (lock.pid <= 0) return false;
       process.kill(lock.pid, 0);
       return true;
     } catch {
