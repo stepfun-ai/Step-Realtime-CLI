@@ -104,7 +104,7 @@ describe('stream-json 信封统一', () => {
   });
 });
 
-describe('顶层异常转结构化 error 事件（对照 Claude 的错误提升）', () => {
+describe('顶层异常转结构化 error 事件', () => {
   /**
    * 回归依据：2026-08-02 发现 `-p` 的 agent 循环无 try/catch，runPrint 顶层与调用点也没有，
    * 且全局无 unhandledRejection 兜底。任何冒泡异常 → Node 默认未捕获 rejection：

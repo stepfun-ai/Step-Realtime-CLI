@@ -1457,7 +1457,7 @@ describe('子 agent 结果结构化回灌', () => {
   });
 });
 
-describe('终态事件的完整性与幂等（对照 Claude Agent SDK 0.2.101 缺陷）', () => {
+describe('终态事件的完整性与幂等（所有退出路径都发终态事件）', () => {
   /**
    * 回归依据：Claude Agent SDK 0.2.101 修过同类缺陷——后台任务被杀时 CLI 只发
    * task_updated{status:killed} 而不发 task_notification，只监听后者的消费方永久 hang。
