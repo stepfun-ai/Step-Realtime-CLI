@@ -65,6 +65,14 @@ export function countSettledItems(items: DisplayItem[], busy: boolean): number {
   }
   if (tail >= 0 && items[tail]!.kind === 'assistant') {
     settled = tail;
+  } else if (tail >= 0 && items[tail]!.kind === 'thinking') {
+    // 末尾（越过透明 note）是 thinking：它刚落成、其后正文可能仍在流式。若 settled 取
+    // items.length 会把在途 assistant 一并冻结进 <Static>（append-only，渲染即冻结），
+    // 下一帧 text 又新开条目进动态区——Static 旧副本 + 动态新副本 = 正文重复。
+    // 把 thinking 一并留动态区，随其后的正文一起定稿。间歇性来源是 StreamBuffer 50ms
+    // 合帧时序（thinking_end 与 text 是否同窗）。详见设计文档
+    // 「20260807-thinking泄漏到正文-Static定稿时序」。
+    settled = tail;
   }
   // 运行中的工具（含 dynamic_workflow 阶段面板运行中）：后续还有 tool_end / phase 事件更新
   for (let i = 0; i < items.length; i++) {

@@ -105,6 +105,19 @@ describe('countSettledItems 定稿判定', () => {
     const items = [user('u1'), assistant('a1'), tool('t1', 'running'), note('已加入发送队列')];
     expect(countSettledItems(items, true)).toBe(2);
   });
+
+  it('busy 时 thinking 是最后一条（正文未开始流式）：thinking 留动态区，不定稿', () => {
+    // 修复点：thinking 落成瞬间恰在末尾，若 settled 取 items.length 会把在途 assistant
+    // 一并冻结进 <Static>，下一帧 text 新开条目进动态区 → Static 旧副本 + 动态新副本重复。
+    // 见设计文档「20260807-thinking泄漏到正文-Static定稿时序」。
+    const items = [user('u1'), thinking('想完了')];
+    expect(countSettledItems(items, true)).toBe(1);
+  });
+
+  it('busy 时 thinking 后只跟透明 note：thinking 仍留动态区（note 不构成定稿边界）', () => {
+    const items = [user('u1'), thinking('想完了'), note('已加入发送队列')];
+    expect(countSettledItems(items, true)).toBe(1);
+  });
 });
 
 describe('appendStreamText 流式正文追加', () => {
