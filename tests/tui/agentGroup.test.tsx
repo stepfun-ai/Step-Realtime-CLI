@@ -15,13 +15,13 @@ function fmt(key: string, vars?: Record<string, string | number>): string {
 }
 
 describe('AgentGroup 面板', () => {
-  it('多个并行子 agent 显示并行计数与各状态', () => {
+  it('多个并行子 agent 显示并行计数与各状态（≤8 个全部显示）', () => {
     const { lastFrame } = render(
       React.createElement(AgentGroup, {
         agents: [
           { id: '1', type: 'explore', description: '统计 a.txt', status: 'done', toolCount: 3, startedAt: 0, endedAt: 3000 },
-          { id: '2', type: 'explore', description: '统计 b.txt', status: 'running', toolCount: 1, activity: 'grep', startedAt: Date.now() },
-          { id: '3', type: 'explore', description: '统计 c.txt', status: 'queued', toolCount: 0, startedAt: Date.now() },
+          { id: '2', type: 'explore', description: '统计 b.txt', status: 'running', toolCount: 1, activity: 'grep', startedAt: Date.now() - 1000 },
+          { id: '3', type: 'explore', description: '统计 c.txt', status: 'queued', toolCount: 0, startedAt: Date.now() - 2000 },
         ],
       }),
     );
@@ -163,6 +163,88 @@ describe('agentGroupRows（渲染行数 ↔ 高度预算的一致性）', () => 
       { id: '1', type: 'explore', description: 'a', status: 'done', toolCount: 1, startedAt: 0, endedAt: 1000 },
     ];
     expect(agentGroupRows(running) - agentGroupRows(done)).toBe(1);
+  });
+
+  it('≤8 个子 agent 全部显示，无折叠提示', () => {
+    const agents = Array.from({ length: 8 }, (_, i) => ({
+      id: String(i),
+      type: 'explore',
+      description: `task ${i + 1}`,
+      status: 'done' as const,
+      toolCount: 1,
+      startedAt: 0,
+      endedAt: 1000,
+    }));
+    expect(agentGroupRows(agents)).toBe(renderedRows(agents));
+  });
+
+  it('9 个子 agent 折叠为 8 个，行数公式含 1 行折叠提示', () => {
+    const agents = Array.from({ length: 9 }, (_, i) => ({
+      id: String(i),
+      type: 'explore',
+      description: `task ${i + 1}`,
+      status: 'done' as const,
+      toolCount: 1,
+      startedAt: 0,
+      endedAt: 1000,
+    }));
+    expect(agentGroupRows(agents)).toBe(renderedRows(agents));
+  });
+
+  it('30 个 running 带 activity 时 agentGroupRows ≤ 21（不撑爆 24 行终端）', () => {
+    const now = Date.now();
+    const agents = Array.from({ length: 30 }, (_, i) => ({
+      id: String(i),
+      type: 'explore',
+      description: `task ${i + 1}`,
+      status: 'running' as const,
+      toolCount: 1,
+      activity: 'thinking',
+      startedAt: now - i * 1000,
+    }));
+    expect(agentGroupRows(agents)).toBeLessThanOrEqual(21);
+    expect(agentGroupRows(agents)).toBe(renderedRows(agents));
+  });
+
+  it('折叠提示优先保留 running，done 先被折叠', () => {
+    const { lastFrame } = render(
+      React.createElement(AgentGroup, {
+        agents: [
+          { id: '1', type: 'explore', description: 'done1', status: 'done', toolCount: 1, startedAt: 1000, endedAt: 2000 },
+          { id: '2', type: 'explore', description: 'done2', status: 'done', toolCount: 1, startedAt: 900, endedAt: 1900 },
+          { id: '3', type: 'explore', description: 'done3', status: 'done', toolCount: 1, startedAt: 800, endedAt: 1800 },
+          { id: '4', type: 'explore', description: 'run1', status: 'running', toolCount: 1, activity: 'grep', startedAt: 700 },
+          { id: '5', type: 'explore', description: 'run2', status: 'running', toolCount: 1, activity: 'read', startedAt: 600 },
+          { id: '6', type: 'explore', description: 'run3', status: 'running', toolCount: 1, activity: 'write', startedAt: 500 },
+          { id: '7', type: 'explore', description: 'done4', status: 'done', toolCount: 1, startedAt: 400, endedAt: 1400 },
+          { id: '8', type: 'explore', description: 'done5', status: 'done', toolCount: 1, startedAt: 300, endedAt: 1300 },
+          { id: '9', type: 'explore', description: 'done6', status: 'done', toolCount: 1, startedAt: 200, endedAt: 1200 },
+        ],
+      }),
+    );
+    const out = lastFrame() ?? '';
+    // 应该显示 8 个：3 done + 3 running + 2 done（因为 running 优先）
+    expect(out).toContain('还有 1 个');
+    // 可见区域应包含 running 的条目
+    expect(out).toContain('run1');
+    expect(out).toContain('run2');
+    expect(out).toContain('run3');
+  });
+
+  it('全部 done 且 ≤8 个：无折叠提示，显示 backgroundHint 也不会出现（无 running）', () => {
+    const agents = Array.from({ length: 5 }, (_, i) => ({
+      id: String(i),
+      type: 'explore',
+      description: `task ${i + 1}`,
+      status: 'done' as const,
+      toolCount: 1,
+      startedAt: 0,
+      endedAt: 1000,
+    }));
+    const { lastFrame } = render(React.createElement(AgentGroup, { agents }));
+    const out = lastFrame() ?? '';
+    expect(out).not.toContain('还有');
+    expect(out).not.toContain('转后台');
   });
 });
 

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Anthropic from '@anthropic-ai/sdk';
@@ -507,5 +507,152 @@ describe('derivePreview', () => {
   it('无 user 消息或纯空返回 undefined', () => {
     expect(derivePreview([stored({ role: 'assistant', content: 'hi' }, { kind: 'assistant' })])).toBeUndefined();
     expect(derivePreview([])).toBeUndefined();
+  });
+});
+
+describe('SessionStore 索引缓存（_index.json）', () => {
+  it('save 后自动生成索引；list 命中索引且不读快照', () => {
+    const s = store.create(cwd, 'm');
+    s.messages.push(stored({ role: 'user', content: 'x' }, { kind: 'user' }));
+    store.save(s);
+
+    const indexFile = join(base, workdirKey(cwd), '_index.json');
+    expect(readFileSync(indexFile, 'utf8')).toContain('"version":1');
+
+    // 第二次 list 应走索引（不重新读 .json 快照，通过结果一致隐式验证）
+    const metas = store.list(cwd);
+    expect(metas).toHaveLength(1);
+    expect(metas[0]!.id).toBe(s.id);
+    expect(metas[0]!.title).toBe('x');
+  });
+
+  it('list 按 updatedAt 倒序', () => {
+    const a = store.create(cwd, 'm');
+    store.save(a);
+    const b = store.create(cwd, 'm');
+    b.messages.push(stored({ role: 'user', content: 'b' }, { kind: 'user' }));
+    store.save(b);
+
+    const metas = store.list(cwd);
+    expect(metas.map((m) => m.id)).toEqual([b.id, a.id]);
+  });
+
+  it('delete 后索引同步移除', () => {
+    const a = store.create(cwd, 'm');
+    store.save(a);
+    const b = store.create(cwd, 'm');
+    store.save(b);
+
+    expect(store.list(cwd)).toHaveLength(2);
+    expect(store.delete(cwd, a.id)).toBe(true);
+    expect(store.list(cwd)).toHaveLength(1);
+    expect(store.list(cwd)[0]!.id).toBe(b.id);
+  });
+
+  it('rename 后索引 name 同步更新且不刷新 updatedAt', () => {
+    const s = store.create(cwd, 'm');
+    s.messages.push(stored({ role: 'user', content: 't' }, { kind: 'user' }));
+    store.save(s);
+    const beforeUpdatedAt = store.load(cwd, s.id)!.updatedAt;
+
+    expect(store.rename(cwd, s.id, '新名字')).toBe(true);
+    const metas = store.list(cwd);
+    expect(metas[0]!.name).toBe('新名字');
+    expect(metas[0]!.updatedAt).toBe(beforeUpdatedAt);
+  });
+
+  it('索引损坏时自动全量重建', () => {
+    const s = store.create(cwd, 'm');
+    store.save(s);
+    const indexFile = join(base, workdirKey(cwd), '_index.json');
+    writeFileSync(indexFile, '{broken json', 'utf8');
+
+    const metas = store.list(cwd);
+    expect(metas).toHaveLength(1);
+    expect(metas[0]!.id).toBe(s.id);
+    // 重建后索引应恢复正常
+    const raw = readFileSync(indexFile, 'utf8');
+    expect(JSON.parse(raw).version).toBe(1);
+  });
+
+  it('索引不存在时全量重建', () => {
+    const s = store.create(cwd, 'm');
+    store.save(s);
+    const indexFile = join(base, workdirKey(cwd), '_index.json');
+    rmSync(indexFile);
+
+    const metas = store.list(cwd);
+    expect(metas).toHaveLength(1);
+    expect(metas[0]!.id).toBe(s.id);
+    expect(existsSync(indexFile)).toBe(true);
+  });
+
+  it('索引过期时自动重建（新写 .json 文件触发）', () => {
+    const s = store.create(cwd, 'm');
+    store.save(s);
+    const indexFile = join(base, workdirKey(cwd), '_index.json');
+    // 让 rebuiltAt 早于当前时间，再额外写一个旧索引文件模拟过期
+    const stale = JSON.stringify({ version: 1, rebuiltAt: new Date(Date.now() - 86400000).toISOString(), sessions: [] });
+    writeFileSync(indexFile, stale, 'utf8');
+
+    const metas = store.list(cwd);
+    expect(metas).toHaveLength(1);
+    expect(metas[0]!.id).toBe(s.id);
+    const rebuiltAt = new Date(JSON.parse(readFileSync(indexFile, 'utf8')).rebuiltAt).getTime();
+    expect(rebuiltAt).toBeGreaterThan(Date.now() - 1000);
+  });
+
+  it('旧版索引 version 不匹配时重建', () => {
+    const s = store.create(cwd, 'm');
+    store.save(s);
+    const indexFile = join(base, workdirKey(cwd), '_index.json');
+    writeFileSync(indexFile, JSON.stringify({ version: 99, rebuiltAt: new Date().toISOString(), sessions: [] }), 'utf8');
+
+    const metas = store.list(cwd);
+    expect(metas).toHaveLength(1);
+    expect(metas[0]!.id).toBe(s.id);
+  });
+
+  it('list 只含本工作目录的会话', () => {
+    const a = store.create(cwd, 'm');
+    store.save(a);
+    const other = store.create('D:/other', 'm');
+    store.save(other);
+
+    const metas = store.list(cwd);
+    expect(metas.map((m) => m.id)).toEqual([a.id]);
+  });
+
+  it('save 后索引包含完整 SessionMeta 字段', () => {
+    const s = store.create(cwd, 'step-3.7-flash');
+    s.messages.push(stored({ role: 'user', content: 'hello' }, { kind: 'user' }));
+    s.forkedFrom = 'fork-from-id';
+    s.parentId = 'parent-id';
+    s.depth = 1;
+    s.agentType = 'explore';
+    s.status = 'done';
+    store.save(s);
+
+    const metas = store.list(cwd);
+    expect(metas).toHaveLength(1);
+    expect(metas[0]!.id).toBe(s.id);
+    expect(metas[0]!.cwd).toBe(s.cwd);
+    expect(metas[0]!.model).toBe('step-3.7-flash');
+    expect(metas[0]!.createdAt).toBe(s.createdAt);
+    expect(metas[0]!.updatedAt).toBe(s.updatedAt);
+    expect(metas[0]!.messageCount).toBe(1);
+    expect(metas[0]!.title).toBe('hello');
+    expect(metas[0]!.preview).toBe('hello');
+  });
+
+  it('list 跳过子目录（subagents）', () => {
+    const s = store.create(cwd, 'm');
+    store.save(s);
+    const subDir = join(base, workdirKey(cwd), 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    const sub = store.create(cwd, 'm');
+    writeFileSync(join(subDir, `${sub.id}.json`), JSON.stringify({ ...sub, messages: [] }), 'utf8');
+
+    expect(store.list(cwd).map((m) => m.id)).toEqual([s.id]);
   });
 });

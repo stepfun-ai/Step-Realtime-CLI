@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mapBlocksDeep, type StoredMessage } from '../agent/message.js';
@@ -89,6 +89,17 @@ export function workdirKey(cwd: string): string {
 const TITLE_MAX = 50;
 /** 预览最大字符数（供搜索匹配，比标题长以覆盖首条消息更多内容）。 */
 const PREVIEW_MAX = 200;
+/** 索引文件固定名。 */
+const INDEX_FILE = '_index.json';
+/** 索引格式版本。 */
+const INDEX_VERSION = 1;
+
+/** 会话列表索引结构。 */
+interface SessionIndex {
+  version: typeof INDEX_VERSION;
+  rebuiltAt: string;
+  sessions: SessionMeta[];
+}
 
 /**
  * 抽取首条 user 消息的纯文本（string 直接用；数组拼接所有 text 块），折叠空白/换行为单空格并 trim。
@@ -181,6 +192,11 @@ export class SessionStore {
     return join(this.dirFor(cwd), `${id}.tasks`);
   }
 
+  /** 索引文件路径：<桶目录>/_index.json。 */
+  private indexPathFor(cwd: string): string {
+    return join(this.dirFor(cwd), INDEX_FILE);
+  }
+
   /**
    * 调试导出用：返回某会话的落盘文件路径（会话桶目录 + JSON 快照 + 事件日志 JSONL）。
    * 复用内部路径规则，供 debugBundle 收集，避免在外部重算 workdirKey。
@@ -191,6 +207,119 @@ export class SessionStore {
       json: this.fileFor(cwd, id),
       wire: this.wireFileFor(cwd, id),
     };
+  }
+
+  /** 从 SessionData 投影出索引可存储的元信息。 */
+  private toIndexEntry(data: SessionData): SessionMeta {
+    return {
+      id: data.id,
+      cwd: data.cwd,
+      model: data.model,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+      messageCount: data.messageCount ?? 0,
+      name: data.name,
+      title: data.title,
+      preview: data.preview,
+    };
+  }
+
+  /** 读取索引；不存在或解析失败返回 null。 */
+  private readIndex(cwd: string): SessionIndex | null {
+    const file = this.indexPathFor(cwd);
+    if (!existsSync(file)) return null;
+    try {
+      const raw = readFileSync(file, 'utf8');
+      const parsed = JSON.parse(raw) as SessionIndex;
+      if (parsed.version !== INDEX_VERSION) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 写入索引（原子写）。 */
+  private writeIndex(cwd: string, index: SessionIndex): void {
+    const dir = this.dirFor(cwd);
+    mkdirSync(dir, { recursive: true });
+    const file = this.indexPathFor(cwd);
+    writeAtomic(file, JSON.stringify(index));
+  }
+
+  /** 索引是否过期：true = 需要重建。 */
+  private isIndexStale(cwd: string, index: SessionIndex): boolean {
+    const dir = this.dirFor(cwd);
+    if (!existsSync(dir)) return false;
+    try {
+      const rebuiltAt = new Date(index.rebuiltAt).getTime();
+      if (Number.isNaN(rebuiltAt)) return true;
+      let latestMtime = 0;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        if (entry.name === INDEX_FILE) continue;
+        const full = join(dir, entry.name);
+        try {
+          const mtime = statSync(full).mtimeMs;
+          if (mtime > latestMtime) latestMtime = mtime;
+        } catch {
+          // 忽略读取失败
+        }
+      }
+      return latestMtime > rebuiltAt;
+    } catch {
+      return true;
+    }
+  }
+
+  /** 全量重建索引并写入磁盘。 */
+  private rebuildIndex(cwd: string): SessionMeta[] {
+    const dir = this.dirFor(cwd);
+    const sessions: SessionMeta[] = [];
+    if (existsSync(dir)) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+        if (entry.name === INDEX_FILE) continue;
+        const name = entry.name;
+        try {
+          const data = JSON.parse(readFileSync(join(dir, name), 'utf8')) as SessionData;
+          sessions.push(this.toIndexEntry(data));
+        } catch {
+          // 跳过损坏文件
+        }
+      }
+    }
+    sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const index: SessionIndex = {
+      version: INDEX_VERSION,
+      rebuiltAt: new Date().toISOString(),
+      sessions,
+    };
+    this.writeIndex(cwd, index);
+    return sessions;
+  }
+
+  /** 增量更新索引中的单个会话（upsert）。 */
+  private updateIndexEntry(cwd: string, entry: SessionMeta): void {
+    const index = this.readIndex(cwd) ?? { version: INDEX_VERSION, rebuiltAt: new Date().toISOString(), sessions: [] };
+    const idx = index.sessions.findIndex((s) => s.id === entry.id);
+    if (idx >= 0) {
+      index.sessions[idx] = entry;
+    } else {
+      index.sessions.push(entry);
+    }
+    // 保持倒序
+    index.sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    index.rebuiltAt = new Date().toISOString();
+    this.writeIndex(cwd, index);
+  }
+
+  /** 从索引中移除单个会话。 */
+  private removeIndexEntry(cwd: string, id: string): void {
+    const index = this.readIndex(cwd);
+    if (index === null) return;
+    index.sessions = index.sessions.filter((s) => s.id !== id);
+    index.rebuiltAt = new Date().toISOString();
+    this.writeIndex(cwd, index);
   }
 
   /** 新建一个空会话（尚未落盘）。 */
@@ -253,6 +382,8 @@ export class SessionStore {
       messages: session.messages.map((m) => this.offloadForStorage(session.cwd, m)),
     };
     writeAtomic(this.fileFor(session.cwd, session.id), JSON.stringify(toWrite, null, 2));
+    // 同步更新索引
+    this.updateIndexEntry(session.cwd, this.toIndexEntry(toWrite));
   }
 
   /** 按 id 载入。找不到返回 null。 */
@@ -491,32 +622,13 @@ export class SessionStore {
   list(cwd: string): SessionMeta[] {
     const dir = this.dirFor(cwd);
     if (!existsSync(dir)) return [];
-    const metas: SessionMeta[] = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-      const name = entry.name;
-      try {
-        const data = JSON.parse(readFileSync(join(dir, name), 'utf8')) as SessionData;
-        metas.push({
-          id: data.id,
-          cwd: data.cwd,
-          model: data.model,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
-          // 元信息以快照字段为准。save 时必写 messageCount 并派生 title/preview，
-          // 缺字段的旧快照不现场折算（1.0 前不为旧格式留兼容分支），按缺失直通
-          messageCount: data.messageCount ?? 0,
-          // 自定义名直通（重命名不经过 save，list 是改名后唯一的读取口径）
-          name: data.name,
-          title: data.title,
-          preview: data.preview,
-        });
-      } catch {
-        // 跳过损坏文件
-      }
+    // 优先读索引
+    const index = this.readIndex(cwd);
+    if (index !== null && !this.isIndexStale(cwd, index)) {
+      return index.sessions;
     }
-    metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return metas;
+    // 索引不存在或过期：全量重建
+    return this.rebuildIndex(cwd);
   }
 
   /** 该工作目录下最近更新的会话，供 --continue 使用。 */
@@ -539,6 +651,8 @@ export class SessionStore {
       rmSync(this.tasksDirFor(cwd, id), { recursive: true, force: true });
       this.fullSeen.delete(`${workdirKey(cwd)}${id}`);
       this.wireCounts.delete(`${workdirKey(cwd)}${id}`);
+      // 同步更新索引
+      this.removeIndexEntry(cwd, id);
       return true;
     } catch {
       return false;
@@ -560,6 +674,8 @@ export class SessionStore {
       data.name = trimmed;
     }
     writeAtomic(this.fileFor(cwd, id), JSON.stringify(data, null, 2));
+    // 同步更新索引（不改变 updatedAt，保持与文件一致）
+    this.updateIndexEntry(cwd, this.toIndexEntry(data));
     return true;
   }
 }

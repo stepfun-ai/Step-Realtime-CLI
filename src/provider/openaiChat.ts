@@ -27,6 +27,8 @@ export interface OpenAiChatProviderOptions {
   sendThinking?: boolean;
   /** 思考强度，由工厂从 [thinking] 配置注入；本类只用其中的 level（作 reasoning_effort 值）。 */
   thinking?: ThinkingParam;
+  /** 模型能力：thinking 块是否回灌。默认 true（与 DEFAULT_CAPABILITY 对齐）。 */
+  reasoning?: boolean;
 }
 
 /**
@@ -49,6 +51,7 @@ export class OpenAiChatProvider implements ChatProvider {
   private readonly fetchImpl: typeof fetch;
   private readonly sendThinking: boolean;
   private readonly thinking?: ThinkingParam;
+  private readonly reasoning: boolean;
 
   constructor(options: OpenAiChatProviderOptions) {
     this.apiKey = options.apiKey;
@@ -58,6 +61,7 @@ export class OpenAiChatProvider implements ChatProvider {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.sendThinking = options.sendThinking ?? false;
     this.thinking = options.thinking;
+    this.reasoning = options.reasoning ?? true;
   }
 
   stream(params: {
@@ -80,7 +84,7 @@ export class OpenAiChatProvider implements ChatProvider {
     const body: Record<string, unknown> = {
       model,
       max_tokens: this.maxTokens,
-      messages: messagesToOpenAi(params.system, params.messages),
+      messages: messagesToOpenAi(params.system, params.messages, this.reasoning),
       stream: true,
       stream_options: { include_usage: true },
     };

@@ -22,6 +22,8 @@ export interface OpenAiMessage {
   tool_calls?: OpenAiToolCall[];
   /** tool 消息回指的工具调用 id（tool_result 块的 tool_use_id）。 */
   tool_call_id?: string;
+  /** thinking 块回灌字段（reasoning=true 时写入）。 */
+  reasoning_content?: string;
 }
 
 /** OpenAI Chat 的多模态 content part（user/tool 消息的 content 数组元素）。 */
@@ -124,12 +126,14 @@ function toolResultContent(block: Anthropic.ToolResultBlockParam): string | Open
  *   紧随其后的带文本 user 消息；工具执行期间的插话也会被合并成同一条 user。
  *   （这是为不受控外部行为——服务端严格性——存在的容错，不要按「Anthropic 里
  *   tool_result 恒独占 user 消息」的内部假设改回文本在前。）
- * - assistant 消息：text 块合并为 content，tool_use 块展开为 tool_calls；thinking 块忽略
- *   （OpenAI 不接受回传 reasoning）。
+ * - assistant 消息：text 块合并为 content，tool_use 块展开为 tool_calls；thinking 块
+ *   按 capability.reasoning 决定是否保留（reasoning=true 时序列化为 reasoning_content，
+ *   false 时剥离）。
  */
 export function messagesToOpenAi(
   system: string,
   messages: Anthropic.MessageParam[],
+  reasoning: boolean,
 ): OpenAiMessage[] {
   const out: OpenAiMessage[] = [];
   if (system.length > 0) out.push({ role: 'system', content: system });
@@ -158,8 +162,10 @@ export function messagesToOpenAi(
       }
       continue;
     }
-    // assistant：文本 + 工具调用
+    // assistant：文本 + 工具调用 + thinking（按 capability 决定是否回灌）
     const text = blocksToText(blocks as Anthropic.ContentBlockParam[]);
+    const thinkingBlocks = blocks.filter((b) => b.type === 'thinking') as Array<{ thinking: string }>;
+    const reasoningContent = thinkingBlocks.map((b) => b.thinking).join('');
     const toolUses = blocks.filter(
       (b): b is Anthropic.ToolUseBlockParam => b.type === 'tool_use',
     );
@@ -174,6 +180,9 @@ export function messagesToOpenAi(
       assistant.content = text.length > 0 ? text : null;
     } else {
       assistant.content = text;
+    }
+    if (reasoning && thinkingBlocks.length > 0) {
+      assistant.reasoning_content = reasoningContent;
     }
     out.push(assistant);
   }

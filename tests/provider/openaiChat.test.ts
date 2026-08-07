@@ -44,18 +44,18 @@ async function drive(provider: OpenAiChatProvider, params: {
 
 describe('messagesToOpenAi 请求翻译', () => {
   it('system 非空 → messages[0] role:system', () => {
-    const out = messagesToOpenAi('你是助手', [{ role: 'user', content: '你好' }]);
+    const out = messagesToOpenAi('你是助手', [{ role: 'user', content: '你好' }], true);
     expect(out[0]).toEqual({ role: 'system', content: '你是助手' });
     expect(out[1]).toEqual({ role: 'user', content: '你好' });
   });
 
   it('system 空串 → 不产出 system 消息', () => {
-    const out = messagesToOpenAi('', [{ role: 'user', content: '你好' }]);
+    const out = messagesToOpenAi('', [{ role: 'user', content: '你好' }], true);
     expect(out.every((m) => m.role !== 'system')).toBe(true);
   });
 
   it('user 字符串内容原样透传', () => {
-    const out = messagesToOpenAi('', [{ role: 'user', content: 'hi' }]);
+    const out = messagesToOpenAi('', [{ role: 'user', content: 'hi' }], true);
     expect(out).toEqual([{ role: 'user', content: 'hi' }]);
   });
 
@@ -69,7 +69,7 @@ describe('messagesToOpenAi 请求翻译', () => {
         ],
       },
     ];
-    const out = messagesToOpenAi('', messages);
+    const out = messagesToOpenAi('', messages, true);
     const assistant = out[0] as OpenAiMessage;
     expect(assistant.role).toBe('assistant');
     expect(assistant.content).toBe('我来查一下');
@@ -82,7 +82,7 @@ describe('messagesToOpenAi 请求翻译', () => {
     const messages: Anthropic.MessageParam[] = [
       { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 't', input: {} }] },
     ];
-    const out = messagesToOpenAi('', messages);
+    const out = messagesToOpenAi('', messages, true);
     expect((out[0] as OpenAiMessage).content).toBeNull();
   });
 
@@ -93,7 +93,7 @@ describe('messagesToOpenAi 请求翻译', () => {
         content: [{ type: 'tool_result', tool_use_id: 'call_1', content: '文件内容' }],
       },
     ];
-    const out = messagesToOpenAi('', messages);
+    const out = messagesToOpenAi('', messages, true);
     // 纯 tool_result 不产出空 user 消息，只产出 tool 消息
     expect(out).toEqual([{ role: 'tool', tool_call_id: 'call_1', content: '文件内容' }]);
   });
@@ -111,11 +111,11 @@ describe('messagesToOpenAi 请求翻译', () => {
         ],
       },
     ];
-    const out = messagesToOpenAi('', messages);
+    const out = messagesToOpenAi('', messages, true);
     expect(out[0]).toEqual({ role: 'tool', tool_call_id: 'c1', content: '结果A' });
   });
 
-  it('assistant 的 thinking 块被忽略（OpenAI 不回传 reasoning）', () => {
+  it('assistant 的 thinking 块按 capability.reasoning 保留或剥离', () => {
     const messages: Anthropic.MessageParam[] = [
       {
         role: 'assistant',
@@ -125,8 +125,30 @@ describe('messagesToOpenAi 请求翻译', () => {
         ],
       },
     ];
-    const out = messagesToOpenAi('', messages);
+    // reasoning=true：保留 thinking 块，序列化为 reasoning_content
+    const outKeep = messagesToOpenAi('', messages, true);
+    expect((outKeep[0] as OpenAiMessage).content).toBe('答复');
+    expect((outKeep[0] as OpenAiMessage).reasoning_content).toBe('内部思考');
+
+    // reasoning=false：剥离 thinking 块
+    const outStrip = messagesToOpenAi('', messages, false);
+    expect((outStrip[0] as OpenAiMessage).content).toBe('答复');
+    expect((outStrip[0] as OpenAiMessage).reasoning_content).toBeUndefined();
+  });
+
+  it('空 thinking 块 → reasoning_content 为空字符串（Kimi 要求含空串回传）', () => {
+    const messages: Anthropic.MessageParam[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '', signature: '' } as unknown as Anthropic.ContentBlockParam,
+          { type: 'text', text: '答复' },
+        ],
+      },
+    ];
+    const out = messagesToOpenAi('', messages, true);
     expect((out[0] as OpenAiMessage).content).toBe('答复');
+    expect((out[0] as OpenAiMessage).reasoning_content).toBe('');
   });
 
   it('混合 user 消息（文本 + tool_result）→ tool 消息在前、user 文本在后', () => {
@@ -145,7 +167,7 @@ describe('messagesToOpenAi 请求翻译', () => {
         ],
       },
     ];
-    const out = messagesToOpenAi('', messages);
+    const out = messagesToOpenAi('', messages, true);
     expect(out).toEqual([
       { role: 'assistant', content: null, tool_calls: [
         { id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{}' } },
@@ -166,7 +188,7 @@ describe('messagesToOpenAi 请求翻译', () => {
       },
       { role: 'user', content: '继续完成任务' },
     ];
-    const out = messagesToOpenAi('', normalizeHistory(messages));
+    const out = messagesToOpenAi('', normalizeHistory(messages), true);
     const assistantIdx = out.findIndex((m) => m.role === 'assistant');
     expect(assistantIdx).toBeGreaterThanOrEqual(0);
     const next = out[assistantIdx + 1] as OpenAiMessage;

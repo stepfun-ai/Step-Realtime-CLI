@@ -6,7 +6,7 @@ import {
 } from '../config/config.js';
 import { t } from '../i18n.js';
 import { StepfunAdapter } from './adapter.js';
-import { capabilitiesToOverride } from './capability-registry.js';
+import { capabilitiesToOverride, resolveCapability } from './capability-registry.js';
 import { AnthropicMessagesProvider } from './anthropicMessages.js';
 import { withMediaDegradation } from './mediaDegradation.js';
 import { OpenAiChatProvider } from './openaiChat.js';
@@ -70,6 +70,8 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
     : undefined;
 
   if (preset.protocol === 'openai') {
+    const override = capabilitiesToOverride('openai', config.model, config.capabilities);
+    const capability = resolveCapability('openai', config.model, override !== undefined ? [override] : undefined);
     return withMediaDegradation(
       withHistoryNormalization(
         new OpenAiChatProvider({
@@ -79,6 +81,7 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
           maxTokens: config.maxTokens,
           sendThinking,
           ...(thinking !== undefined ? { thinking } : {}),
+          reasoning: capability.reasoning,
         }),
       ),
       { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
