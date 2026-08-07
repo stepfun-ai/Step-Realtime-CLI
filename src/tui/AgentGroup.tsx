@@ -3,6 +3,18 @@ import { t } from '../i18n.js';
 import { formatCount, formatDuration } from './duration.js';
 import { useNowTick } from './useSpinnerFrame.js';
 
+/** 面板最多显示的子 agent 条数（超出折叠）。 */
+const MAX_VISIBLE_AGENTS = 8;
+
+/** 排序：running 优先，然后按 startedAt 降序（与渲染侧 / 行数预算一致）。 */
+function sortForDisplay(agents: readonly SubagentProgress[]): SubagentProgress[] {
+  return [...agents].sort((a, b) => {
+    if (a.status === 'running' && b.status !== 'running') return -1;
+    if (a.status !== 'running' && b.status === 'running') return 1;
+    return b.startedAt - a.startedAt;
+  });
+}
+
 /** 并行子 agent 的单个进度。 */
 export interface SubagentProgress {
   /** 子 agent 标识（并行时区分，来自 runner 的 sid）。 */
@@ -81,8 +93,9 @@ export function formatDetachedHandoff(agents: readonly SubagentProgress[]): stri
  * 面板渲染行数（动态区高度预算用）。
  *
  * 与本文件的渲染结构严格对应，**必须与 AgentGroup 的 JSX 同步修改**：
- * margin 1 + 边框 2 + 头部 1 = 4 固定；每个子 agent 1 行（running 且有 activity 再 +1）；
- * 存在 running 条目时尾部多一行 backgroundHint。
+ * margin 1 + 边框 2 + 头部 1 = 4 固定；
+ * 每个可见子 agent 1 行（running 且有 activity 再 +1）；
+ * 存在折叠时尾部多一行折叠提示；无折叠但有 running 时保留 backgroundHint。
  *
  * 为什么放在组件文件里：这个公式原先散在 App.tsx 的预算组装处，与渲染分离两地，
  * backgroundHint 加入渲染时预算侧漏改，帧高超预算 1 行、恰好越过 rows−1 红线，
@@ -91,12 +104,16 @@ export function formatDetachedHandoff(agents: readonly SubagentProgress[]): stri
  */
 export function agentGroupRows(agents: readonly SubagentProgress[]): number {
   if (agents.length === 0) return 0;
-  const bodyRows = agents.reduce(
+  const sorted = sortForDisplay(agents);
+  const visible = sorted.slice(0, MAX_VISIBLE_AGENTS);
+  const bodyRows = visible.reduce(
     (n, a) => n + 1 + (a.status === 'running' && a.activity !== undefined && a.activity !== '' ? 1 : 0),
     0,
   );
-  const hintRows = agents.some((a) => a.status === 'running') ? 1 : 0;
-  return 4 + bodyRows + hintRows;
+  const collapsedRows = agents.length > MAX_VISIBLE_AGENTS ? 1 : 0;
+  const hintRows =
+    agents.length <= MAX_VISIBLE_AGENTS && visible.some((a) => a.status === 'running') ? 1 : 0;
+  return 4 + bodyRows + collapsedRows + hintRows;
 }
 
 /**
@@ -107,9 +124,14 @@ export function agentGroupRows(agents: readonly SubagentProgress[]): number {
  * 改动渲染结构时同步改 agentGroupRows（见其注释）。
  */
 export function AgentGroup({ agents }: { agents: SubagentProgress[] }): React.ReactElement | null {
-  const hasRunning = agents.some((a) => a.status === 'running');
-  useNowTick(hasRunning, 1000);
+  const sorted = sortForDisplay(agents);
+  const visible = sorted.slice(0, MAX_VISIBLE_AGENTS);
+  const hidden = sorted.slice(MAX_VISIBLE_AGENTS);
+  const hasVisibleRunning = visible.some((a) => a.status === 'running');
+
+  useNowTick(hasVisibleRunning, 1000);
   if (agents.length === 0) return null;
+
   const done = agents.filter((a) => a.status === 'done').length;
   const running = agents.filter((a) => a.status === 'running').length;
   const errored = agents.filter((a) => a.status === 'error').length;
@@ -138,8 +160,8 @@ export function AgentGroup({ agents }: { agents: SubagentProgress[] }): React.Re
       <Text color="cyan" bold wrap="truncate">
         {allDone ? '✓' : '⠶'} {header}
       </Text>
-      {agents.map((a, i) => {
-        const last = i === agents.length - 1;
+      {visible.map((a, i) => {
+        const last = i === visible.length - 1;
         const branch = last ? '└─' : '├─';
         // 状态收敛为单字符圆点（●）：黄=运行中、绿=已完成、红=失败、灰=排队中。
         // 替代原先的「符号 + 状态文字」（约 6-8 列），把行尾宽度让给 stats（tools/时长/tok），
@@ -147,7 +169,7 @@ export function AgentGroup({ agents }: { agents: SubagentProgress[] }): React.Re
         const statusColor =
           a.status === 'done' ? 'green' : a.status === 'error' ? 'red' : a.status === 'running' ? 'yellow' : 'gray';
         return (
-          <Box key={i} flexDirection="column">
+          <Box key={a.id} flexDirection="column">
             {/* 长 description / activity 截断到一行，动态区高度预算按 1 行/条精确成立 */}
             <Text wrap="truncate">
               {branch} <Text color="white">{a.type}</Text>
@@ -160,8 +182,18 @@ export function AgentGroup({ agents }: { agents: SubagentProgress[] }): React.Re
           </Box>
         );
       })}
-      {/* 前台子 agent 运行中提示可转后台：发现性入口，仅有运行中条目时显示 */}
-      {hasRunning ? <Text color="gray">{t('agentGroup.backgroundHint')}</Text> : null}
+      {hidden.length > 0 ? (
+        <Text color="gray">
+          {t('agentGroup.collapsed', {
+            shown: visible.length,
+            running: agents.filter((a) => a.status === 'running').length,
+            done: agents.filter((a) => a.status === 'done').length,
+            hidden: hidden.length,
+          })}
+        </Text>
+      ) : hasVisibleRunning ? (
+        <Text color="gray">{t('agentGroup.backgroundHint')}</Text>
+      ) : null}
     </Box>
   );
 }
