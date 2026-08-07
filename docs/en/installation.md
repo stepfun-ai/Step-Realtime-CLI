@@ -15,27 +15,26 @@
 
 ## Choose an installation method
 
-All artifacts are hosted on GitHub; they do not go through the npm public registry.
+All artifacts are hosted on GitHub Releases; they do not go through the npm public registry. Download links for the standalone executables and the tarball use the `releases/latest/download/` permalink, which always points to the latest Release and never expires with version bumps.
 
 | Method | Prerequisites | What you get | Best for |
 |--------|--------------|--------------|----------|
-| [Standalone executable](#standalone-executable-no-node-required) (not yet published) | None | A single executable file with a bundled Node runtime | No Node installed; download and run immediately |
-| [npm install prebuilt branch](#npm-install-prebuilt-branch-fastest) | Node 22+ | A packaged single file + `step` command managed by npm | Have Node; want a one-command install |
+| [Standalone executable](#standalone-executable-no-node-required) | None | A single executable file with a bundled Node runtime | No Node installed; download and run immediately |
+| [npm install Release tarball](#npm-install-release-tarball) | Node 22+ | Pre-built `dist/` + `step` command managed by npm | Have Node; want a one-command install |
 | [npm install source branch](#npm-install-source-branch-follow-main) | Node 22+ | `dist/` compiled on your machine | Follow latest mainline; accept local compilation |
-| [Release tarball](#release-tarball) (not yet published) | Node 22+ | Same as prebuilt branch, but pinned to a specific version | Need a fixed version; reproducible installs |
 | [Install from source](#install-from-source) | Node 22+ and pnpm | Full development environment + symlinked `step` | Contributing; modifying code |
 
 ## Standalone executable (no Node required)
 
-Download the platform-specific artifact from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases):
+Download the platform-specific artifact from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest) (these links always point to the latest Release):
 
-| Platform | Artifact name |
-|----------|--------------|
-| Windows x64 | `step-code-win32-x64.exe` |
-| macOS Apple Silicon | `step-code-darwin-arm64` |
-| Linux x64 | `step-code-linux-x64` |
+| Platform | Download |
+|----------|----------|
+| Windows x64 | [step-code-win32-x64.exe](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-win32-x64.exe) |
+| macOS Apple Silicon | [step-code-darwin-arm64](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-darwin-arm64) |
+| Linux x64 | [step-code-linux-x64](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-linux-x64) |
 
-Each tag's three-platform artifacts are built automatically by CI and come with a same-name `.sha256` checksum file. After downloading, rename it to `step` (or `step.exe` on Windows) and place it on your PATH.
+Each artifact comes with a same-name `.sha256` checksum file (append `.sha256` to the same path). After downloading, rename it to `step` (or `step.exe` on Windows) and place it on your PATH.
 
 ```bash
 # macOS / Linux: make executable
@@ -45,18 +44,22 @@ chmod +x step
 xattr -d com.apple.quarantine step 2>/dev/null || true
 ```
 
-> An empty Releases page means no release tag has been created yet; use one of the branch-based install methods below.
+## npm install Release tarball
 
-## npm install prebuilt branch (fastest)
-
-`dist-npm` is a prebuilt branch refreshed by CI at release time. It contains only the packaged single file and a minimal `package.json` (no `scripts`, no dependencies), so npm only unpacks and links the command. **It does not compile on your machine, nor does it fetch any dependencies.**
+One command installs the latest version (a permalink that always resolves to the latest Release's tarball):
 
 ```bash
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz
 step --version
 ```
 
-Measured on 2026-08-02 with Windows + npm and a local git source: about 12 seconds, installing 1 package.
+The tarball includes a pre-built `dist/`. `npm i -g <url>` only unpacks it and links `bin.step`—**nothing is compiled on your machine, and no dependencies are fetched.**
+
+To pin a specific version for reproducible installs, use that tag's versioned asset instead, e.g.:
+
+```bash
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.2/step-code-0.1.2.tgz
+```
 
 ## npm install source branch (follow main)
 
@@ -69,18 +72,7 @@ step --version
 
 npm clones the repo, installs build dependencies, and then compiles `dist/` on your machine via the `prepare` hook. The trade-off is speed, and build dependencies remain in the global install directory. Measured on 2026-08-02 with Windows + npm and a local git source: about 1 minute, installing 285 packages.
 
-This path resolves dependencies via npm's own logic, not the repository's pnpm lockfile, so dependency drift can cause build failures. If that happens, fall back to the prebuilt branch above, or install from source as described below.
-
-## Release tarball
-
-When you need to pin a specific version, install the tarball for that tag directly:
-
-```bash
-npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.0/step-code-0.1.0.tgz
-step --version
-```
-
-The tarball includes a pre-built `dist/`. `npm i -g <url>` unpacks it and links `bin.step` without triggering a local build.
+This path resolves dependencies via npm's own logic, not the repository's pnpm lockfile, so dependency drift can cause build failures. If that happens, fall back to the Release tarball above, or install from source as described below.
 
 ## Install from source
 
@@ -120,14 +112,13 @@ This is a deliberate choice for the current stage, not an omission: the methods 
 
 Download the new version and overwrite the file in place.
 
-### npm-installed variants (3 methods)
+### npm-installed variants (2 methods)
 
-Re-run the original install command; npm re-resolves the git reference or URL and overwrites the existing installation:
+Re-run the original install command; npm re-resolves the URL or git reference and overwrites the existing installation:
 
 ```bash
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm          # prebuilt branch
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore # source branch
-npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.2.0/step-code-0.2.0.tgz  # use the new tag's tarball
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz  # latest Release tarball
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore                                   # source branch
 ```
 
 `npm update -g step-code` does not work for these variants—it targets registry packages, while the sources here are git references or URLs.

@@ -12,10 +12,10 @@ By the end of this page you will have installed step-code, configured an API key
 The fastest path (requires Node.js >= 22):
 
 ```bash
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz
 ```
 
-This installs a prebuilt single file: nothing is compiled locally and no dependencies are fetched. Without a Node environment, download the standalone executable for your platform from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases). To contribute, clone the repository and build it yourself:
+This installs a pre-built package: nothing is compiled locally and no dependencies are fetched, and the link always points to the latest Release. Without a Node environment, download the standalone executable for your platform from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest). To contribute, clone the repository and build it yourself:
 
 ```bash
 git clone https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -25,7 +25,7 @@ pnpm build
 pnpm link --global   # afterwards you can use the step command directly
 ```
 
-For the trade-offs between the five installation methods, plus upgrading, uninstalling, and troubleshooting, see [Installation](./installation.md).
+For the trade-offs between the four installation methods, plus upgrading, uninstalling, and troubleshooting, see [Installation](./installation.md).
 
 ## 2. Configure the API key
 

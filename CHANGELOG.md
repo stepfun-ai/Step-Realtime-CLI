@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **安装链路收敛为永久链接，`dist-npm` 预构建分支退役**：Release 资产新增不带版本号的 `step-code.tgz` 固定名副本，安装命令改为 `npm i -g https://github.com/<仓库>/releases/latest/download/step-code.tgz`——`releases/latest/download/` 始终解析到最新 Release，发新版不再需要改文档里的版本号；三端单文件可执行同样走该永久链接。原 `dist-npm` 预构建分支（每次发版由 CI 强推覆盖的分发快照）已删除，CI 里负责刷新它的 `dist-branch` job 与 `scripts/make-dist-branch.mjs` 同步移除；要锁定版本时改用 `releases/download/<tag>/step-code-<版本>.tgz` 带版本号资产。安装文档（中英）、快速上手（中英）、README（中英）与 `step-code-install` skill 已全部对齐到四种安装方式。
+
 ## [0.1.2] - 2026-08-07
 
 ### Added

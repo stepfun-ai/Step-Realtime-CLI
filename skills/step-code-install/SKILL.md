@@ -1,17 +1,18 @@
 ---
 name: step-code-install
-description: 安装 Step Code CLI（终端编码 agent，阶跃星辰 Step 模型驱动）：五种安装方式、环境要求、配置 API key、验证、升级与卸载、常见故障排查
+description: 安装 Step Code CLI（终端编码 agent，阶跃星辰 Step 模型驱动）：四种安装方式、环境要求、配置 API key、验证、升级与卸载、常见故障排查
 when_to_use: 用户想安装、构建、升级、卸载 Step Code，或安装过程报错需要排查时
 ---
 
 本 skill 只讲一件事：把 Step Code 装到能跑起来。功能怎么用不在这里，装完见仓库 `docs/`（中文 `docs/zh/`、英文 `docs/en/`）。
 
-> **五种安装方式，按需选择**：
-> - **npm 装预构建分支**（最快，推荐）：`npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm`，约 12 秒，不编译不拉依赖。需 Node 22+。
+> **四种安装方式，按需选择**：
+> - **单文件可执行**（无 Node 环境）：从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest) 下载对应平台产物，改名放进 PATH。
+> - **npm 装 Release tarball**（一条命令，推荐）：`npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz`，不编译不拉依赖，链接始终指向最新 Release。需 Node 22+。
 > - **npm 装源码分支**（跟最新主干）：`npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore`，约 1 分钟，本机编译。需 Node 22+。
 > - **从源码安装**（参与开发）：clone + `pnpm install && pnpm build && pnpm link --global`。需 Node 22+ 与 pnpm。
 >
-> 单文件可执行与 Release tarball 尚未发布，上述三种方式覆盖全部使用场景。详细步骤与故障排查见下方各节。
+> 详细步骤与故障排查见下方各节。
 
 > **怎么让你的 agent 用上它**：本目录不在自动扫描路径里（刻意如此，避免与工具目录冲突）。两种用法——把 `skills/step-code-install/` 整个拷进你 agent 的技能目录（本项目原生目录是 `.step-code/skills/`，兼容目录是 `.agents/skills/`）；或者直接把本文件路径丢给 agent 让它读。
 
@@ -34,17 +35,15 @@ Node 版本不够时，用版本管理器装 22（如 fnm、nvm、Volta），不
 
 ### 单文件可执行（无需 Node 环境）
 
-> 尚未发布。等 Release 打 tag 后，从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases) 下载对应平台产物。
+从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest) 下载对应平台产物（链接始终指向最新 Release）：
 
-计划发布的产物形态：
+| 平台 | 下载 |
+|------|------|
+| Windows x64 | [step-code-win32-x64.exe](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-win32-x64.exe) |
+| macOS Apple Silicon | [step-code-darwin-arm64](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-darwin-arm64) |
+| Linux x64 | [step-code-linux-x64](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-linux-x64) |
 
-| 平台 | 产物名 |
-|------|--------|
-| Windows x64 | `step-code-win32-x64.exe` |
-| macOS Apple Silicon | `step-code-darwin-arm64` |
-| Linux x64 | `step-code-linux-x64` |
-
-每个 tag 的三端产物由 CI 自动构建，并附带同名 `.sha256` 校验文件。下载后重命名为 `step`（Windows 为 `step.exe`）放进 PATH 即可。
+每个产物附带同名 `.sha256` 校验文件（同路径加 `.sha256` 后缀）。下载后重命名为 `step`（Windows 为 `step.exe`）放进 PATH 即可。
 
 ```bash
 # macOS / Linux 需要补执行权限
@@ -54,16 +53,22 @@ chmod +x step
 xattr -d com.apple.quarantine step 2>/dev/null || true
 ```
 
-### npm 装预构建分支（最快）
+### npm 装 Release tarball
 
-`dist-npm` 是一个由 CI 在发布时刷新的预构建分支，里面只有打包好的单文件与一份精简 `package.json`（无 `scripts`、无依赖），因此 npm 只做解包与链接命令两件事，**不在你机器上编译，也不拉任何依赖**。
+一条命令装最新版（永久链接，始终解析到最新 Release 的 tarball）：
 
 ```bash
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz
 step --version
 ```
 
-实测（2026-08-02，Windows + npm，本地 git 源）：耗时约 12 秒，装出 1 个包。
+tarball 内含预编译的 `dist/`，`npm i -g <url>` 只解包并链接 `bin.step`，**不在你机器上编译，也不拉依赖**。
+
+要锁定某个版本、可复现安装时，把 URL 换成该 tag 的带版本号资产，例如：
+
+```bash
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.2/step-code-0.1.2.tgz
+```
 
 ### npm 装源码分支（跟随最新主干）
 
@@ -76,18 +81,7 @@ step --version
 
 npm 会先克隆仓库、安装构建依赖，再通过 `prepare` 钩子在本机编译出 `dist/`。代价是慢，且构建依赖会留在全局安装目录里。实测（2026-08-02，Windows + npm，本地 git 源）：耗时约 1 分钟，装入 285 个包。
 
-这条路径的依赖树由 npm 自行解析，不走仓库里的 pnpm lockfile，因此存在依赖漂移导致编译失败的可能。失败时改用上面的预构建分支，或按下文从源码安装。
-
-### Release tarball
-
-> 尚未发布。等 Release 打 tag 后，可直接装该 tag 的 tarball：
-
-```bash
-npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.0/step-code-0.1.0.tgz
-step --version
-```
-
-tarball 内含预编译的 `dist/`，`npm i -g <url>` 会解包并链接 `bin.step`，不触发本机编译。
+这条路径的依赖树由 npm 自行解析，不走仓库里的 pnpm lockfile，因此存在依赖漂移导致编译失败的可能。失败时改用上面的 Release tarball，或按下文从源码安装。
 
 ### 从源码安装
 
@@ -169,14 +163,13 @@ step doctor config      # 校验 ~/.step-code/config.toml，退出码 0 通过�
 
 下载新版本覆盖同名文件即可。
 
-### npm 装的三种形态
+### npm 装的两种形态
 
-重新执行原来那条安装命令，npm 会重新解析 git 引用或 URL 并覆盖安装：
+重新执行原来那条安装命令，npm 会重新解析 URL 或 git 引用并覆盖安装：
 
 ```bash
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm          # 预构建分支
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore # 源码分支
-npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.2.0/step-code-0.2.0.tgz  # 换成新 tag 的 tarball
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz  # 最新 Release tarball
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore                                   # 源码分支
 ```
 
 `npm update -g step-code` 对这几种形态不生效——它面向 registry 包，而这里的来源是 git 引用或 URL。
@@ -199,7 +192,7 @@ pnpm build
 
 删掉那个可执行文件，并把它从 PATH 里移除。
 
-### npm 装的三种形态
+### npm 装的两种形态
 
 ```bash
 npm uninstall -g step-code

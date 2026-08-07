@@ -1,7 +1,8 @@
 name: Release
 
 # 打 tag 即发布：三端 SEA 可执行文件 + npm tarball 上传到 GitHub Release，
-# 同时刷新预构建分发分支 dist-npm。全程只用 GITHUB_TOKEN，不涉及 npm registry。
+# tarball 同时附一份不带版本号的固定名资产，供 releases/latest/download/ 永久链接消费。
+# 全程只用 GITHUB_TOKEN，不涉及 npm registry。
 on:
   push:
     tags: ['v*']
@@ -111,6 +112,14 @@ jobs:
       - name: Checksum
         run: sha256sum step-code-*.tgz > "$(ls step-code-*.tgz).sha256"
 
+      # 额外复制一份不带版本号的固定名资产，让
+      # releases/latest/download/step-code.tgz 成为永久安装链接，
+      # 文档与安装脚本不必随版本号逐个更新。
+      - name: Stable-name copy for latest/download permalink
+        run: |
+          cp "$(ls step-code-*.tgz)" step-code.tgz
+          cp "$(ls step-code-*.tgz).sha256" step-code.tgz.sha256
+
       # 装一遍自己打出来的包：tarball 里缺 dist/ 或 bin 指向错误都会在这里暴露
       - name: Verify tarball installs
         run: |
@@ -123,49 +132,9 @@ jobs:
           path: |
             step-code-*.tgz
             step-code-*.tgz.sha256
+            step-code.tgz
+            step-code.tgz.sha256
           if-no-files-found: error
-
-  dist-branch:
-    name: Refresh dist-npm branch
-    needs: guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build single-file bundle
-        run: pnpm run build:bundle
-
-      - name: Compose branch content
-        run: node scripts/make-dist-branch.mjs
-
-      # 分发分支是一次性快照，不保留历史：每次发布都是全新的孤儿提交强推覆盖。
-      # 它只被 `npm i -g github:<repo>#dist-npm` 消费，历史对使用者没有意义。
-      - name: Push dist-npm
-        working-directory: dist-branch
-        env:
-          TAG: ${{ github.ref_name }}
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git init -q -b dist-npm
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -qm "chore(dist): prebuilt bundle for ${TAG}"
-          git push --force "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git" dist-npm
 
   release:
     name: Publish release
@@ -201,10 +170,10 @@ jobs:
           ### npm（需要 Node 22+）
 
           \`\`\`bash
-          # 预构建分发分支：不编译、不拉依赖，装的是打包好的单文件
-          npm i -g github:${REPO}#dist-npm
+          # latest/download 永久链接：始终装最新 Release 的 tarball，不随版本号失效
+          npm i -g https://github.com/${REPO}/releases/latest/download/step-code.tgz
 
-          # 或指定本次发布的 tarball
+          # 或锁定本次发布的 tarball
           npm i -g https://github.com/${REPO}/releases/download/${TAG}/${TGZ}
           \`\`\`
 
