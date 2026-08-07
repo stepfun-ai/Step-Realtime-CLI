@@ -340,7 +340,7 @@ try {
   // 交互模式 + 缺 API key：不直接退出，给一次现场配置的机会（对齐主流 CLI 的引导体验）
   if (opts.print === undefined && opts.reflect !== true && msg.includes('缺少 API key')) {
     const configured = await runFirstRunSetup();
-    if (configured !== null) {
+    if (configured.kind === 'configured') {
       // 重新加载配置（用户刚写入的 api_key 已落盘）
       config = loadConfig(cwd, { provider: opts.provider, model: opts.model });
       provider = createProvider(config);
@@ -356,19 +356,15 @@ try {
 
 /**
  * 首次运行引导：渲染 FirstRunSetup 组件，等待用户粘贴 API key 或取消。
- * 返回 null 表示用户取消/退出；返回 void 表示 key 已写入配置文件。
+ * 返回 FirstRunResult，调用方按 kind 分支。
  */
-async function runFirstRunSetup(): Promise<null | void> {
+async function runFirstRunSetup(): Promise<FirstRunResult> {
   return new Promise((resolve) => {
     const { unmount } = render(
       <FirstRunSetup
-        onDone={(result: FirstRunResult) => {
+        onDone={(result) => {
           unmount();
-          if (result.kind === 'configured') {
-            resolve();
-          } else {
-            resolve(null);
-          }
+          resolve(result);
         }}
       />,
     );

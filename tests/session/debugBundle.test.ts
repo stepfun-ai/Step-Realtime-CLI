@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import AdmZip from 'adm-zip';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { stored } from '../../src/agent/message.js';
+import { VERSION } from '../../src/version.js';
 import { SessionStore, workdirKey } from '../../src/session/store.js';
 import { exportDebugBundle } from '../../src/session/debugBundle.js';
 import { configureLogger, logError, resetLoggerForTest } from '../../src/utils/logger.js';
@@ -103,7 +104,7 @@ describe('exportDebugBundle', () => {
     const manifest = JSON.parse(entriesOf(zipPath).read('manifest.json'));
 
     expect(manifest.app.name).toBe('step-code');
-    expect(manifest.app.version).toBe('0.1.0'); // 来自 package.json
+    expect(manifest.app.version).toBe(VERSION); // 来自 package.json（经 src/version.ts 单一来源）
     expect(manifest.os.platform).toBeTruthy();
     expect(manifest.os.arch).toBeTruthy();
     expect(manifest.node).toBe(process.version);
