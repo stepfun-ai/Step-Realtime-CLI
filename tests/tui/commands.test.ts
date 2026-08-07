@@ -31,6 +31,10 @@ describe('parseSlash', () => {
     expect(parseSlash('/resume')).toEqual({ name: 'resume', args: '' });
   });
 
+  it('解析 /agents 命令（当前会话的子 agent 只读下钻入口）', () => {
+    expect(parseSlash('/agents')).toEqual({ name: 'agents', args: '' });
+  });
+
   it('解析 /model 命令与名称参数', () => {
     expect(parseSlash('/model step-2')).toEqual({ name: 'model', args: 'step-2' });
     expect(parseSlash('/model')).toEqual({ name: 'model', args: '' });

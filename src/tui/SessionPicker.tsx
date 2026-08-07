@@ -131,6 +131,7 @@ export function SessionPicker({
   onSelect,
   onDelete,
   onRename,
+  titleKey,
 }: {
   sessions: SessionMeta[];
   /** 当前正在使用的会话 id（禁止删除，删除时给拒绝提示）。 */
@@ -149,6 +150,8 @@ export function SessionPicker({
   onDelete?: (id: string) => boolean;
   /** 重命名某会话（落盘由上层执行；name 为空串 = 清除自定义名），返回是否改成功。省略时不提供重命名能力。 */
   onRename?: (id: string, name: string) => boolean;
+  /** 标题 i18n 键（省略用 sessionPicker.title；/agents 下钻模式传 sessionPicker.agentsTitle）。 */
+  titleKey?: string;
 }): React.ReactElement {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
@@ -291,7 +294,7 @@ export function SessionPicker({
   return (
     <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
       <Text color="cyan" bold>
-        {t('sessionPicker.title')}
+        {t(titleKey ?? 'sessionPicker.title')}
       </Text>
       <Text wrap="truncate-start">
         {t('sessionPicker.searchPrefix')}

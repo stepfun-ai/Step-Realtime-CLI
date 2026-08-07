@@ -138,6 +138,7 @@ const zh = {
   'time.hoursAgo': '{count} 小时前',
   'time.daysAgo': '{count} 天前',
   'sessionPicker.title': '选择要恢复的会话（输入过滤 · ↑↓ 选择 · Enter 恢复 · Esc 新会话）',
+  'sessionPicker.agentsTitle': '当前会话的子 agent（输入过滤 · ↑↓ 选择 · Enter 查看历史 · Esc 关闭）',
   'sessionPicker.count': '{count} 条',
   'sessionPicker.searchPrefix': '搜索：',
   'sessionPicker.searchPlaceholder': '输入过滤标题或首条消息…',
@@ -471,6 +472,7 @@ const zh = {
 
   // --- App /sessions /resume（cli.tsx sessions 子命令复用 app.sessions.none / app.sessions.untitled / app.resume.notFound）---
   'app.sessions.none': '本工作目录暂无历史会话。',
+  'app.agents.none': '当前会话没有派生过子 agent。',
   'app.sessions.untitled': '(无标题)',
   'app.resume.notFound': '未找到会话 {id}',
   'app.resume.switched': '已切换到会话 {id}{nameSuffix}（{turns} 轮 · {count} 条历史）。',
@@ -565,6 +567,7 @@ const zh = {
   'cmd.usage': '查看本会话的 token 与缓存命中统计：/usage（加 --all 汇总本目录全部会话）',
   'cmd.sessions': '列出本工作目录下的历史会话',
   'cmd.resume': '切换到指定历史会话：/resume <id>（不带 id 列出可选会话）',
+  'cmd.agents': '查看当前会话派生的子 agent 会话（只读回看历史）',
   'cmd.lang': '显示或切换界面语言：/lang [zh|en]',
   'cmd.lang.zh': '中文',
   'cmd.lang.en': 'English',
@@ -817,6 +820,7 @@ const en: Record<keyof typeof zh, string> = {
   'time.hoursAgo': '{count} hr ago',
   'time.daysAgo': '{count} days ago',
   'sessionPicker.title': 'Select a session to resume (type to filter · ↑↓ select · Enter resume · Esc new session)',
+  'sessionPicker.agentsTitle': 'Subagents of the current session (type to filter · ↑↓ select · Enter view history · Esc close)',
   'sessionPicker.count': '{count} msgs',
   'sessionPicker.searchPrefix': 'Search: ',
   'sessionPicker.searchPlaceholder': 'type to filter title or first message…',
@@ -1122,6 +1126,7 @@ const en: Record<keyof typeof zh, string> = {
   'app.usage.lowHit': '⚠ {model} cache hit rate is low ({rate}). With a stable prefix this usually reflects server-side cache behavior; use /usage --all to compare across models.',
 
   'app.sessions.none': 'No past sessions in this working directory.',
+  'app.agents.none': 'The current session has not spawned any subagents.',
   'app.sessions.untitled': '(untitled)',
   'app.resume.notFound': 'Session {id} not found',
   'app.resume.switched': 'Switched to session {id}{nameSuffix} ({turns} turns · {count} messages).',
@@ -1217,6 +1222,7 @@ const en: Record<keyof typeof zh, string> = {
   'cmd.usage': 'Show token and cache-hit stats for this session: /usage (--all aggregates every session in this directory)',
   'cmd.sessions': 'List past sessions in this working directory',
   'cmd.resume': 'Switch to a past session: /resume <id> (no id: list sessions)',
+  'cmd.agents': 'List subagent sessions spawned by the current session (read-only history view)',
   'cmd.lang': 'Show or switch UI language: /lang [zh|en]',
   'cmd.lang.zh': 'Chinese',
   'cmd.lang.en': 'English',

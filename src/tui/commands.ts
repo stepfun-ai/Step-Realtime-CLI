@@ -122,6 +122,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'export-debug-zip', describe: 'cmd.export-debug-zip' },
   { name: 'usage', describe: 'cmd.usage' },
   { name: 'resume', aliases: ['sessions'], describe: 'cmd.resume' },
+  { name: 'agents', describe: 'cmd.agents' },
   {
     name: 'lang',
     describe: 'cmd.lang',

@@ -287,6 +287,8 @@ export function App({
   const [sessionPickerItems, setSessionPickerItems] = useState<SessionMeta[]>([]);
   // /resume 选择器的子 agent 会话区快照（只读下钻，不参与删除/重命名）
   const [sessionPickerSubs, setSessionPickerSubs] = useState<SessionMeta[]>([]);
+  // 选择器模式：resume = 全局主会话切换（可删/改名）；agents = 当前会话的子 agent 只读下钻
+  const [sessionPickerMode, setSessionPickerMode] = useState<'resume' | 'agents'>('resume');
   // /think 无参唤起的交互式思考深度选择器（同 ModelPicker 弹层挂载模式）。
   const [thinkPickerOpen, setThinkPickerOpen] = useState(false);
   // /skill 无参唤起的交互式技能选择器（同 ModelPicker 弹层挂载模式）。
@@ -2309,13 +2311,32 @@ export function App({
           break;
         }
         case 'resume': {
+          // 全局会话切换只列主会话：子 agent 会话不再混入（它们不能切换过去对话，
+          // 只能只读下钻，混在切换列表里语义错位且占行；全量解析也是 /resume 卡顿
+          // 主因）。查看当前会话的子 agent 用 /agents。
           const metas = store.list(ctx.cwd);
-          const subs = subagentStore.list(ctx.cwd);
-          if (metas.length === 0 && subs.length === 0) {
+          if (metas.length === 0) {
             pushItem({ kind: 'note', text: t('app.sessions.none') });
           } else {
             setSessionPickerItems(metas);
+            setSessionPickerSubs([]);
+            setSessionPickerMode('resume');
+            setSessionPickerOpen(true);
+          }
+          break;
+        }
+        case 'agents': {
+          // 列出当前会话派生的子 agent（直接子级，parentId = 当前会话 id），
+          // 选中下钻只读回看历史。归属主会话上下文，不在全局 /resume 混排。
+          const subs = subagentStore
+            .list(ctx.cwd)
+            .filter((m) => m.parentId === sessionRef.current.id);
+          if (subs.length === 0) {
+            pushItem({ kind: 'note', text: t('app.agents.none') });
+          } else {
+            setSessionPickerItems([]);
             setSessionPickerSubs(subs);
+            setSessionPickerMode('agents');
             setSessionPickerOpen(true);
           }
           break;
@@ -3264,6 +3285,7 @@ export function App({
           currentId={sessionRef.current.id}
           visibleRows={sessionVisibleRows}
           innerWidth={overlayInner}
+          titleKey={sessionPickerMode === 'agents' ? 'sessionPicker.agentsTitle' : undefined}
           onSelect={(id) => {
             setSessionPickerOpen(false);
             if (id === null) return;
@@ -3276,36 +3298,42 @@ export function App({
               pushItem({ kind: 'note', text: t('app.resume.notFound', { id }) });
             }
           }}
-          onDelete={(id) => {
-            // 删除落盘（不可逆），成功则从快照移除该项让选择器刷新
-            const ok = store.delete(ctx.cwd, id);
-            // 级联删除子会话（[subagent.retention] delete_with_parent 默认开；持活跃锁的跳过）
-            if (ok && configRef.current.subagent.retention.deleteWithParent) {
-              const n = subagentStore.deleteWithParent(ctx.cwd, id);
-              if (n > 0) pushItem({ kind: 'note', text: t('cli.sessions.deletedCascade', { count: n }) });
-              // 重读子会话列表（持活跃锁的被跳过未删，不能按 parentId 盲过滤）
-              if (n > 0) setSessionPickerSubs(subagentStore.list(ctx.cwd));
-            }
-            if (ok) setSessionPickerItems((prev) => prev.filter((m) => m.id !== id));
-            return ok;
-          }}
-          onRename={(id, name) => {
-            // 重命名落盘（空名 = 清除自定义名回退标题），成功后同步选择器快照
-            const ok = store.rename(ctx.cwd, id, name);
-            if (ok) {
-              const trimmed = name.trim();
-              // 改的是当前会话：内存里的 session 也要带上 name，否则下次 persist 会把磁盘上的名字覆盖掉
-              if (id === sessionRef.current.id) {
-                if (trimmed === '') delete sessionRef.current.name;
-                else sessionRef.current.name = trimmed;
-                persist();
-              }
-              setSessionPickerItems((prev) =>
-                prev.map((m) => (m.id === id ? { ...m, name: trimmed === '' ? undefined : trimmed } : m)),
-              );
-            }
-            return ok;
-          }}
+          onDelete={
+            sessionPickerMode === 'resume'
+              ? (id) => {
+                  // 删除落盘（不可逆），成功则从快照移除该项让选择器刷新
+                  const ok = store.delete(ctx.cwd, id);
+                  // 级联删除子会话（[subagent.retention] delete_with_parent 默认开；持活跃锁的跳过）
+                  if (ok && configRef.current.subagent.retention.deleteWithParent) {
+                    const n = subagentStore.deleteWithParent(ctx.cwd, id);
+                    if (n > 0) pushItem({ kind: 'note', text: t('cli.sessions.deletedCascade', { count: n }) });
+                  }
+                  if (ok) setSessionPickerItems((prev) => prev.filter((m) => m.id !== id));
+                  return ok;
+                }
+              : undefined
+          }
+          onRename={
+            sessionPickerMode === 'resume'
+              ? (id, name) => {
+                  // 重命名落盘（空名 = 清除自定义名回退标题），成功后同步选择器快照
+                  const ok = store.rename(ctx.cwd, id, name);
+                  if (ok) {
+                    const trimmed = name.trim();
+                    // 改的是当前会话：内存里的 session 也要带上 name，否则下次 persist 会把磁盘上的名字覆盖掉
+                    if (id === sessionRef.current.id) {
+                      if (trimmed === '') delete sessionRef.current.name;
+                      else sessionRef.current.name = trimmed;
+                      persist();
+                    }
+                    setSessionPickerItems((prev) =>
+                      prev.map((m) => (m.id === id ? { ...m, name: trimmed === '' ? undefined : trimmed } : m)),
+                    );
+                  }
+                  return ok;
+                }
+              : undefined
+          }
         />
       ) : (
         <PromptInput value={input} onChange={setInput} onSubmit={submit} busy={busy} history={inputHistory} primed={backtrackPrimed} exitPrimed={exitPrimed} onRecallQueued={recallQueued} pasteStore={pasteStore.current} completionCtx={completionCtx} />
