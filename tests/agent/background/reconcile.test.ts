@@ -180,3 +180,80 @@ describe('终态任务公开视图', () => {
     expect(t.endedAt).toBe('2026-08-01T00:01:00.000Z');
   });
 });
+
+/**
+ * 会话切换换绑 tasksDir 的语义验证（对应 App.tsx /new、/fork、/resume 的换绑路径）。
+ *
+ * BackgroundManager 的 tasksDir 在构造时绑定，切换会话时通过创建新实例换绑（不复用旧实例）。
+ * 本组测试验证：换绑后旧目录的任务不再被新管理器纳入、新任务落到新目录、对账仅扫描当前目录。
+ */
+describe('BackgroundManager 换绑 tasksDir（/new /fork /resume 路径）', () => {
+  it('换绑后：旧目录的任务不在新管理器内存列表中（/fork 语义：旧会话在 fork 前已持久化，新管理器只认新目录）', () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'stepcode-sessionA-'));
+    const dirB = mkdtempSync(join(tmpdir(), 'stepcode-sessionB-'));
+    // 旧会话（dirA）在 fork 前已有一个运行中任务
+    const oldMgr = new BackgroundManager(10, { tasksDir: dirA });
+    const oldId = oldMgr.startTask('旧会话·编译', Promise.resolve({ output: 'done', ok: true }));
+    // 模拟 fork：新管理器绑定 dirB
+    const newMgr = new BackgroundManager(10, { tasksDir: dirB });
+    expect(newMgr.list()).toHaveLength(0); // 新管理器不感知旧目录
+    expect(newMgr.get(oldId)).toBeUndefined(); // 旧任务 id 在新管理器不可见
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
+  });
+
+  it('换绑后：新任务落到新 tasksDir 而非旧目录（/new 与 /fork 共用同一换绑语义）', async () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'stepcode-sessionA-'));
+    const dirB = mkdtempSync(join(tmpdir(), 'stepcode-sessionB-'));
+    const oldMgr = new BackgroundManager(10, { tasksDir: dirA });
+    const newMgr = new BackgroundManager(10, { tasksDir: dirB });
+    const newId = newMgr.startTask('新会话·lint', Promise.resolve({ output: 'ok', ok: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    // 新任务元数据落在 dirB
+    const metaB = JSON.parse(readFileSync(join(dirB, newId, 'meta.json'), 'utf8')) as Record<string, unknown>;
+    expect(metaB.status).toBe('completed');
+    expect(metaB.command).toBe('新会话·lint');
+    // 旧目录没有新任务的落盘
+    expect(existsSync(join(dirA, newId))).toBe(false);
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
+  });
+
+  it('换绑后 reconcile 只扫描新 tasksDir，不把旧目录的任务误标 lost（/resume 才走对账，/new /fork 不触发；此处仅验证扫描范围正确）', () => {
+    const dirA = mkdtempSync(join(tmpdir(), 'stepcode-sessionA-'));
+    const dirB = mkdtempSync(join(tmpdir(), 'stepcode-sessionB-'));
+    // 在旧目录遗留一个 running 任务
+    mkdirSync(join(dirA, 'orphan-task'), { recursive: true });
+    writeFileSync(join(dirA, 'orphan-task', 'meta.json'), JSON.stringify({
+      ...BASE_META,
+      status: 'running',
+      kind: 'process',
+      pid: 2 ** 22 + 99999,
+    }));
+    // 新管理器绑定 dirB，对账不应扫到 dirA 的遗留任务
+    const newMgr = new BackgroundManager(10, { tasksDir: dirB });
+    const { lost, redeliver } = newMgr.reconcile(new Set());
+    expect(lost).toEqual([]);
+    expect(redeliver).toEqual([]);
+    rmSync(dirA, { recursive: true, force: true });
+    rmSync(dirB, { recursive: true, force: true });
+  });
+
+  it('/resume 换绑语义对照：reconcile 会扫描新目录并将旧目录遗留 running 标 lost（与 /new /fork 的「不扫描旧目录」区分）', () => {
+    const dirOld = mkdtempSync(join(tmpdir(), 'stepcode-old-'));
+    const dirResumed = mkdtempSync(join(tmpdir(), 'stepcode-resumed-'));
+    // 遗留 running 任务在即将恢复的会话目录中（resume 路径会扫描到）
+    mkdirSync(join(dirResumed, 'dead-task'), { recursive: true });
+    writeFileSync(join(dirResumed, 'dead-task', 'meta.json'), JSON.stringify({
+      ...BASE_META,
+      status: 'running',
+      kind: 'process',
+      pid: 2 ** 22 + 54321,
+    }));
+    const mgr = new BackgroundManager(10, { tasksDir: dirResumed });
+    const { lost } = mgr.reconcile(new Set());
+    expect(lost.map((t) => t.id)).toEqual(['dead-task']);
+    rmSync(dirOld, { recursive: true, force: true });
+    rmSync(dirResumed, { recursive: true, force: true });
+  });
+});

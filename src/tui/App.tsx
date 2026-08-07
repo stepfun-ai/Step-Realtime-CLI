@@ -2001,6 +2001,14 @@ export function App({
           forked.messages = history.current;
           forked.todos = todos.current;
           sessionRef.current = forked;
+          // 后台任务管理器换绑到新 fork 会话：任务落盘目录随会话切换；
+          // 旧管理器在途任务（属于旧会话）不再接管，新任务落到新会话目录。
+          background.current = new BackgroundManager(10, {
+            taskTimeoutS: configRef.current.background?.bashTaskTimeoutS ?? 600,
+            tasksDir: store.tasksDirFor(ctx.cwd, forked.id),
+            onSettleEvent: (task) => appendWireEvent({ type: 'background.task_settle', ts: new Date().toISOString(), task }),
+            onSettle: (task) => settleHandlerRef.current?.(task),
+          });
           // fork 不继承 goal：清掉内存态与徽标（源会话的 goal 字段已在盘上，不受影响）
           goal.current.restore(null);
           setGoalView(null);
@@ -2025,6 +2033,14 @@ export function App({
           imageStore.current.clear();
           pasteStore.current.clear();
           sessionRef.current = store.create(ctx.cwd, model);
+          // 后台任务管理器换绑到新会话：任务落盘目录随会话切换；
+          // 旧管理器在途任务（属于旧会话）不再接管，新任务落到新会话目录。
+          background.current = new BackgroundManager(10, {
+            taskTimeoutS: configRef.current.background?.bashTaskTimeoutS ?? 600,
+            tasksDir: store.tasksDirFor(ctx.cwd, sessionRef.current.id),
+            onSettleEvent: (task) => appendWireEvent({ type: 'background.task_settle', ts: new Date().toISOString(), task }),
+            onSettle: (task) => settleHandlerRef.current?.(task),
+          });
           sessionApprovals.current.clear();
           // 新会话不继承上一会话的 goal（goal 随会话持久化，新会话从头开始）
           goal.current.restore(null);
