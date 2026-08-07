@@ -1034,6 +1034,7 @@ if (opts.reflect === true) {
       hookEngineRef={hookEngineRef}
       reloadConfig={reloadConfig}
       pluginCommands={plugins.flatMap((p) => p.commands)}
+      pluginIds={plugins.map((p) => p.id)}
       configStartupNotice={renderConfigDiagnostics(configWarnings, ignoredBadConfig)}
       onExitInfo={(id, hasContent) => {
         exitInfo = { id, hasContent };

@@ -4,6 +4,10 @@ import { t } from '../i18n.js';
 export interface ArgumentCompletionContext {
   models: Record<string, { model?: string; displayName?: string }>;
   thinkChoices: readonly string[];
+  /** 内置预设名 + 自定义渠道 id 列表；空数组表示无动态数据。 */
+  providers?: readonly string[];
+  /** 已发现的 plugin id 列表；空数组表示无动态数据。 */
+  pluginIds?: readonly string[];
 }
 
 /** 一个参数补全候选。 */
@@ -49,27 +53,117 @@ export const SLASH_COMMANDS: SlashCommand[] = [
         .map((c) => ({ value: c }));
     },
   },
-  { name: 'permission', describe: 'cmd.permission' },
+  {
+    name: 'permission',
+    describe: 'cmd.permission',
+    getArgumentCompletions: (partial) => {
+      const q = partial.toLowerCase();
+      return ['manual', 'auto', 'yolo']
+        .filter((m) => q === '' || m.startsWith(q))
+        .map((m) => ({ value: m, description: t('cmd.permission.mode.' + m) }));
+    },
+  },
   { name: 'yolo', describe: 'cmd.yolo' },
   { name: 'auto', describe: 'cmd.auto' },
   { name: 'plan', describe: 'cmd.plan' },
-  { name: 'provider', describe: 'cmd.provider' },
-  { name: 'goal', describe: 'cmd.goal' },
+  {
+    name: 'provider',
+    describe: 'cmd.provider',
+    getArgumentCompletions: (partial, ctx) => {
+      const q = partial.toLowerCase();
+      // 静态子命令 + 内置预设 + 运行时注入的自定义渠道 id
+      const presetKeys = (ctx.providers ?? []).filter((id) => {
+        // 区分预设（小写单段，如 stepfun）与自定义渠道 id（通常含点或路径）
+        return !id.includes('.') && !id.includes('/') && !id.includes('\\');
+      });
+      const customIds = (ctx.providers ?? []).filter((id) => {
+        return id.includes('.') || id.includes('/') || id.includes('\\');
+      });
+      const staticSubs = [
+        { value: 'add', description: t('cmd.provider.sub.add') },
+        { value: 'list', description: t('cmd.provider.sub.list') },
+      ];
+      const presets = presetKeys.map((k) => ({ value: k, description: t('cmd.provider.sub.preset') }));
+      const customs = customIds.map((id) => ({ value: id, description: t('cmd.provider.sub.custom') }));
+      return [...staticSubs, ...presets, ...customs].filter((c) => q === '' || c.value.toLowerCase().startsWith(q));
+    },
+  },
+  {
+    name: 'goal',
+    describe: 'cmd.goal',
+    getArgumentCompletions: (partial) => {
+      const q = partial.toLowerCase();
+      return [
+        { value: 'status', description: t('cmd.goal.sub.status') },
+        { value: 'pause', description: t('cmd.goal.sub.pause') },
+        { value: 'resume', description: t('cmd.goal.sub.resume') },
+        { value: 'cancel', description: t('cmd.goal.sub.cancel') },
+      ].filter((c) => q === '' || c.value.startsWith(q));
+    },
+  },
   { name: 'loop', aliases: ['cron'], describe: 'cmd.loop' },
   { name: 'fork', describe: 'cmd.fork' },
   { name: 'new', describe: 'cmd.new' },
   { name: 'compact', describe: 'cmd.compact' },
-  { name: 'history', aliases: ['undo'], describe: 'cmd.history' },
+  {
+    name: 'history',
+    aliases: ['undo'],
+    describe: 'cmd.history',
+    getArgumentCompletions: (partial) => {
+      const q = partial.toLowerCase();
+      // 仅当输入纯数字前缀时给出提示（不做语义判定，留足灵活性）
+      return q === '' || /^\d+$/.test(q)
+        ? [{ value: 'N', description: t('cmd.history.sub.n') }]
+        : [];
+    },
+  },
   { name: 'restore', describe: 'cmd.restore' },
   { name: 'reflect', describe: 'cmd.reflect' },
   { name: 'export-debug-zip', describe: 'cmd.export-debug-zip' },
   { name: 'usage', describe: 'cmd.usage' },
   { name: 'resume', aliases: ['sessions'], describe: 'cmd.resume' },
-  { name: 'lang', describe: 'cmd.lang' },
-  { name: 'mcp', describe: 'cmd.mcp' },
+  {
+    name: 'lang',
+    describe: 'cmd.lang',
+    getArgumentCompletions: (partial) => {
+      const q = partial.toLowerCase();
+      return ['zh', 'en']
+        .filter((l) => q === '' || l.startsWith(q))
+        .map((l) => ({ value: l, description: t('cmd.lang.' + l) }));
+    },
+  },
+  {
+    name: 'mcp',
+    describe: 'cmd.mcp',
+    getArgumentCompletions: (partial) => {
+      // /mcp 无子命令，仅在空 partial 时提示用户无需参数
+      if (partial !== '') return [];
+      return [{ value: '', description: t('cmd.mcp.sub.none') }];
+    },
+  },
   { name: 'skill', describe: 'cmd.skill' },
   { name: 'reload', describe: 'cmd.reload' },
-  { name: 'plugin', describe: 'cmd.plugin' },
+  {
+    name: 'plugin',
+    describe: 'cmd.plugin',
+    getArgumentCompletions: (partial, ctx) => {
+      const q = partial.toLowerCase();
+      // 静态子命令 + 运行时发现的 plugin id
+      const staticSubs = [
+        { value: 'list', description: t('cmd.plugin.sub.list') },
+        { value: 'install', description: t('cmd.plugin.sub.install') },
+        { value: 'enable', description: t('cmd.plugin.sub.enable') },
+        { value: 'disable', description: t('cmd.plugin.sub.disable') },
+        { value: 'remove', description: t('cmd.plugin.sub.remove') },
+        { value: 'info', description: t('cmd.plugin.sub.info') },
+      ];
+      const dynamicIds = (ctx.pluginIds ?? []).map((id) => ({
+        value: id,
+        description: t('cmd.plugin.sub.dynamic', { id }),
+      }));
+      return [...staticSubs, ...dynamicIds].filter((c) => q === '' || c.value.toLowerCase().startsWith(q));
+    },
+  },
   { name: 'tasks', describe: 'cmd.tasks' },
   { name: 'exit', aliases: ['quit', 'q'], describe: 'cmd.exit' },
 ];

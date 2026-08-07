@@ -89,6 +89,10 @@ export interface CompletionContext {
   /** 命令参数补全所需的上下文（模型别名表、思考档位等），由调用方注入。 */
   models?: Record<string, { model?: string; displayName?: string }>;
   thinkChoices?: readonly string[];
+  /** 内置预设名 + 自定义渠道 id 列表；供 /provider 参数补全使用。 */
+  providers?: readonly string[];
+  /** 已发现的 plugin id 列表；供 /plugin 参数补全使用。 */
+  pluginIds?: readonly string[];
   /** @ 文件引用的文件索引（相对 cwd 路径）。缺省则无文件补全。 */
   files?: FileIndex;
 }
@@ -131,6 +135,8 @@ export function computeCompletions(value: string, ctx: CompletionContext): Compl
   const args = cmd.getArgumentCompletions(partial, {
     models: ctx.models ?? {},
     thinkChoices: ctx.thinkChoices ?? [],
+    providers: ctx.providers,
+    pluginIds: ctx.pluginIds,
   });
   return args.map((a) => ({
     kind: 'argument',

@@ -174,6 +174,8 @@ export interface AppProps {
   reloadConfig: () => { config: StepCodeConfig } | { error: string };
   /** plugin 贡献的命令模板（组合根注入，name 已带 <pluginId>: 命名空间前缀）。 */
   pluginCommands?: PluginCommand[];
+  /** 已发现的 plugin id 列表（组合根注入，供 /plugin 参数补全）。 */
+  pluginIds?: readonly string[];
   /** 启动期配置诊断的成品文案（组合根用 renderConfigDiagnostics 渲染；undefined = 配置无问题）。 */
   configStartupNotice?: string;
   /** 退出（/exit、Ctrl+C 等触发 unmount）时上抛当前会话信息，供 main 打印 resume 提示。 */
@@ -202,6 +204,7 @@ export function App({
   hookEngineRef,
   reloadConfig,
   pluginCommands,
+  pluginIds,
   configStartupNotice,
   onExitInfo,
 }: AppProps): React.ReactElement {
@@ -396,15 +399,18 @@ export function App({
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // 统一补全上下文：/model 别名表、/think 档位（含 off）、@ 文件索引。
-  // models 取 configRef（启动快照，别名表运行期不变）；thinkChoices 含 'off'（关闭思考的合法档位）。
+  // 统一补全上下文：/model 别名表、/think 档位（含 off）、@ 文件索引、
+  // /provider 渠道（内置预设 + 自定义 id）、/plugin 插件 id。
+  // models/providers 取 configRef（启动快照，运行期不变）；thinkChoices 含 'off'（关闭思考的合法档位）。
   const completionCtx = useMemo<CompletionContext>(
     () => ({
       models: configRef.current.models ?? {},
       thinkChoices: [...THINK_CHOICES, 'off'],
       files: fileIndex,
+      providers: [...Object.keys(PROVIDER_PRESETS), ...Object.keys(configRef.current.providers ?? {})],
+      pluginIds: pluginIds ?? [],
     }),
-    [fileIndex],
+    [fileIndex, pluginIds],
   );
   const pendingPlanRef = useRef<PendingPlan | null>(null);
   // 计划审批结果：approved + 拒绝时的修订意见（feedback 经 deny reason 回给模型）
