@@ -127,6 +127,16 @@ export function resumedGoalNote(goal: GoalState | undefined): DisplayItem | null
   };
 }
 
+/** 恢复会话时，优先用会话存储的 model（可能是别名或真实 id）初始化状态栏显示与别名指针；
+ *  新建/裸 id 回退时走 config.modelAlias / 反查逻辑。
+ *  返回命中的别名字符串，或 undefined（表示未命中任何别名，调用方按裸 id 回退）。 */
+export function resolveStartupModelAlias(sessionModel: string, config: StepCodeConfig): string | undefined {
+  if (sessionModel === '' || sessionModel === undefined) return undefined;
+  const entry = config.models?.[sessionModel];
+  if (entry !== undefined) return sessionModel;
+  return undefined;
+}
+
 export interface AppProps {
   provider: ChatProvider;
   /** system prompt 静态前缀（buildSystemPrompt 产出）；skill 清单与 AGENTS.md 由 App 按当前注册表逐轮组合。 */
@@ -234,10 +244,16 @@ export function App({
   const [input, setInput] = useState('');
   const [model, setModel] = useState(initialModel);
   // 状态栏模型显示名：当前模型命中带 displayName 的别名时用 displayName，否则用真实 id。
-  // 优先用 config.modelAlias（用户实际选择的别名）查 displayName，避免多别名指向同一真实 id 时
-  // 反查错（step37/step37-plan 同为 step-3.7-flash，但 displayName 不同）。
+  // 优先从 resume 会话的 session.model 反查别名（修复：resume 恢复后状态栏不应误用全局默认指针），
+  // 命中的别名直接取 displayName；否则回退 config.modelAlias，再不然走真实 id 反查。
+  const startupModelAlias = resolveStartupModelAlias(session.model, config);
   const [modelLabel, setModelLabel] = useState(() => {
-    // 有明确别名指针时直接查该别名
+    // resume 会话命中别名 → 直接取别名的 displayName
+    if (startupModelAlias !== undefined) {
+      const entry = config.models?.[startupModelAlias];
+      if (entry?.displayName !== undefined) return entry.displayName;
+    }
+    // 回退全局别名指针（新建/裸 id / 会话未命中别名时走此路径）
     if (config.modelAlias !== undefined) {
       const entry = config.models?.[config.modelAlias];
       if (entry?.displayName !== undefined) return entry.displayName;
@@ -323,10 +339,11 @@ export function App({
   const compactionBindingRef = useRef(resolveCompactionBinding(config, compactionProviderCache.current));
   // 当前模型的别名绑定：/model 别名切换成功记别名、裸 id 切换置 null（/provider 切换亦置 null——
   // 别名绑定已断）；/resume 经 applyModelAlias 反查路径同步维护。/reload 据此决定 provider 重建策略。
-  // 初始化取 config.modelAlias（loadConfig 展开时保留的原始别名指针）：解决多别名指向同一真实 id
-  // 的歧义（step37/step37-plan 同为 step-3.7-flash），不能用「真实 id 反查别名」——
-  // find 会任取第一个，未必是实际激活的那个。config.modelAlias 为 undefined（裸 id）时初始化为 null。
-  const currentModelAliasRef = useRef<string | null>(config.modelAlias ?? null);
+  // 启动时优先取 resume 会话的 session.model 命中别名，避免恢复后状态栏/别名指针误用全局默认。
+  // 修复：config.modelAlias 是全局默认指针，resume 会话应以其存储别名优先。
+  const currentModelAliasRef = useRef<string | null>(
+    startupModelAlias ?? config.modelAlias ?? null,
+  );
   // plan 模式的 ref（权限守卫与 /plan 切换读它）：与 planMode state 同源于会话快照，
   // 否则恢复会话时 UI 显示 plan 而守卫仍按非 plan 放行工具。
   const planModeRef = useRef(session.planMode ?? false);
