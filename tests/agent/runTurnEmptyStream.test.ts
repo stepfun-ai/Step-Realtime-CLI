@@ -310,10 +310,11 @@ describe('thinking 预算耗尽自动降档重试（thinking_downgrade）', () =
     expect(events.some((e) => e.type === 'thinking_downgrade')).toBe(false);
   });
 
-  it('降档重试后仍耗尽 → 不再重试（最多 1 次），退到提示路径', async () => {
+  it('降档重试后仍耗尽 → 尝试 think-only 恢复，恢复仍耗尽则退到提示路径', async () => {
     const { provider, streamCalls } = makeFakeProvider([
       { textChunks: [], finalContent: [thinkingBlock('首轮烧光')], stopReason: 'max_tokens' },
       { textChunks: [], finalContent: [thinkingBlock('low 档仍烧光')], stopReason: 'max_tokens' },
+      { textChunks: [], finalContent: [thinkingBlock('注入仍烧光')], stopReason: 'max_tokens' },
     ]);
     const events = await collect(
       runAgent({
@@ -325,9 +326,10 @@ describe('thinking 预算耗尽自动降档重试（thinking_downgrade）', () =
       }),
     );
 
-    // 只多试一次：总共 2 次 stream 调用
-    expect(streamCalls()).toBe(2);
+    // 共 3 次 stream 调用：原请求 + 降档重试 + 注入恢复
+    expect(streamCalls()).toBe(3);
     expect(events.filter((e) => e.type === 'thinking_downgrade')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'thinking_recover')).toHaveLength(1);
     const notice = events.find((e) => e.type === 'notice');
     expect((notice as { message: string }).message).toContain('思考消耗');
   });
