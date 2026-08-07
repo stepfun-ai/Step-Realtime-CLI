@@ -32,6 +32,11 @@ const READ_ONLY_TOOLS = new Set([
   'exit_plan_mode',
   'ask_user',
   'todo_list',
+  'tool_search',
+  'task_list',
+  'task_output',
+  'get_goal',
+  'cron_list',
 ]);
 /** 写类工具：修改文件系统。 */
 const WRITE_TOOLS = new Set(['write_file', 'edit_file']);

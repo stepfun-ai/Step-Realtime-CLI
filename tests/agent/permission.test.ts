@@ -11,6 +11,11 @@ describe('decide', () => {
       expect(decide('grep', mode, NONE)).toBe('allow');
       expect(decide('web_search', mode, NONE)).toBe('allow');
       expect(decide('web_image_search', mode, NONE)).toBe('allow');
+      expect(decide('tool_search', mode, NONE)).toBe('allow');
+      expect(decide('task_list', mode, NONE)).toBe('allow');
+      expect(decide('task_output', mode, NONE)).toBe('allow');
+      expect(decide('get_goal', mode, NONE)).toBe('allow');
+      expect(decide('cron_list', mode, NONE)).toBe('allow');
     }
   });
 
@@ -46,6 +51,11 @@ describe('isReadOnly', () => {
   it('区分只读与写工具', () => {
     expect(isReadOnly('read_file')).toBe(true);
     expect(isReadOnly('read_media')).toBe(true);
+    expect(isReadOnly('tool_search')).toBe(true);
+    expect(isReadOnly('task_list')).toBe(true);
+    expect(isReadOnly('task_output')).toBe(true);
+    expect(isReadOnly('get_goal')).toBe(true);
+    expect(isReadOnly('cron_list')).toBe(true);
     expect(isReadOnly('write_file')).toBe(false);
     expect(isReadOnly('bash')).toBe(false);
   });
@@ -59,5 +69,13 @@ describe('planModeDenyReason', () => {
   it('写与执行类工具在 plan 模式给出拒绝原因', () => {
     expect(planModeDenyReason('write_file')).not.toBeNull();
     expect(planModeDenyReason('bash')).not.toBeNull();
+  });
+
+  it('新增只读查询工具在 plan 模式放行', () => {
+    expect(planModeDenyReason('tool_search')).toBeNull();
+    expect(planModeDenyReason('task_list')).toBeNull();
+    expect(planModeDenyReason('task_output')).toBeNull();
+    expect(planModeDenyReason('get_goal')).toBeNull();
+    expect(planModeDenyReason('cron_list')).toBeNull();
   });
 });

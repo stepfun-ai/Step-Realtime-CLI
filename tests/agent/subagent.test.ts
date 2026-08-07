@@ -530,6 +530,35 @@ describe('SubagentStore', () => {
     expect(subStore.delete(cwd, s.id)).toBe('missing');
   });
 
+  it('锁 stale 检测：pid 已死则回收后 acquire / delete 成功；pid 活着则拒绝；旧锁无 pid 也回收', () => {
+    const { sessions, subStore } = makeStores();
+    const cwd = process.cwd();
+    const s = subStore.create(cwd, { model: 'm', agentType: 'general', depth: 1, parentId: 'p' });
+    subStore.appendMessages(cwd, s.id, [stored({ role: 'user', content: 'hi' }, { kind: 'user' })]);
+    subStore.saveSnapshot(s);
+
+    const lockDir = sessions.subagentDirFor(cwd);
+    const lockPath = join(lockDir, `${s.id}.lock`);
+
+    // pid 已死（-1 通常不存在）→ stale，acquire 回收后成功
+    writeFileSync(lockPath, JSON.stringify({ pid: -1, startedAt: new Date().toISOString() }), 'utf8');
+    expect(subStore.acquireLock(cwd, s.id)).toBe(true);
+    subStore.releaseLock(cwd, s.id);
+
+    // pid 活着（当前进程）→ 拒绝 acquire，拒绝 delete
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), 'utf8');
+    expect(subStore.acquireLock(cwd, s.id)).toBe(false);
+    expect(subStore.delete(cwd, s.id)).toBe('locked');
+    subStore.releaseLock(cwd, s.id);
+
+    // 旧锁无 pid 字段 → 视为 stale，acquire 和 delete 均正常
+    writeFileSync(lockPath, JSON.stringify({ startedAt: new Date().toISOString() }), 'utf8');
+    expect(subStore.acquireLock(cwd, s.id)).toBe(true);
+    subStore.releaseLock(cwd, s.id);
+    writeFileSync(lockPath, JSON.stringify({ startedAt: new Date().toISOString() }), 'utf8');
+    expect(subStore.delete(cwd, s.id)).toBe('deleted');
+  });
+
   it('create 用 UUID 作 id；appendMessages 按 id 去重幂等；list 读回 meta', () => {
     const subStore = makeSubagentStore();
     const cwd = process.cwd();

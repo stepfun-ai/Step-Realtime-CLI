@@ -7,6 +7,9 @@ import { deriveTitle, type SessionData, type SessionMeta, type SessionStore } fr
 /**
  * 活跃锁内容（格式冻结）：pid + 启动时间戳。
  * 清理与 resume 路径据此判断子会话是否正在运行，必须跳过持锁会话。
+ *
+ * 向后兼容语义：旧锁文件若缺少 pid 字段或 JSON 解析失败，视为 stale（残留锁），
+ * acquireLock / delete 会直接回收后继续操作。自本版本起写入的锁均含 pid。
  */
 export interface SubagentLock {
   pid: number;
@@ -185,12 +188,30 @@ export class SubagentStore {
     return metas;
   }
 
+  /** 判定锁文件是否持有存活进程：解析 pid 后用 process.kill(pid, 0) 探测；解析失败/pid 已死均视为 stale。 */
+  private isLockAlive(lockPath: string): boolean {
+    try {
+      const raw = readFileSync(lockPath, 'utf8');
+      const lock = JSON.parse(raw) as SubagentLock;
+      if (typeof lock.pid !== 'number') return false; // 旧锁无 pid，保守视为 stale
+      process.kill(lock.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * 删除子会话的全部落盘文件（快照 + 全量日志 + 锁）。
    * 持有活跃锁的子会话拒删：删除后运行中的 agent 会写入已删除的文件句柄，数据静默丢失。
+   * 锁存在但 pid 已死（stale）时视为无锁，允许删除。
    */
   delete(cwd: string, id: string): SubagentDeleteResult {
-    if (existsSync(this.lockFileFor(cwd, id))) return 'locked';
+    const lockPath = this.lockFileFor(cwd, id);
+    if (existsSync(lockPath)) {
+      if (this.isLockAlive(lockPath)) return 'locked';
+      try { rmSync(lockPath, { force: true }); } catch { /* 忽略 */ }
+    }
     const file = this.fileFor(cwd, id);
     if (!existsSync(file)) return 'missing';
     try {
@@ -206,15 +227,28 @@ export class SubagentStore {
   /**
    * 建立活跃锁（独占创建，已存在则失败返回 false）。
    * 锁内容格式冻结：{ pid, startedAt }，供清理路径与后续 resume 判断"当前是否在跑"。
+   *
+   * stale 检测：发现锁文件已存在时，读取 pid 并用 process.kill(pid, 0) 判活。
+   * - 进程已死或旧锁无 pid → 视为 stale，回收锁文件后重试一次获取。
+   * - 进程仍存活 → 照旧拒绝，返回 false。
    */
   acquireLock(cwd: string, id: string): boolean {
     mkdirSync(this.dir(cwd), { recursive: true });
     const lock: SubagentLock = { pid: process.pid, startedAt: new Date().toISOString() };
+    const lockPath = this.lockFileFor(cwd, id);
     try {
-      writeFileSync(this.lockFileFor(cwd, id), JSON.stringify(lock), { encoding: 'utf8', flag: 'wx' });
+      writeFileSync(lockPath, JSON.stringify(lock), { encoding: 'utf8', flag: 'wx' });
       return true;
     } catch {
-      return false;
+      // 锁已存在：读 pid 判活，stale 则回收后重试一次
+      if (this.isLockAlive(lockPath)) return false;
+      try { rmSync(lockPath, { force: true }); } catch { /* 忽略 */ }
+      try {
+        writeFileSync(lockPath, JSON.stringify(lock), { encoding: 'utf8', flag: 'wx' });
+        return true;
+      } catch {
+        return false;
+      }
     }
   }
 
