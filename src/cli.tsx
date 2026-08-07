@@ -159,7 +159,9 @@ try {
   // 非交互模式（-p/--reflect）照旧报错退出，不阻塞脚本。
   if (e instanceof TomlParseError && opts.print === undefined && opts.reflect !== true) {
     const recovered = await runBrokenConfigRecovery(e);
-    if (recovered === null) process.exit(0); // 用户取消
+    // 用户取消：process.exit(0) 退出。Ink 已在 runFirstRunSetup 内 unmount，
+    // 此处无悬挂资源；main 顶层 await 因进程退出而中断属预期（取消路径本就不回 main）。
+    if (recovered === null) process.exit(0);
     config = recovered.config;
     configDiagnostics = recovered.diagnostics;
   } else {

@@ -43,4 +43,13 @@
 // （别名赋值无法可靠地静态识别），等于用一个真实的回归缺口换一条日志的干净。
 process.env.NODE_ENV ??= 'production';
 
-await import('./cli.js');
+// 用 .then/catch 而非顶层 await import：cli.tsx 是顶层 await 模块，其内部任何
+// process.exit（如首次运行引导里用户按 Esc 取消）都发生在模块执行中途。若此处
+// 顶层 await，进程退出时 main 的 await 仍未 settle，Node 24 打
+// 「Detected unsettled top-level await」警告。改为 .then 后本模块立即执行完、
+// 进程靠 cli 的事件循环存活，警告消除，且 cli 内 process.exit 的退出码不受影响。
+// 加载失败（语法错误/缺依赖）由 catch 打印并以码 1 退出。
+import('./cli.js').catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
