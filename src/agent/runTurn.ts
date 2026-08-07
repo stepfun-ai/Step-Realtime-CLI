@@ -13,7 +13,7 @@ import {
   summarizeError,
   RETRY_MAX_ATTEMPTS,
 } from '../provider/retry.js';
-import type { ChatProvider } from '../provider/types.js';
+import type { ChatProvider, ThinkingParam } from '../provider/types.js';
 import { t } from '../i18n.js';
 import { executeTool, toolAccessOf } from '../tools/index.js';
 import type { ToolAccess } from '../tools/access.js';
@@ -63,7 +63,7 @@ export interface RunTurnOptions {
   /** 模型覆盖，透传给 provider.stream。 */
   model?: string;
   /** thinking 覆盖（三态：undefined 构造默认 / 对象覆盖 / null 抑制），透传给 provider.stream。 */
-  thinking?: { budgetTokens?: number } | null;
+  thinking?: ThinkingParam | null;
   /** 渠道名（如 stepfun / openai / anthropic），用于空响应诊断上下文。 */
   providerName?: string;
 }
@@ -234,6 +234,9 @@ export async function* runTurn(
 
   // --- 流式请求（边流边 yield 的手动重试：仅在尚未吐字时才重试） ---
   let final: Anthropic.Message | undefined;
+  // thinking 预算耗尽自动降档：首轮 thinkingExhausted 时把 thinking 降到 low 重试 1 次。
+  // 成功后恢复原档位；失败退到 loop 的提示路径。最多 1 次，防死循环。
+  let retriedDowngrade = false;
   for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
     /**
      * 本次尝试是否已流出**正文**（text_delta）。它是重试禁令的唯一判据：
@@ -285,6 +288,50 @@ export async function* runTurn(
       //   emittedText 只标记正文；空响应诊断见下（hadReasoning 区分思考型空响应）。
       if (isEmptyResponse(msg)) {
         if (msg.stop_reason === 'max_tokens') {
+          // thinking 预算耗尽自动降档：首轮 thinkingExhausted（仅 thinking 块、无正文/工具调用）
+          // 且当前档位可降（不是 low、不是 off、未重试过），自动降到 low 重试 1 次。
+          // 重试成功后 activeThinking 还原为原档位，用户无感知；失败则走下方 thinkingExhausted 提示路径。
+          if (
+            !retriedDowngrade &&
+            thinking !== null &&
+            thinking !== undefined &&
+            thinking.level !== 'low'
+          ) {
+            retriedDowngrade = true;
+            yield { type: 'thinking_downgrade', fromLevel: thinking.level, toLevel: 'low' };
+            // 用降级后的 thinking 重发请求：覆盖本次调用的 thinking 参数，不影响外部会话状态
+            const downgradeThinking: ThinkingParam = { level: 'low', budgetTokens: thinking.budgetTokens };
+            const retryStream = provider.stream({ system, tools, messages: toWire(messages, wireOpts), signal, model, thinking: downgradeThinking });
+            let retryThinkingIndex: number | undefined;
+            for await (const event of retryStream) {
+              if (signal?.aborted) break;
+              if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                emittedText = true;
+                yield { type: 'text', text: event.delta.text };
+              } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
+                yield { type: 'thinking_delta', text: event.delta.thinking };
+              } else if (
+                event.type === 'content_block_start' &&
+                (event.content_block.type === 'thinking' || event.content_block.type === 'redacted_thinking')
+              ) {
+                retryThinkingIndex = event.index;
+                yield { type: 'thinking_start' };
+              } else if (event.type === 'content_block_stop' && event.index === retryThinkingIndex) {
+                retryThinkingIndex = undefined;
+                yield { type: 'thinking_end' };
+              }
+            }
+            if (signal?.aborted) return { stopReason: 'aborted' };
+            const retryMsg = await retryStream.finalMessage();
+            if (isEmptyResponse(retryMsg) && retryMsg.stop_reason === 'max_tokens') {
+              // 降级重试后仍耗尽：不再重试，退到 loop 的提示路径
+              final = retryMsg;
+              break;
+            }
+            final = retryMsg;
+            break;
+          }
+          // 不可降级（已是 low / off / 已重试过）：直接落 final，走 thinkingExhausted 提示路径
           final = msg;
           break;
         }

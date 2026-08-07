@@ -21,6 +21,12 @@ export type AgentEvent =
    * 空响应/断连成因（EmptyResponseError 带 stop_reason/hadReasoning/token 诊断上下文）。
    */
   | { type: 'retry'; attempt: number; delayMs: number; message: string; hadPartial?: boolean; cause?: unknown }
+  /**
+   * thinking 预算耗尽自动降档：首轮 thinkingExhausted（仅 thinking 块、无正文/工具调用）
+   * 且当前档位可降时，自动降到 low 重试 1 次。成功后恢复原档位，用户无感知；
+   * 失败退到 loop 的提示路径。fromLevel 为 undefined 表示构造默认（[thinking] default_level）。
+   */
+  | { type: 'thinking_downgrade'; fromLevel: string | undefined; toLevel: string }
   | { type: 'aborted' }
   /** goal 等自主续接：本 run 结束，inject 为下一轮注入文本。 */
   | { type: 'continuation'; inject: string }
