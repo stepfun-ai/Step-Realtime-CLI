@@ -1240,6 +1240,17 @@ export function App({
           // agent 流事件：构成消息边界（压缩/溢出等通知后的正文属于新一轮消息）
           next.push({ kind: 'note', text: ev.message, boundary: true });
           break;
+        case 'thinking_downgrade':
+          // thinking 预算耗尽自动降档：告知用户发生了自动恢复，构成消息边界
+          next.push({
+            kind: 'note',
+            text: t('app.think.autoDowngrade', {
+              from: ev.fromLevel ?? t('app.think.followDefault'),
+              to: ev.toLevel,
+            }),
+            boundary: true,
+          });
+          break;
         case 'usage':
           // 记录此真实/估算值覆盖的 history 前缀长度与基准 token：真实 usage 带 messages.length，
           // 压缩估算带压缩后全长；省略时退化为当前长度（尾部为空）。随后重算显示值 = 基准 + 尾部估算。

@@ -196,6 +196,98 @@ describe('runAgent 空流/空响应重试', () => {
   });
 });
 
+describe('thinking 预算耗尽自动降档重试（thinking_downgrade）', () => {
+  it('high 档耗尽 → 自动降到 low 重试 1 次成功：降级事件 + 正文正常，第二次请求 thinking.level=low', async () => {
+    const { provider, streamCalls, streamParams } = makeFakeProvider([
+      // 首轮：thinking 吃满预算，正文零输出
+      { textChunks: [], finalContent: [thinkingBlock('烧光了')], stopReason: 'max_tokens' },
+      // 降档重试：正常产出正文
+      { textChunks: ['恢复正文'], finalContent: [textBlock('恢复正文')] },
+    ]);
+    const events = await collect(
+      runAgent({
+        provider,
+        system: 'sys',
+        ctx: { cwd: process.cwd() },
+        messages: [sm('问')],
+        thinking: { level: 'high', budgetTokens: 8192 },
+      }),
+    );
+
+    expect(streamCalls()).toBe(2);
+    // 降级事件透出原档位与目标档位
+    const dg = events.find((e) => e.type === 'thinking_downgrade');
+    expect(dg).toBeDefined();
+    expect((dg as { fromLevel?: string }).fromLevel).toBe('high');
+    expect((dg as { toLevel?: string }).toLevel).toBe('low');
+    // 第二次请求确实带了降档后的 thinking 参数
+    expect((streamParams()[1] as { thinking?: { level?: string } }).thinking?.level).toBe('low');
+    // 正文正常流出，回合正常结束
+    expect(events.filter((e) => e.type === 'text')).toEqual([{ type: 'text', text: '恢复正文' }]);
+    expect(events.at(-1)!.type).toBe('turn_done');
+  });
+
+  it('low 档耗尽 → 降无可降，不重试，直接走提示路径', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      { textChunks: [], finalContent: [thinkingBlock('烧光了')], stopReason: 'max_tokens' },
+    ]);
+    const events = await collect(
+      runAgent({
+        provider,
+        system: 'sys',
+        ctx: { cwd: process.cwd() },
+        messages: [sm('问')],
+        thinking: { level: 'low', budgetTokens: 1024 },
+      }),
+    );
+
+    expect(streamCalls()).toBe(1);
+    expect(events.some((e) => e.type === 'thinking_downgrade')).toBe(false);
+    const notice = events.find((e) => e.type === 'notice');
+    expect((notice as { message: string }).message).toContain('思考消耗');
+  });
+
+  it('thinking 为 null（off）→ 不可能 thinking 耗尽，不触发降档', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      { textChunks: [], finalContent: [thinkingBlock('烧光了')], stopReason: 'max_tokens' },
+    ]);
+    const events = await collect(
+      runAgent({
+        provider,
+        system: 'sys',
+        ctx: { cwd: process.cwd() },
+        messages: [sm('问')],
+        thinking: null,
+      }),
+    );
+
+    expect(streamCalls()).toBe(1);
+    expect(events.some((e) => e.type === 'thinking_downgrade')).toBe(false);
+  });
+
+  it('降档重试后仍耗尽 → 不再重试（最多 1 次），退到提示路径', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      { textChunks: [], finalContent: [thinkingBlock('首轮烧光')], stopReason: 'max_tokens' },
+      { textChunks: [], finalContent: [thinkingBlock('low 档仍烧光')], stopReason: 'max_tokens' },
+    ]);
+    const events = await collect(
+      runAgent({
+        provider,
+        system: 'sys',
+        ctx: { cwd: process.cwd() },
+        messages: [sm('问')],
+        thinking: { level: 'high', budgetTokens: 8192 },
+      }),
+    );
+
+    // 只多试一次：总共 2 次 stream 调用
+    expect(streamCalls()).toBe(2);
+    expect(events.filter((e) => e.type === 'thinking_downgrade')).toHaveLength(1);
+    const notice = events.find((e) => e.type === 'notice');
+    expect((notice as { message: string }).message).toContain('思考消耗');
+  });
+});
+
 describe('空响应诊断上下文（替代无证据的「瞬时故障」归因）', () => {
   it('EmptyResponseError 可携带诊断上下文，且旧调用点只传 message 仍可用', () => {
     const withCtx = new EmptyResponseError('x', {

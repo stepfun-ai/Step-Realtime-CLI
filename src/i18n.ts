@@ -190,6 +190,7 @@ const zh = {
   'app.think.status': '当前生效：{current} · 配置默认：{defaultLevel}\n可用档位：\n{lines}',
   'app.think.levelLine': '  {name} — {detail}',
   'app.think.followDefault': '跟随配置默认',
+  'app.think.autoDowngrade': 'thinking 预算已耗尽，自动降档至 {to} 重试…（原档位：{from}）',
 
   // --- /history（/undo 别名）命令与统一回顾回退面板（HistoryPanel）---
   'app.history.title': '本会话输入回顾与回退',
@@ -833,6 +834,7 @@ const en: Record<keyof typeof zh, string> = {
   'app.think.status': 'Active: {current} · Config default: {defaultLevel}\nAvailable levels:\n{lines}',
   'app.think.levelLine': '  {name} — {detail}',
   'app.think.followDefault': 'follow config default',
+  'app.think.autoDowngrade': 'Thinking budget exhausted; auto-downgrading to {to} and retrying… (was: {from})',
 
   // --- /history (alias /undo) command and unified review/backtrack panel (HistoryPanel) ---
   'app.history.title': 'Review and backtrack inputs of this session',
