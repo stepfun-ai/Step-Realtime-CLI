@@ -68,11 +68,16 @@ function EditableInput({
   hint: string;
   placeholder?: string;
 }): React.ReactElement {
+  // 单行字段（API key / base_url）语义：粘贴的长 key 在终端里常被折行，
+  // 换行符若进字段再写进 TOML 字符串即成非法控制字符、直接毁掉 config 解析。
+  // 故插入前把所有 \r/\n 一律剥掉（normalizePastedText 只把 \r\n 归一成 \n，不够）。
+  const toSingleLine = (raw: string): string => normalizePastedText(raw).replace(/[\r\n]+/g, '');
+
   // bracketed paste：一次性整体插入，不走 useInput 字符分支
   usePaste(
     useCallback(
       (raw: string) => {
-        const next = insertText({ text: value, cursor }, normalizePastedText(raw));
+        const next = insertText({ text: value, cursor }, toSingleLine(raw));
         onChange(next);
       },
       [value, cursor, onChange],
@@ -100,7 +105,7 @@ function EditableInput({
       }
       // 可打印字符：无 ctrl/meta 修饰时在光标处插入
       if (input !== '' && !key.ctrl && !key.meta) {
-        const next = insertText(editState, normalizePastedText(input));
+        const next = insertText(editState, toSingleLine(input));
         onChange(next);
       }
     },

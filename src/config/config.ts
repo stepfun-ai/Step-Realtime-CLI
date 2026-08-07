@@ -1194,10 +1194,13 @@ export function resolveProxy(raw: unknown): string | undefined {
  * section 不存在时在文件末尾追加 `[providers.<name>]\nkey = "value"\n`。
  */
 export function saveProviderKey(providerName: string, key: 'base_url' | 'api_key', value: string): void {
+  // 防御：base_url / api_key 是单行字段，任何来源（粘贴折行、程序拼接）混入的换行
+  // 若写进 TOML 字符串即成非法控制字符、毁掉整文件解析。写入前一律剥掉。
+  const safeValue = value.replace(/[\r\n]+/g, '');
   const dir = join(homedir(), '.step-code');
   const tomlPath = join(dir, 'config.toml');
   const sectionHeader = `[providers.${providerName}]`;
-  const line = `${key} = "${value}"`;
+  const line = `${key} = "${safeValue}"`;
   const text = existsSync(tomlPath) ? readFileSync(tomlPath, 'utf8') : '';
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/) || [];
