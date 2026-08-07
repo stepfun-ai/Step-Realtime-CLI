@@ -1186,6 +1186,68 @@ export function resolveProxy(raw: unknown): string | undefined {
 }
 
 /**
+ * 改写/追加 ~/.step-code/config.toml 的 `[providers.<providerName>]` section 内的一个字段。
+ * 只动目标那一行，其余内容（注释、其他字段、其他 section）原样保留，不做整文件重序列化。
+ * 文件不存在时创建最小内容。保留原文件的换行风格（CRLF/LF）。
+ *
+ * TOML section 边界：从 `[providers.<name>]` 头到下一个 `[` 开头行为止，是此 section 的管辖范围。
+ * section 不存在时在文件末尾追加 `[providers.<name>]\nkey = "value"\n`。
+ */
+export function saveProviderKey(providerName: string, key: 'base_url' | 'api_key', value: string): void {
+  const dir = join(homedir(), '.step-code');
+  const tomlPath = join(dir, 'config.toml');
+  const sectionHeader = `[providers.${providerName}]`;
+  const line = `${key} = "${value}"`;
+  const text = existsSync(tomlPath) ? readFileSync(tomlPath, 'utf8') : '';
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/) || [];
+
+  // 先定位目标 section 的起止行索引
+  let sectionStart = -1;
+  let sectionEnd = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i]!.trim();
+    if (trimmed === sectionHeader) {
+      sectionStart = i;
+      // 从 section 头向下找下一个 section 边界
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j]!.trim().startsWith('[')) {
+          sectionEnd = j;
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  const out = [...lines];
+  if (sectionStart === -1) {
+    // section 不存在：在文件末尾追加。先清理尾部空行再追加块。
+    while (out.length > 0 && out[out.length - 1]!.trim() === '') out.pop();
+    out.push('', sectionHeader, line, '');
+  } else {
+    // section 存在：在 [sectionStart, sectionEnd) 区间内改/插字段
+    const keyPattern = new RegExp(`^${key.replace(/[.*+?^=!:{}()|[\]/\\]/g, (m) => `\\${m}`)}\\s*=`);
+    let written = false;
+    // 收集 section 内的行（保留注释和空行，只改目标键）
+    for (let i = sectionStart + 1; i < sectionEnd; i++) {
+      const trimmed = out[i]!.trim();
+      if (!written && keyPattern.test(trimmed) && !trimmed.startsWith('#')) {
+        out[i] = `  ${line}`;
+        written = true;
+      }
+    }
+    if (!written) {
+      // 在 section 头部后第一个位置插入（紧跟 section 头下方）
+      out.splice(sectionStart + 1, 0, `  ${line}`);
+    }
+  }
+
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(tomlPath, out.join(newline), 'utf8');
+}
+
+/**
  * 改写/追加 ~/.step-code/config.toml 的一个顶层字符串键：只动目标那一行，
  * 其余内容（注释、其他字段、[section]）原样保留，不做整文件重序列化。
  * 文件不存在时创建最小内容。保留原文件的换行风格（CRLF/LF）。
