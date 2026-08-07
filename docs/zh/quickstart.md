@@ -10,7 +10,7 @@
 npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm
 ```
 
-装的是预构建好的单文件，不在本机编译、不拉依赖。没有 Node 环境就从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases) 下对应平台的单文件可执行；要参与开发则克隆仓库自行构建：
+装的是预构建好的单文件，不在本机编译、不拉依赖。没有 Node 环境可等 Release 发布（当前尚未发布，见下方说明）；要参与开发则克隆仓库自行构建：
 
 ```bash
 git clone https://github.com/li-xiu-qi/Step-Realtime-CLI.git
@@ -22,19 +22,25 @@ pnpm link --global   # 之后可直接用 step 命令
 
 五种安装方式的取舍、升级、卸载、常见问题见[安装](./installation.md)。
 
+> **Release 状态说明**：当前尚未发布 GitHub Release，单文件可执行与 Release tarball 暂不可用。推荐用 `npm i -g github:li-xiu-qi/Step-Realtime-CLI#dist-npm` 或源码安装。
+
 ## 2. 配置 API key
 
-Step 模型的 API key 在[阶跃开放平台](https://platform.stepfun.com)获取。任选一种方式配置：
+Step 模型的 API key 在[阶跃开放平台](https://platform.stepfun.com)获取。首次启动时如果未配置 key，step-code 会提示配置方式。
+
+任选一种方式配置：
 
 ```bash
-# 方式一：环境变量
+# 方式一：环境变量（推荐，立即可用）
 export STEP_CODE_API_KEY=<your-key>
 
-# 方式二：写入 ~/.step-code/config.toml
+# 方式二：写入 ~/.step-code/config.toml（持久化）
 #   [providers.stepfun]
 #   type = "stepfun"
 #   api_key = "<your-key>"
 ```
+
+> 提示：也可以启动后按提示粘贴 key，step-code 会自动写入配置文件。
 
 ## 3. 第一次对话
 
