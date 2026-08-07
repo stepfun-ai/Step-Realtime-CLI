@@ -19,7 +19,7 @@
 // 正确的落点是 bin 引导文件 `./main.ts`：不含 JSX、无任何静态 import，先设 `NODE_ENV`
 // 再 `await import` 本模块，保证 react 与 reconciler 都在赋值之后才求值。bundle 形态另有
 // esbuild `define` 把 `process.env.NODE_ENV` 静态折叠为 production。回归护栏见 tests/env.test.ts。
-import { existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
@@ -40,7 +40,7 @@ import type { WireEvent } from './agent/wirelog.js';
 import { buildSystemPrompt, subagentListing } from './agent/systemPrompt.js';
 import { loadAgentsMd, DEFAULT_AGENTS_MD_BUDGET_BYTES } from './agent/agentsMd.js';
 import { buildAgentRegistry } from './agent/subagent/registry.js';
-import { loadConfig, resolveModelEntry, type ConfigLoadDiagnostics, type StepCodeConfig } from './config/config.js';
+import { loadConfig, resolveModelEntry, TomlParseError, type ConfigLoadDiagnostics, type StepCodeConfig } from './config/config.js';
 import { runDoctorConfig } from './config/doctor.js';
 import { collectConfigWarnings } from './config/diagnostics.js';
 import { renderConfigDiagnostics } from './tui/configWarningText.js';
@@ -154,8 +154,18 @@ try {
     configDiagnostics = d;
   });
 } catch (e) {
-  logError((e as Error).message);
-  process.exit(1);
+  // 坏 TOML + 交互模式：不把「手改文件」的成本甩给用户——给一条现场修复路径。
+  // 坏文件先改名备份（不覆盖，用户可能要抢救），再进引导写入新配置。
+  // 非交互模式（-p/--reflect）照旧报错退出，不阻塞脚本。
+  if (e instanceof TomlParseError && opts.print === undefined && opts.reflect !== true) {
+    const recovered = await runBrokenConfigRecovery(e);
+    if (recovered === null) process.exit(0); // 用户取消
+    config = recovered.config;
+    configDiagnostics = recovered.diagnostics;
+  } else {
+    logError((e as Error).message);
+    process.exit(1);
+  }
 }
 
 // 代理网络层：环境变量 HTTPS_PROXY > config.proxy > 直连。config.proxy 只在环境变量
@@ -369,6 +379,44 @@ async function runFirstRunSetup(): Promise<FirstRunResult> {
       />,
     );
   });
+}
+
+/**
+ * 坏 TOML 的现场修复：备份坏文件 → 进引导重新配置 → 重载配置。
+ * 返回 null 表示用户取消；否则返回重载后的 config 与 diagnostics。
+ *
+ * 备份用改名（config.toml → config.toml.broken-<时间戳>）而非删除：坏文件里可能有用户
+ * 手写却没意识到已被破坏的其他渠道/模型配置，改名保留供抢救。引导写入的是全新文件，
+ * 不与坏内容混叠——这正是「避免用一份你没写过的配置运行」原则的延伸：修复也不该在
+ * 一份已坏的文件上叠加写入。
+ */
+async function runBrokenConfigRecovery(
+  err: TomlParseError,
+): Promise<{ config: StepCodeConfig; diagnostics: ConfigLoadDiagnostics | undefined } | null> {
+  const tomlPath = join(homedir(), '.step-code', 'config.toml');
+  // 打印解析失败的现场，让用户知道坏在哪、文件被备份到哪。
+  console.error(`\n配置文件无法解析，已启动修复引导。\n  ${err.detail}\n`);
+  const backupPath = `${tomlPath}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  try {
+    renameSync(tomlPath, backupPath);
+    console.error(`  原文件已备份到：${backupPath}\n`);
+  } catch {
+    // 改名失败（权限/占用）时退守复制+保留原件：引导写入会因原件仍在而与之并存，
+    // 但 saveProviderKey 只动目标 section，不会读到坏语法——可继续。
+    try {
+      copyFileSync(tomlPath, backupPath);
+      console.error(`  原文件备份到：${backupPath}（原件占用未能移除，引导将改写原件）\n`);
+    } catch {
+      console.error('  备份失败，仍继续引导（原文件保持不动）。\n');
+    }
+  }
+  const result = await runFirstRunSetup();
+  if (result.kind !== 'configured') return null;
+  let diagnostics: ConfigLoadDiagnostics | undefined;
+  const config = loadConfig(cwd, { provider: opts.provider, model: opts.model }, (d) => {
+    diagnostics = d;
+  });
+  return { config, diagnostics };
 }
 
 // 压缩摘要绑定（`[compaction] model`）：命中 [models.<别名>] 时按该别名的渠道建独立 provider，

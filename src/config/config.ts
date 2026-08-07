@@ -531,6 +531,21 @@ export type ConfigDiagnosticsSink = (diagnostics: ConfigLoadDiagnostics) => void
  * 文件不存在是正常的零配置场景，照旧返回 {}。
  * 逃生舱（{@link IGNORE_BAD_CONFIG_ENV}）置 1 时降级为「忽略并记录」，交由调用方告知。
  */
+/** TOML 语法解析失败专用错误：让 cli 层能用 instanceof 区分「文件坏」与其他配置错误，
+ *  而不靠脆弱的报错文案匹配。message 已含给人看的修复指引。 */
+export class TomlParseError extends Error {
+  readonly detail: string;
+  constructor(detail: string, tomlPath: string, ignoreEnv: string) {
+    super(
+      `配置文件解析失败：${tomlPath}\n  ${detail}\n` +
+        `  该文件未生效，为避免用一份你没写过的配置运行，已停止启动。\n` +
+        `  修完可用 step doctor config 校验；若要暂时忽略它以默认配置启动，设 ${ignoreEnv}=1。`,
+    );
+    this.name = 'TomlParseError';
+    this.detail = detail;
+  }
+}
+
 function loadTomlConfig(): { toml: TomlConfigShape; ignoredBadFile?: IgnoredBadConfigFile } {
   const tomlPath = join(homedir(), '.step-code', 'config.toml');
   if (!existsSync(tomlPath)) return { toml: {} };
@@ -541,11 +556,7 @@ function loadTomlConfig(): { toml: TomlConfigShape; ignoredBadFile?: IgnoredBadC
     if (process.env[IGNORE_BAD_CONFIG_ENV] === '1') {
       return { toml: {}, ignoredBadFile: { path: tomlPath, message: detail } };
     }
-    throw new Error(
-      `配置文件解析失败：${tomlPath}\n  ${detail}\n` +
-        `  该文件未生效，为避免用一份你没写过的配置运行，已停止启动。\n` +
-        `  修完可用 step doctor config 校验；若要暂时忽略它以默认配置启动，设 ${IGNORE_BAD_CONFIG_ENV}=1。`,
-    );
+    throw new TomlParseError(detail, tomlPath, IGNORE_BAD_CONFIG_ENV);
   }
 }
 
