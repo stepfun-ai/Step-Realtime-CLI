@@ -172,10 +172,10 @@ export function SessionPicker({
     if (terms.length === 0) return subs;
     return subs.filter((m) => terms.every((term) => searchKey(m).includes(term)));
   }, [subagents, query]);
-  const shownSubs = filteredSubs.slice(0, SUBAGENT_ROWS);
 
   // query 变化后 sel 可能越界，渲染期钳制
-  const total = filtered.length + shownSubs.length;
+  // 游标走全程（主会话 + 全部子 agent 会话），不是只走可见的前 5 条子会话。
+  const total = filtered.length + filteredSubs.length;
   const clampedSel = Math.min(sel, Math.max(total - 1, 0));
   // 主会话区窗口：居中锚定的滑动窗口——高亮往哪移窗口就往哪滑，高亮始终落在窗口中部。
   // 不用整页翻页，因为那样游标跨页时整屏条目会一次性换掉、高亮从末行弹回首行；
@@ -187,6 +187,14 @@ export function SessionPicker({
     Math.min(mainSel - Math.floor(visible / 2), Math.max(0, filtered.length - visible)),
   );
   const page = filtered.slice(windowStart, windowStart + visible);
+  // 子 agent 区同样居中锚定滑动窗口：显示固定 5 行，但游标可在全部子会话中移动，
+  // 窗口跟随游标（此前 slice(0, 5) 硬截断，第 6 条起永远无法选中——待办 #25）。
+  const subSel = clampedSel - filtered.length;
+  const subWindowStart = Math.max(
+    0,
+    Math.min(subSel - Math.floor(SUBAGENT_ROWS / 2), Math.max(0, filteredSubs.length - SUBAGENT_ROWS)),
+  );
+  const shownSubs = filteredSubs.slice(subWindowStart, subWindowStart + SUBAGENT_ROWS);
   const confirmTarget = confirmId !== null ? sessions.find((m) => m.id === confirmId) : undefined;
   const renameTarget = renameId !== null ? sessions.find((m) => m.id === renameId) : undefined;
 
@@ -233,7 +241,7 @@ export function SessionPicker({
     if (key.return) {
       // 游标跨两个区：主会话区之后是子 agent 会话区，统一按 id 上抛，由上层区分行为
       const chosen =
-        clampedSel < filtered.length ? filtered[clampedSel] : shownSubs[clampedSel - filtered.length];
+        clampedSel < filtered.length ? filtered[clampedSel] : filteredSubs[clampedSel - filtered.length];
       onSelect(chosen !== undefined ? chosen.id : null);
       return;
     }
@@ -333,9 +341,14 @@ export function SessionPicker({
       )}
       {shownSubs.length > 0 && (
         <Box flexDirection="column">
-          <Text color="gray">{t('sessionPicker.subagentsHeader')}</Text>
+          <Text color="gray" wrap="truncate">
+            {t('sessionPicker.subagentsHeader')}
+            {filteredSubs.length > SUBAGENT_ROWS
+              ? ` ${subWindowStart + 1}-${Math.min(subWindowStart + SUBAGENT_ROWS, filteredSubs.length)}/${filteredSubs.length}`
+              : ''}
+          </Text>
           {shownSubs.map((m, i) => {
-            const active = filtered.length + i === clampedSel;
+            const active = filtered.length + subWindowStart + i === clampedSel;
             // 子会话行的元信息比主会话长（多 agentType 与 status），标题预算相应更紧
             const metaText = `${m.agentType ?? '-'} · ${m.status ?? '-'} · ${relativeTime(m.updatedAt)} · ${t('sessionPicker.count', { count: m.messageCount })}`;
             const label =

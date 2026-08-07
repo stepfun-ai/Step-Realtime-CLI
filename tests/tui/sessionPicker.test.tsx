@@ -445,4 +445,55 @@ describe('SessionPicker 子 agent 会话区', () => {
     await delay();
     expect(onDelete).not.toHaveBeenCalled();
   });
+
+  it('子会话超过 5 条时游标可走到第 6 条及以后（滑动窗口跟随，待办 #25）', async () => {
+    const onSelect = vi.fn();
+    const subs = Array.from({ length: 8 }, (_, i) => ({
+      ...meta(`sub${i}`, `子会话${i}`),
+      agentType: 'general',
+      status: 'done',
+    }));
+    const { stdin, lastFrame } = render(
+      React.createElement(SessionPicker, {
+        sessions: [meta('m1', '主会话')],
+        subagents: subs,
+        onSelect,
+      }),
+    );
+    await delay();
+    // 初始窗口只显示前 5 条
+    expect(lastFrame() ?? '').toContain('子会话0');
+    expect(lastFrame() ?? '').not.toContain('子会话5');
+    // 下移 6 次：主会话(1) → 子区第 6 条
+    for (let i = 0; i < 6; i++) {
+      stdin.write('[B');
+      await delay();
+    }
+    // 窗口已滑动：第 6 条可见且被高亮（› 指针），最早条目滑出窗口
+    const out = lastFrame() ?? '';
+    expect(out).toContain('› 子会话5');
+    expect(out).not.toContain('子会话0');
+    // 回车选中第 6 条——此前它永远不可达
+    stdin.write('\r');
+    await delay();
+    expect(onSelect).toHaveBeenCalledWith('sub5');
+  });
+
+  it('子会话超 5 条时区头带窗口区间指示，且不额外占行', async () => {
+    const subs = Array.from({ length: 12 }, (_, i) => ({
+      ...meta(`sub${i}`, `子会话${i}`),
+      agentType: 'general',
+      status: 'done',
+    }));
+    const { lastFrame } = render(
+      React.createElement(SessionPicker, {
+        sessions: [meta('m1', '主会话')],
+        subagents: subs,
+        onSelect: () => {},
+      }),
+    );
+    await delay();
+    const out = lastFrame() ?? '';
+    expect(out).toContain('1-5/12');
+  });
 });
