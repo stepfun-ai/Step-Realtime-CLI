@@ -10,7 +10,7 @@ const createSchema = z.object({
 export const createGoalTool: ToolDef<z.infer<typeof createSchema>> = {
   name: 'create_goal',
   description:
-    '设定一个自主目标：agent 会持续朝该目标推进，每轮自动续跑，直到目标达成（你调 update_goal 标 complete）或遇阻塞（标 blocked）。用于需要多轮自主推进的长任务。',
+    '设定一个自主目标：agent 会持续朝该目标推进，每轮自动续跑，直到目标达成（你调 update_goal 标 complete）或遇阻塞（标 blocked）。用于需要多轮自主推进的长任务。预算默认不设上限——目标就是跑到完成；不要顺手调 set_goal_budget，仅当用户明确给出硬限制时才设。',
   schema: createSchema,
   async execute(input, ctx) {
     if (ctx.goal === undefined) return fail('当前上下文不支持 goal。');
@@ -57,7 +57,7 @@ const budgetSchema = z.object({
 export const setGoalBudgetTool: ToolDef<z.infer<typeof budgetSchema>> = {
   name: 'set_goal_budget',
   description:
-    '为当前 goal 设定预算（轮次和/或 token，任一超支则标 blocked）。仅在用户明确给出硬限制时才设置，不要自行发明预算。',
+    '为当前 goal 设定预算（轮次和/或 token，任一超支则标 blocked）。goal 默认无预算上限，这是有意设计——默认心智是把任务做完，不是跑固定额度。仅当用户明确给出硬限制（如「最多 10 轮」「别超 5 万 token」）时才设置；用户没提就不要调本工具。',
   schema: budgetSchema,
   async execute(input, ctx) {
     if (ctx.goal === undefined) return fail('当前上下文不支持 goal。');

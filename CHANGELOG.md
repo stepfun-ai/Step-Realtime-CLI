@@ -6,6 +6,8 @@
 
 ### Changed
 
+- **goal 预算默认不设上限，工具描述写明口径**：此前模型常在 `create_goal` 后顺手调 `set_goal_budget` 给目标加轮次/token 上限——机制层预算本来就是可选项，这是模型的自主倾向。现在 `create_goal` 与 `set_goal_budget` 的描述明确：预算默认不设上限（默认心智是把任务做完，不是跑固定额度），仅当用户明确给出硬限制时才设置。
+
 - **任务清单面板按状态优先级裁剪，折叠行带状态分布**：面板仍最多显示 5 条，但超出时不再是硬切列表尾部——此前清单前部堆积的已完成条目会等权占位，把进行中和待办挤出可视区。现在进行中全部保留、最新一条已完成保留做进度上下文、剩余名额按原顺序填待办；折叠行从「… +N more」改为带隐藏条目的状态分布（如「… +3（1 已完成 · 2 待办）」），被裁掉的部分可感知。
 
 - **安装链路收敛为永久链接，`dist-npm` 预构建分支退役**：Release 资产新增不带版本号的 `step-code.tgz` 固定名副本，安装命令改为 `npm i -g https://github.com/<仓库>/releases/latest/download/step-code.tgz`——`releases/latest/download/` 始终解析到最新 Release，发新版不再需要改文档里的版本号；三端单文件可执行同样走该永久链接。原 `dist-npm` 预构建分支（每次发版由 CI 强推覆盖的分发快照）已删除，CI 里负责刷新它的 `dist-branch` job 与 `scripts/make-dist-branch.mjs` 同步移除；要锁定版本时改用 `releases/download/<tag>/step-code-<版本>.tgz` 带版本号资产。安装文档（中英）、快速上手（中英）、README（中英）与 `step-code-install` skill 已全部对齐到四种安装方式。
