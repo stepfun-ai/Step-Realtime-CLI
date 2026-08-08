@@ -267,7 +267,10 @@ export class SessionStore {
           // 忽略读取失败
         }
       }
-      return latestMtime > rebuiltAt;
+      // >= 而非 >：与 SubagentStore 同源的毫秒精度竞态——同毫秒内的直改
+      // mtime 等于 rebuiltAt 时 > 会漏判索引过期，等值按过期处理（详见
+      // subagent/store.ts 同款注释）。
+      return latestMtime >= rebuiltAt;
     } catch {
       return true;
     }

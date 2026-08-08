@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1006,6 +1006,11 @@ describe('SubagentStore 级联删除与留存清理', () => {
     const raw = JSON.parse(readFileSync(file, 'utf8')) as { updatedAt: string };
     raw.updatedAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
     writeFileSync(file, JSON.stringify(raw), 'utf8');
+    // mtime 显式拨到未来：索引过期判定是「文件 mtime >= 索引 rebuiltAt」，
+    // 直改若与写索引落在同一毫秒会让判定依赖时序巧合（Windows CI 实测翻车），
+    // 拨到未来让「索引必重建」成为确定性前提。
+    const future = new Date(Date.now() + 5000);
+    utimesSync(file, future, future);
 
     expect(subStore.cleanup(cwd, { ttlDays: 1 })).toBe(1);
     expect(subStore.loadSnapshot(cwd, old.id)).toBeNull();

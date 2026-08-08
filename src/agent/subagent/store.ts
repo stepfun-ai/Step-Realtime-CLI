@@ -110,7 +110,11 @@ export class SubagentStore {
           // 忽略读取失败的文件
         }
       }
-      return latestMtime > rebuiltAt;
+      // >= 而非 >：rebuiltAt 是毫秒精度墙钟，与「写索引后同毫秒内直改快照」的
+      // mtime 相等时，> 会把这次直改漏掉（索引误新鲜，cleanup/列表读到旧数据——
+      // 实测 Windows CI 上 cleanup ttl_days 用例因此随机失败）。等值按过期处理，
+      // 代价仅是偶发一次多余重建。
+      return latestMtime >= rebuiltAt;
     } catch {
       return true;
     }
