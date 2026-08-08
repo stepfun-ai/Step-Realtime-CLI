@@ -57,6 +57,7 @@ src/
 │   ├── permission/mode.ts    # 权限判定 manual/auto/yolo + plan 模式硬拦守卫
 │   ├── subagent/             # 子 agent：types / registry(内置+md) / runner(嵌套)
 │   ├── goal/                 # 自主目标：mode(状态机+双预算+持久化) + drive(纯函数续跑裁决)
+│   ├── team/                 # 团队模式：types(任务模型) + git(worktree/merge 封装) + store(规则：互斥/门控/五道门/信箱) + mode(session 状态)
 │   ├── cron/                 # 定时/循环任务：cronexpr + scheduler + store(按 cwd 持久化)
 │   ├── background/           # 后台任务：manager + notify + terminal-notify(BEL/OSC 9)
 │   └── compaction/compact.ts # token 估算 + 微压缩 + 全量摘要压缩
@@ -73,7 +74,7 @@ src/
 ├── mcp/                  # MCP：manager（stdio 连接/发现/调用）+ status
 ├── tools/                # 各工具（zod schema + execute）+ index.ts 注册表
 │                         #   read_file/write_file/edit_file/list_dir/glob/grep/bash
-│                         #   spawn_agent/dynamic_workflow/task_*/todo_list/*_goal/exit_plan_mode/ask_user
+│                         #   spawn_agent/dynamic_workflow/task_*/todo_list/*_goal/team_*/exit_plan_mode/ask_user
 │                         #   skill/tool_search/cron_*/web_search/web_fetch/web_image_search
 │                         #   access.ts(资源声明) / webCache.ts(搜索·抓取共享缓存)
 │                         #   shellResolve.ts(跨平台 shell 探测) / fsutil.ts / searchBase.ts

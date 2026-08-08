@@ -48,6 +48,8 @@ export interface SessionData extends SessionMeta {
   todos?: { title: string; status: 'pending' | 'in_progress' | 'done' }[];
   /** goal 状态快照（随会话持久化；恢复时 active 降级 paused，fork 不继承）。 */
   goal?: GoalState;
+  /** team 团队模式快照（档案目录与基准仓；恢复时档案目录被删则静默降级未激活）。 */
+  team?: import('../agent/team/mode.js').TeamSnapshot;
   /** 权限模式快照（会话级，随会话持久化；恢复时读回，旧快照缺失回退启动默认）。 */
   mode?: PermissionMode;
   /** 会话级思考深度覆盖（'off' / 档位名，如 'low' / 'medium' / 'high'），undefined = 回退 config 默认。 */

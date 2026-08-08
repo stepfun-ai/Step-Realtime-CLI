@@ -47,6 +47,8 @@ export interface ToolContext {
   skillActivations?: { count: number };
   /** goal 管理器（组合根注入，主 agent 自主目标）。缺失表示当前上下文不支持 goal。 */
   goal?: import('../agent/goal/mode.js').GoalMode;
+  /** team 团队模式状态（组合根注入）。缺失表示当前上下文不支持 team。 */
+  team?: import('../agent/team/mode.js').TeamMode;
   /** cron 调度器（组合根注入，定时任务）。缺失表示当前上下文不支持定时任务。 */
   cron?: import('../agent/cron/scheduler.js').CronScheduler;
   /** tool_search 外部工具注册表（组合根注入，懒加载）。缺失表示无可搜索外部工具。 */

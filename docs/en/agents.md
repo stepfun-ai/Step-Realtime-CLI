@@ -268,6 +268,42 @@ Goal state is saved along with the session (the `goal` field of the session file
 
 Sessions branched with `/fork` and created with `/new` do not inherit the goal.
 
+## Team mode (/team)
+
+Split a large piece of work into missions and run multiple sub-agents in parallel, each in its own git worktree, **changing the same (or multiple) repositories**, then review and merge each mission back. Compared with dynamic_workflow: workflows cover batch tasks whose flow is known up front; team mode covers parallel development where missions have dependencies, write conflicts, and need on-the-spot judgment.
+
+```
+You: /team init
+You: swap the data layer to the new API, update docs and tests too
+agent: (plans M1 data layer / M2 docs / M3 tests, each with a write scope and deps)
+       (M1 and M2 start in parallel; M3 depends on M1 and is held by the system
+        until M1 merges, then unlocks automatically)
+       (each worker works in its own worktree, coordinating via mailbox notes)
+agent: M1 is done; I reviewed the diff and merged it into main. M3 is now unlocked…
+```
+
+### Rules
+
+- **Mutually exclusive write scopes**: at planning time every build mission declares the paths it may touch; overlapping scopes between two build missions are rejected outright. Survey (read-only) missions take no slot.
+- **Hard write isolation**: a worker's working directory is its own worktree, and `write_file` / `edit_file` outside it are denied — each worker may only write inside its own worktree. Bash is not intercepted (workers need git commits inside the worktree); normal work stays inside. This is the honest boundary.
+- **System-enforced dependency gating**: a mission whose dependencies are not all merged cannot be started — the system refuses, it does not rely on the coordinator remembering.
+- **Five-gate merge**: the coordinator reviews the diff before merging — ① reviewed (pass the branch tip you reviewed) ② tip has not moved since ③ dependencies all merged ④ no files outside the mission scope ⑤ `--no-ff` merge. A real conflict triggers an automatic `merge --abort` that restores the repo and returns recovery guidance.
+- **Mailbox**: workers and the coordinator leave notes for each other (directed or `all` broadcast; md files under `.teams/comms/inbox/`, auditable).
+- **Interruption**: Esc only stops the coordinator's current turn; background workers keep running (stop one with `task_stop`). `/team exit` leaves the mode with all state preserved; `/team init` re-enters and picks up where you left off.
+
+### Commands
+
+| Command | What it does |
+|------|------|
+| `/team init [--dir <path>]` | Initialize the team (refuses unless the cwd is inside a git repo with at least one commit). `--dir` stores team state outside the repo and, together with per-mission repo ownership, enables cross-repo work |
+| `/team status` | Mission list and status (instant even while busy) |
+| `/team exit` | Leave team mode, state fully preserved |
+| `/team teardown [force]` | Wrap up: remove worktrees (dirty ones are kept unless `force`), state directory kept for audit |
+
+### Model-side tools
+
+`team_init` / `team_plan` / `team_spawn` / `team_merge` / `team_teardown` are coordinator-only (main agent); `team_send` / `team_inbox` / `team_status` are available to the coordinator and workers alike. The status bar shows a `team` badge while team mode is active.
+
 ## Cron jobs (cron)
 
 At the appointed time, a prompt is injected into the session and executed automatically:

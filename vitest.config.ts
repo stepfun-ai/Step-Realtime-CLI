@@ -19,5 +19,11 @@ export default defineConfig({
      */
     testTimeout: 20_000,
     hookTimeout: 20_000,
+    /**
+     * .teams/ 是 team 模式的工作间目录（git worktree 挂在仓内）。不 exclude 的话，
+     * 每个活跃工作间里的测试副本会被 vitest 重复扫描执行（同一用例跑 N+1 遍，
+     * 还会因 worktree 缺 node_modules 报出误导性失败）。
+     */
+    exclude: ['**/node_modules/**', '**/.teams/**'],
   },
 });

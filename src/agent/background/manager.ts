@@ -80,6 +80,10 @@ export interface BackgroundManagerOptions {
    * output.log，内存态降级为非权威。缺省 = 纯内存（进程退出任务全丢，resume 无法对账）。
    */
   tasksDir?: string;
+  /**
+   * resume 对账发现 lost 任务时同步调用（reconcile 是同步方法，回调须同步返回，不得 await）。
+   */
+  onLost?: (lost: LostTask) => void;
 }
 
 const MAX_OUTPUT_BYTES = 64 * 1024; // 内存只留 64KB 尾部
@@ -568,6 +572,7 @@ export class BackgroundManager {
           // best-effort
         }
         result.lost.push(lost);
+        this.options.onLost?.(lost);
         if (meta.suppressNotify !== true) result.redeliver.push(lost);
         continue;
       }

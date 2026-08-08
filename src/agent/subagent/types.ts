@@ -36,6 +36,16 @@ export interface SpawnSubagentRequest {
    */
   resume?: string;
   /**
+   * 覆盖子 agent 的工作目录（缺省继承主会话 cwd）。
+   * team worker 用它把默认落点收进自己的工作间。
+   */
+  cwd?: string;
+  /**
+   * 写根目录约束：给出后，该子 agent 的 write_file/edit_file 目标路径必须落在此目录内
+   * （runner 层包装 authorizeToolCall 硬拦；bash 不拦，靠 cwd 落点 + prompt 约束）。
+   */
+  writeAllowRoot?: string;
+  /**
    * 父会话 id（内部线程化字段，不由工具层填写）：嵌套派生时 runner 把自己的子会话 id 传给下一层，
    * 使子会话 meta.parentId 指向真实的直接父级而非一律记主会话。
    */

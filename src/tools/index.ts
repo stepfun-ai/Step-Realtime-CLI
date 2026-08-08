@@ -8,6 +8,16 @@ import { editFileTool } from './edit.js';
 import { exitPlanModeTool } from './exitPlanMode.js';
 import { globTool } from './glob.js';
 import { createGoalTool, getGoalTool, setGoalBudgetTool, updateGoalTool } from './goal.js';
+import {
+  teamInboxTool,
+  teamInitTool,
+  teamMergeTool,
+  teamPlanTool,
+  teamSendTool,
+  teamSpawnTool,
+  teamStatusTool,
+  teamTeardownTool,
+} from './team.js';
 import { grepTool } from './grep.js';
 import { imageSearchTool } from './imageSearch.js';
 import { listDirTool } from './listDir.js';
@@ -49,6 +59,14 @@ const ALL_TOOLS: ToolDef<any>[] = [
   updateGoalTool,
   setGoalBudgetTool,
   getGoalTool,
+  teamInitTool,
+  teamPlanTool,
+  teamSpawnTool,
+  teamSendTool,
+  teamInboxTool,
+  teamStatusTool,
+  teamMergeTool,
+  teamTeardownTool,
   cronCreateTool,
   cronListTool,
   cronDeleteTool,

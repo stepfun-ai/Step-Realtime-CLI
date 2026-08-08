@@ -101,6 +101,19 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       ].filter((c) => q === '' || c.value.startsWith(q));
     },
   },
+  {
+    name: 'team',
+    describe: 'cmd.team',
+    getArgumentCompletions: (partial) => {
+      const q = partial.toLowerCase();
+      return [
+        { value: 'init', description: t('cmd.team.sub.init') },
+        { value: 'status', description: t('cmd.team.sub.status') },
+        { value: 'exit', description: t('cmd.team.sub.exit') },
+        { value: 'teardown', description: t('cmd.team.sub.teardown') },
+      ].filter((c) => q === '' || c.value.startsWith(q));
+    },
+  },
   { name: 'loop', aliases: ['cron'], describe: 'cmd.loop' },
   { name: 'fork', describe: 'cmd.fork' },
   { name: 'new', describe: 'cmd.new' },
@@ -177,7 +190,7 @@ export interface ParsedSlash {
 }
 
 /** busy 时可即时执行的只读/纯 UI 命令：不碰对话历史、会话本体、模型与权限等在途 turn 依赖的状态。 */
-const INSTANT_WHEN_BUSY: ReadonlySet<string> = new Set(['help', 'goal', 'loop', 'lang', 'mcp', 'plugin', 'tasks', 'usage']);
+const INSTANT_WHEN_BUSY: ReadonlySet<string> = new Set(['help', 'goal', 'team', 'loop', 'lang', 'mcp', 'plugin', 'tasks', 'usage']);
 
 /**
  * 双态命令：无参是只读查询（即时），带参是状态变更（排队）。

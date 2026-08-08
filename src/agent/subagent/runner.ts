@@ -1,6 +1,8 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { sep } from 'node:path';
 import type { ChatProvider } from '../../provider/types.js';
 import { allToolNames } from '../../tools/index.js';
+import { resolvePath as resolveToolPath } from '../../tools/fsutil.js';
 import type { ToolContext } from '../../tools/types.js';
 import type { CompactionThresholds } from '../compaction/compact.js';
 import type { SubagentProgressEvent } from '../events.js';
@@ -18,6 +20,33 @@ import type { AgentDefinition, RunSubagentFn, SpawnSubagentRequest, SubagentResu
 
 const SUMMARY_MIN_LEN = 200;
 const SPAWN_TOOL = 'spawn_agent';
+
+/**
+ * per-worker 写根约束包装：write_file/edit_file 的目标必须落在 allowRoot 内，
+ * 其余调用透传给 base。提取为独立函数以便单测（team worker 的硬隔离靠它）。
+ */
+export function wrapWriteGuard(
+  base: NonNullable<LoopHooks['authorizeToolCall']>,
+  cwd: string,
+  writeAllowRoot: string,
+): NonNullable<LoopHooks['authorizeToolCall']> {
+  const allowRoot = resolveToolPath(cwd, writeAllowRoot);
+  return async (subReq) => {
+    if (subReq.name === 'write_file' || subReq.name === 'edit_file') {
+      const p = (subReq.input as { path?: unknown } | undefined)?.path;
+      if (typeof p === 'string') {
+        const abs = resolveToolPath(cwd, p);
+        if (abs !== allowRoot && !abs.startsWith(allowRoot + sep)) {
+          return {
+            decision: 'deny',
+            reason: `你的写操作被限制在本任务工作间内（${allowRoot}）。请使用该目录下的路径。`,
+          };
+        }
+      }
+    }
+    return base(subReq);
+  };
+}
 
 /** 会话级共享计数器：跨轮（跨 runner 实例）累计单会话的子 agent 派生数。 */
 export interface SubagentSessionCounter {
@@ -246,15 +275,19 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       }
       // 工具集 = 角色白名单（或全部）∩ 已注册。仅当子 agent 还可再下探（depth+1 未达 maxDepth）时保留 spawn_agent，
       // 否则剔除（达深度上限后子 agent 不能再派生，防 fork-bomb）。
+      // team 协调类工具一律从子 agent 剔除（它们只能由主 agent 这个协调者调用；send/inbox/status 保留给 worker 通信）。
+      const TEAM_COORDINATOR_TOOLS = new Set(['team_init', 'team_plan', 'team_spawn', 'team_merge', 'team_teardown']);
       const canSpawnDeeper = req.depth + 1 < deps.maxDepth;
       const registered = new Set(allToolNames());
       const allowed = (agentDef.tools ?? allToolNames()).filter(
-        (t) => (canSpawnDeeper || t !== SPAWN_TOOL) && registered.has(t),
+        (t) => (canSpawnDeeper || t !== SPAWN_TOOL) && registered.has(t) && !TEAM_COORDINATOR_TOOLS.has(t),
       );
 
       // system 拼上 skill 清单：子 agent 也能按需激活技能（与主 agent 一致的懒加载呈现）
+      // cwd 覆盖（team worker 落进自己工作间）：system 提示与 ctx 同步用覆盖值
+      const cwd = req.cwd ?? deps.cwd;
       const skillPart = deps.skills !== undefined ? skillListing(deps.skills) : '';
-      const system = `${agentDef.systemPrompt}\n\n当前工作目录：${deps.cwd}${skillPart}`;
+      const system = `${agentDef.systemPrompt}\n\n当前工作目录：${cwd}${skillPart}`;
       // 深度未达上限时给子 agent 注入 runSubagent（同一 runner，可再派生）；达上限则不注入（拿不到派生能力）。
       // 嵌套派生时把自己的子会话 id 线程化传递下去，下一层的 meta.parentId 才能指向真实的直接父级。
       const selfRunner = canSpawnDeeper
@@ -262,7 +295,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
             runImpl({ ...subReq, parentSessionId: sessionId })
         : undefined;
       const ctx: ToolContext = {
-        cwd: deps.cwd,
+        cwd,
         apiKey: deps.apiKey,
         baseUrl: deps.baseUrl,
         // 搜索配置继承主会话（子 agent 自己的 model 别名只换模型 provider，不改变搜索配置归属）
@@ -297,6 +330,11 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       // Stop hook 续接对子 agent 也不适用（一次性语义在主会话层）
       const subHooks: LoopHooks = { ...deps.hooks };
       delete subHooks.shouldContinueAfterStop;
+      // per-worker 写根约束（team worker）：write_file/edit_file 的目标必须落在 writeAllowRoot 内。
+      // 在子 agent 自己的 hooks 拷贝上包装，不影响父 agent 与其他并行 worker。
+      if (req.writeAllowRoot !== undefined && subHooks.authorizeToolCall !== undefined) {
+        subHooks.authorizeToolCall = wrapWriteGuard(subHooks.authorizeToolCall, cwd, req.writeAllowRoot);
+      }
       const run = async (): Promise<void> => {
         for await (const ev of runAgent({
           provider: binding.provider,

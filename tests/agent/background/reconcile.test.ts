@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BackgroundManager, type BackgroundTask } from '../../../src/agent/background/manager.js';
+import { BackgroundManager, type BackgroundTask, type LostTask } from '../../../src/agent/background/manager.js';
 import { notifyDedupKey } from '../../../src/agent/wirelog.js';
 
 let tasksDir: string;
@@ -88,6 +88,26 @@ describe('BackgroundManager.reconcile 对账', () => {
     expect(lost[0]!.status).toBe('lost');
     expect(redeliver.map((t) => t.id)).toEqual(['task-dead']);
     expect(metaOnDisk('task-dead').status).toBe('lost');
+  });
+
+  it('标记 lost 时同步触发 onLost 回调', () => {
+    writeMeta('task-lost-cb', { ...BASE_META, status: 'running', kind: 'process', pid: 2 ** 22 + 99999 });
+    const received: LostTask[] = [];
+    const m = new BackgroundManager(10, { tasksDir, onLost: (t) => received.push(t) });
+    m.reconcile(new Set());
+    expect(received).toHaveLength(1);
+    expect(received[0]!.id).toBe('task-lost-cb');
+    expect(received[0]!.status).toBe('lost');
+    expect(received[0]!.command).toBe('npm test');
+  });
+
+  it('未配置 onLost 时 reconcile 行为不变（回归）', () => {
+    writeMeta('task-no-cb', { ...BASE_META, status: 'running', kind: 'process', pid: 2 ** 22 + 11111 });
+    const m = new BackgroundManager(10, { tasksDir });
+    const { lost, redeliver } = m.reconcile(new Set());
+    expect(lost).toHaveLength(1);
+    expect(redeliver.map((t) => t.id)).toEqual(['task-no-cb']);
+    expect(metaOnDisk('task-no-cb').status).toBe('lost');
   });
 
   it('磁盘 running 的 async 任务（无 pid）→ 重启即死，标记 lost', () => {

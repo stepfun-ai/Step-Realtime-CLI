@@ -35,6 +35,7 @@ Ink 终端界面：顶部欢迎框，中间是会话流（你的输入、模型�
 | `/plan` | 开关计划模式（会话级状态，切换即落盘） |
 | `/provider [名称]` | 无参打开渠道管理面板（切换/新增/删除）；`list` 出静态文本列表；带参直切（自定义渠道 id 优先于预设名）；`/provider add` 唤起新增渠道向导（手动录入或 models.dev 目录导入） |
 | `/goal [pause\|resume\|cancel]` | 无参或 `status` 出目标状态面板，带子命令控制目标状态 |
+| `/team <子命令>` | 多 agent 团队模式：`init [--dir <路径>]` 初始化（`--dir` 放仓外支持跨仓）、`status` 看任务清单、`exit` 退出（状态保留可重进）、`teardown [force]` 收尾清工作间 |
 | `/loop`（别名 `/cron`） | 列出定时/循环任务及下次触发时间（只读；创建由模型调 `cron_create`） |
 | `/fork` | 从当前点分叉出新会话副本，原会话不动 |
 | `/new` | 开新会话（清空上下文、任务清单、计划模式、动态工具与思考档位覆盖） |
@@ -60,7 +61,7 @@ Ink 终端界面：顶部欢迎框，中间是会话流（你的输入、模型�
 
 模型正在跑时敲命令不会全部排队，按「是否改动当前回合依赖的状态」分两路：
 
-- **即时执行**：`/help`、`/goal`、`/loop`、`/sessions`、`/agents`、`/lang`、`/mcp`、`/plugin`、`/tasks`，以及 `/model`、`/provider`、`/permission`、`/skill`、`/think` 的**无参查询形态**。未知命令也即时提示，不用等回合结束。
+- **即时执行**：`/help`、`/goal`、`/team`、`/loop`、`/sessions`、`/agents`、`/lang`、`/mcp`、`/plugin`、`/tasks`，以及 `/model`、`/provider`、`/permission`、`/skill`、`/think` 的**无参查询形态**。未知命令也即时提示，不用等回合结束。
 - **排队到回合边界**：其余全部命令（改动历史、会话、模型、权限、plan 或触发退出的），与普通消息一样进发送队列。
 
 `/model` 无参在忙碌时不开选择器，只提示；`/think` 无参忙碌时退化为文本档位清单；`/fork`、`/export-debug-zip` 忙碌时直接拒绝并提示稍后再试。

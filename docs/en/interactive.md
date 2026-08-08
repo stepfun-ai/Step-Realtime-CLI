@@ -40,6 +40,7 @@ All 25 commands (the table below has 26 rows, because `/skill reload` is listed 
 | `/plan` | Toggle plan mode (session-level state, persisted on toggle) |
 | `/provider [name]` | With no argument, opens the provider channel panel (switch / add / delete); `list` prints a static text list; with an argument, switches directly (a custom channel id takes priority over a preset name); `/provider add` launches the add-channel wizard (manual entry or import from the models.dev catalog) |
 | `/goal [pause\|resume\|cancel]` | With no argument or `status`, shows the goal status panel; with a subcommand, controls the goal state |
+| `/team <subcommand>` | Multi-agent team mode: `init [--dir <path>]` initializes (`--dir` stores state outside the repo for cross-repo work), `status` shows missions, `exit` leaves with state preserved, `teardown [force]` wraps up and removes worktrees |
 | `/loop` (alias `/cron`) | List scheduled and recurring tasks with their next trigger time (read-only; creation is done by the model calling `cron_create`) |
 | `/fork` | Fork a new session copy from the current point, leaving the original session untouched |
 | `/new` | Start a new session (clears the context, todo list, plan mode, dynamic tools, and thinking level override) |
@@ -65,7 +66,7 @@ Plugins can register their own commands in the form `/<pluginId>:<commandName>`;
 
 Commands typed while the model is running are not all queued. They split into two paths based on whether they change state the current turn depends on:
 
-- **Executed immediately**: `/help`, `/goal`, `/loop`, `/sessions`, `/agents`, `/lang`, `/mcp`, `/plugin`, `/tasks`, plus the **argument-free query form** of `/model`, `/provider`, `/permission`, `/skill`, and `/think`. Unknown commands also report immediately, with no need to wait for the turn to end.
+- **Executed immediately**: `/help`, `/goal`, `/team`, `/loop`, `/sessions`, `/agents`, `/lang`, `/mcp`, `/plugin`, `/tasks`, plus the **argument-free query form** of `/model`, `/provider`, `/permission`, `/skill`, and `/think`. Unknown commands also report immediately, with no need to wait for the turn to end.
 - **Queued to the turn boundary**: every other command (those that change history, the session, the model, permissions, or plan mode, or that trigger an exit) joins the send queue just like an ordinary message.
 
 While busy, `/model` with no argument does not open the picker, it only prints a note; `/think` with no argument degrades to a text list of levels; `/fork` and `/export-debug-zip` are refused outright while busy, with a note to try again later.

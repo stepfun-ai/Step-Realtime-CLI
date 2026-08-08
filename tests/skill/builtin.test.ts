@@ -58,6 +58,6 @@ describe('builtin skill 注册', () => {
   });
 
   it('BUILTIN_SKILLS 清单即当前全部内置 skill', () => {
-    expect(BUILTIN_SKILLS.map((s) => s.name)).toEqual(['update-config']);
+    expect(BUILTIN_SKILLS.map((s) => s.name)).toEqual(['update-config', 'team']);
   });
 });

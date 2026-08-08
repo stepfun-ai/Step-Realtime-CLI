@@ -1,4 +1,5 @@
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
+import { sep } from 'node:path';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { runAgent, type AgentEvent } from '../agent/loop.js';
 import type { AgentsMdTruncation } from '../agent/agentsMd.js';
@@ -14,6 +15,7 @@ import { buildSettleMessage, decideNotifyRoute, type NotifiableTask } from '../a
 import { notifyDedupKeyFromOrigin, pendingDeliveredEvents, type WireEvent } from '../agent/wirelog.js';
 import { emitTerminalNotification } from '../agent/background/terminal-notify.js';
 import { GoalMode, type GoalState } from '../agent/goal/mode.js';
+import { initTeam, TeamMode } from '../agent/team/mode.js';
 import { assembleGoalInject, decideGoalTurn } from '../agent/goal/drive.js';
 import { CronScheduler } from '../agent/cron/scheduler.js';
 import { CronJobStore } from '../agent/cron/store.js';
@@ -526,6 +528,13 @@ export function App({
     goalRestored.current = true;
     goal.current.restore(session.goal);
   }
+  // 会话级 team 团队模式：档案目录快照随会话落盘，恢复时档案目录被删则静默降级未激活
+  const team = useRef(new TeamMode());
+  const teamRestored = useRef(false);
+  if (!teamRestored.current) {
+    teamRestored.current = true;
+    void team.current.restore(session.team);
+  }
   // cron 触发时注入的回调（把 prompt 当作一条用户消息跑一轮）。App 挂载时注入。
   const cronFireRef = useRef<((prompt: string) => void) | null>(null);
   // /skill 命令激活：把技能正文静默注入会话跑一轮（经 submit，避免 handleSlash↔submit 循环依赖）。
@@ -570,6 +579,8 @@ export function App({
     sessionRef.current.todos = [...todos.current];
     // goal 快照随会话落盘（无 goal 时清掉旧字段）
     sessionRef.current.goal = goal.current.snapshot() ?? undefined;
+    // team 快照随会话落盘（模式未激活时清掉旧字段）
+    sessionRef.current.team = team.current.snapshot() ?? undefined;
     // 权限模式与模型随会话落盘（会话级状态，恢复时读回）：从 ref 取当前值，
     // 避免闭包读到陈旧 state；切换点只需保证调用 persist 即生效。
     sessionRef.current.mode = modeRef.current;
@@ -731,6 +742,12 @@ export function App({
   // goal 视图快照（状态栏徽标数据源）与墙钟：onChange 同步快照并打生命周期 marker；active 时每 15s 跳一次用时
   const [goalView, setGoalView] = useState<GoalState | null>(goal.current.get());
   const [goalNow, setGoalNow] = useState(() => Date.now());
+  // team 模式徽标状态：activate/deactivate 时经 onChange 驱动重渲
+  const [teamActive, setTeamActive] = useState(team.current.active);
+  useEffect(() => {
+    team.current.setOnChange(setTeamActive);
+    return () => team.current.setOnChange(null);
+  }, []);
   useEffect(() => {
     goal.current.setOnChange((ev) => {
       setGoalNow(Date.now());
@@ -793,8 +810,26 @@ export function App({
   useEffect(() => {
     if (startupReconciledRef.current) return;
     startupReconciledRef.current = true;
-    const redeliver = background.current.reconcile(resumeDelivered ?? new Set()).redeliver;
-    if (redeliver.length === 0) return;
+    const { redeliver, lost } = background.current.reconcile(resumeDelivered ?? new Set());
+    // lost 的 team worker 后台任务：同步标 blocked（fire-and-forget，不阻塞恢复流程）
+    for (const task of lost) {
+      const m = /^team·([A-Z]\d+)\s/.exec(task.command);
+      if (m === null) continue;
+      const missionId = m[1]!;
+      void (async (): Promise<void> => {
+        try {
+          if (!team.current.active) return;
+          const store = team.current.getStore();
+          const state = await store.load();
+          const mission = state.missions.find((x) => x.id === missionId);
+          if (mission === undefined || mission.status !== 'active') return;
+          await store.setStatus(missionId, 'blocked');
+        } catch {
+          // 静默跳过：team 未激活 / 档案不可读 / 状态写入失败
+        }
+      })();
+    }
+    if (redeliver.length === 0 && lost.length === 0) return;
     // 补投通知本体走 silent 注入（正文是给模型看的 XML 信封），用户侧可见性由这条 note 承担。
     // 实时终态走 settleHandler 已 push 过 note，此处是上次会话遗留、settleHandler 未曾触发的那批。
     for (const task of redeliver) {
@@ -1255,6 +1290,18 @@ export function App({
             status: 'running',
             startedAt: Date.now(),
           };
+          // spawn_agent：把角色名和任务简述写进条目，卡片可直接显示
+          if (ev.name === 'spawn_agent') {
+            const inp = ev.input as Record<string, unknown> | null;
+            if (inp !== null) {
+              const st = typeof inp.subagent_type === 'string' ? inp.subagent_type : undefined;
+              const desc = typeof inp.description === 'string' ? inp.description : undefined;
+              if (st !== undefined || desc !== undefined) {
+                item.subagentType = st;
+                item.description = desc;
+              }
+            }
+          }
           // dynamic_workflow 工具：装配动态阶段面板（空序列，phase 事件逐个追加）。
           if (ev.name === 'dynamic_workflow') {
             const wf = parseDynamicWorkflowInput(ev.input);
@@ -1369,6 +1416,23 @@ export function App({
         if (planModeRef.current && req.name !== 'exit_plan_mode') {
           const deny = planModeDenyReason(req.name);
           if (deny !== null) return { decision: 'deny', reason: deny };
+        }
+        // team 模式守卫：写文件只能落在活跃任务的工作间内（worker 与协调者同规则；
+        // 协调者在 team 模式下不写代码，只协调）。bash 不拦（worker 需在工作间内 git 提交）。
+        if (team.current.active && (req.name === 'write_file' || req.name === 'edit_file')) {
+          const p = (req.input as { path?: unknown } | undefined)?.path;
+          if (typeof p === 'string') {
+            const abs = resolveToolPath(ctx.cwd, p);
+            const roots = (await team.current.allowRoots()) ?? [];
+            if (!roots.some((r) => abs === r || abs.startsWith(r + sep))) {
+              return {
+                decision: 'deny',
+                reason:
+                  'team 模式活跃：写操作只能发生在任务工作间内（.teams/worktrees/wt-N/）。' +
+                  'worker 请用工作间下的绝对路径；协调者不写代码，只协调。',
+              };
+            }
+          }
         }
         // exit_plan_mode：展示计划请用户确认，批准后退出 plan
         if (req.name === 'exit_plan_mode') {
@@ -1630,7 +1694,25 @@ export function App({
         onSettleEvent: (task) => appendWireEvent({ type: 'background.task_settle', ts: new Date().toISOString(), task }),
         onSettle: (task) => settleHandlerRef.current?.(task),
       });
-      const redeliver = background.current.reconcile(delivered).redeliver;
+      const { redeliver, lost } = background.current.reconcile(delivered);
+      // lost 的 team worker 后台任务：同步标 blocked（fire-and-forget，不阻塞恢复流程）
+      for (const task of lost) {
+        const m = /^team·([A-Z]\d+)\s/.exec(task.command);
+        if (m === null) continue;
+        const missionId = m[1]!;
+        void (async (): Promise<void> => {
+          try {
+            if (!team.current.active) return;
+            const store = team.current.getStore();
+            const state = await store.load();
+            const mission = state.missions.find((x) => x.id === missionId);
+            if (mission === undefined || mission.status !== 'active') return;
+            await store.setStatus(missionId, 'blocked');
+          } catch {
+            // 静默跳过
+          }
+        })();
+      }
       // 同启动对账：补投本体 silent 注入，可见性靠 note（这批任务的 settleHandler 属于上个会话，本会话未触发）
       for (const task of redeliver) {
         pushItem({
@@ -1646,6 +1728,8 @@ export function App({
       if (redeliver.length > 0) setQueueLen(queue.current.length);
       // 恢复该会话的 goal 快照（active 降级 paused，防 resume 后自动续跑）
       goal.current.restore(data.goal);
+      // 恢复 team 团队模式快照（档案目录还在才恢复）
+      void team.current.restore(data.team);
       const resumedGoal = goal.current.get();
       setGoalView(resumedGoal !== null ? { ...resumedGoal } : null);
       // 若恢复后 goal 处于 paused，给用户显式提示，避免静默降级。
@@ -2030,6 +2114,94 @@ export function App({
           pushItem({ kind: 'note', text: t('app.goal.usage') });
           break;
         }
+        case 'team': {
+          const parts = args.trim().split(/\s+/).filter(Boolean);
+          const sub = (parts[0] ?? '').toLowerCase();
+          // handleSlash 是同步签名，team 的目录/git 操作是异步——包 async IIFE，完成后 pushItem
+          void (async () => {
+            if (sub === 'init') {
+              const di = parts.indexOf('--dir');
+              const dir = di >= 0 ? parts[di + 1] : undefined;
+              const ri = parts.indexOf('--repo');
+              const repo = ri >= 0 ? parts[ri + 1] : undefined;
+              const bi = parts.indexOf('--base');
+              const baseArg = bi >= 0 ? parts[bi + 1] : undefined;
+              try {
+                const { store, created, base } = await initTeam(ctx.cwd, dir, repo, baseArg);
+                team.current.activate(store);
+                persist();
+                pushItem({
+                  kind: 'note',
+                  text: t(created ? 'app.team.initDone' : 'app.team.initExisted', { base, dir: store.dir, repo: store.repoRoot }),
+                });
+              } catch (e) {
+                pushItem({ kind: 'error', text: (e as Error).message });
+              }
+              return;
+            }
+            if (sub === 'status') {
+              if (!team.current.active) {
+                pushItem({ kind: 'note', text: t('app.team.none') });
+                return;
+              }
+              try {
+                const store = team.current.getStore();
+                const state = await store.load();
+                const lines = state.missions.map(
+                  (m) =>
+                    `${m.id} [${m.status}] ${m.title}（${m.kind}，${m.scope.join('、')}）` +
+                    (m.deps.length > 0 ? ` ← ${m.deps.join('、')}` : ''),
+                );
+                pushItem({
+                  kind: 'note',
+                  text: t('app.team.statusBody', {
+                    base: state.base,
+                    dir: store.dir,
+                    body: lines.length > 0 ? lines.join('\n') : t('app.team.noMissions'),
+                  }),
+                });
+              } catch (e) {
+                pushItem({ kind: 'error', text: (e as Error).message });
+              }
+              return;
+            }
+            if (sub === 'exit') {
+              // 先落关闭标记（防 resume 复活），标记失败不阻塞——exit 是硬退出通道
+              try {
+                await team.current.getStore().markClosed();
+              } catch {
+                // 未激活或档案损坏：照常退出
+              }
+              team.current.deactivate();
+              persist();
+              pushItem({ kind: 'note', text: t('app.team.exitDone') });
+              return;
+            }
+            if (sub === 'teardown') {
+              if (!team.current.active) {
+                pushItem({ kind: 'note', text: t('app.team.none') });
+                return;
+              }
+              try {
+                const { removed, kept } = await team.current.getStore().teardown(parts.includes('force'));
+                team.current.deactivate();
+                persist();
+                pushItem({
+                  kind: 'note',
+                  text: t('app.team.teardownDone', {
+                    removed: String(removed.length),
+                    kept: kept.length > 0 ? `\n保留：${kept.join('、')}` : '',
+                  }),
+                });
+              } catch (e) {
+                pushItem({ kind: 'error', text: (e as Error).message });
+              }
+              return;
+            }
+            pushItem({ kind: 'note', text: t('app.team.usage') });
+          })();
+          break;
+        }
         case 'loop': {
           const jobs = cron.current?.list() ?? [];
           if (jobs.length === 0) {
@@ -2075,6 +2247,8 @@ export function App({
           // fork 不继承 goal：清掉内存态与徽标（源会话的 goal 字段已在盘上，不受影响）
           goal.current.restore(null);
           setGoalView(null);
+          // fork 不继承 team 团队模式（团队状态属于源会话的协调上下文）
+          team.current.deactivate();
           // 跨会话切换：undo 快照栈清空（fork 后是新会话 id，旧快照不随谱系继承）
           clearUndoSnapshots(undoStackRef.current);
           pushItem({
@@ -2108,6 +2282,8 @@ export function App({
           // 新会话不继承上一会话的 goal（goal 随会话持久化，新会话从头开始）
           goal.current.restore(null);
           setGoalView(null);
+          // 新会话不继承 team 团队模式
+          team.current.deactivate();
           // 清空动态工具，避免上个会话 tool_search 加载的工具泄漏到新会话
           clearDynamicTools();
           setPlanModeBoth(false);
@@ -2483,7 +2659,7 @@ export function App({
   );
 
   const submit = useCallback(
-    async (raw: string, opts?: { recordHistory?: boolean; silent?: boolean; prepared?: StoredMessage }) => {
+    async (raw: string, opts?: { recordHistory?: boolean; silent?: boolean; prepared?: StoredMessage; fromQueue?: boolean }) => {
       // 粘贴占位符先还原为原文，再进图片提取：queue/steer/hook/history/displayText 全部拿到还原后的全文
       const text = pasteStore.current.expandPasteMarkers(raw).trim();
       const extracted = extractImageContent(text, imageStore.current);
@@ -2540,7 +2716,7 @@ export function App({
         return;
       }
       if (pendingRef.current !== null || pendingPlanRef.current !== null || pendingQuestionRef.current !== null) return;
-      setInput('');
+      if (!opts?.fromQueue) setInput('');
       // 斜杠命令仅在无图片、纯命令时走命令分支；静默注入（cron/后台通知）不解析斜杠，防定时 prompt 被当成命令截获
       if (!opts?.silent && imgCount === 0 && handleSlash(text)) return;
 
@@ -2680,6 +2856,7 @@ export function App({
             todos: { items: todos.current },
             background: background.current,
             goal: goal.current,
+            team: team.current,
             cron: cron.current ?? undefined,
             askUser: askUserQuestion,
             subagentMaxConcurrent: configRef.current.subagent.maxConcurrent,
@@ -2788,10 +2965,10 @@ export function App({
       void submit(
         plan.text,
         prepared !== undefined
-          ? { recordHistory: false, silent: true, prepared }
+          ? { recordHistory: false, silent: true, fromQueue: true, prepared }
           : wasSilent
-            ? { recordHistory: false, silent: true }
-            : undefined,
+            ? { recordHistory: false, silent: true, fromQueue: true }
+            : { fromQueue: true },
       );
       return;
     }
@@ -2877,7 +3054,7 @@ export function App({
         const text = typeof msg.message.content === 'string' ? msg.message.content : '';
         // silent：通知正文是给模型看的 XML 信封，不能作为用户气泡显示——那等于系统冒充用户
         // 打了一段话进输入区。用户侧的可见性由上方 pushItem 的 note 条目承担（人读格式）。
-        void submit(text, { recordHistory: false, silent: true, prepared: msg });
+        void submit(text, { recordHistory: false, silent: true, fromQueue: true, prepared: msg });
       }
     }
     // busy：什么都不做——通知已在管理器待投递队列，等 runAgent 回合边界 flush
@@ -3341,6 +3518,7 @@ export function App({
       <StatusBar
         mode={mode}
         planMode={planMode}
+        teamActive={teamActive}
         model={modelLabel}
         thinking={
           thinkingAvailable(providerNameRef.current, configRef.current.thinking)
@@ -3352,6 +3530,14 @@ export function App({
         usedTokens={usedTokens}
         maxContextSize={maxContextSize}
         backgroundCount={background.current.activeBackgroundCount()}
+        // 状态栏徽章后追加最近一个 running 后台任务的命令名（截断在 StatusBar 组件内做）
+        latestBgTaskName={(() => {
+          const running = background.current
+            .list()
+            .filter((t) => t.status === 'running')
+            .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+          return running[0]?.command;
+        })()}
         goal={
           goalView !== null
             ? {
