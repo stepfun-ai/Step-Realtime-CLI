@@ -23,6 +23,7 @@ import { buildSettleMessage } from './background/notify.js';
 import type { WireEvent } from './wirelog.js';
 import { runTurn } from './runTurn.js';
 import { emptyContinuationState, advanceContinuation, checkContinuationSafety } from './continuation.js';
+import { createRoundLoopDetector, fingerprintRound } from './roundLoop.js';
 
 export type { AgentEvent } from './events.js';
 
@@ -319,6 +320,14 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
    */
   let compactionSaturated = false;
   let contState: ReturnType<typeof emptyContinuationState> | undefined;
+  /**
+   * 跨回合零进展检测器（循环外创建，每次 runAgent 自然归零）。
+   *
+   * 挂在 tool_use 分支的 continue 前：当模型连续多轮产出完全相同的 assistant 消息
+   * 且工具结果也无变化时，判定零进展循环并注入警告或硬停。
+   * 检测器内部有状态（streak），由本函数持有生命周期。
+   */
+  const roundLoopDetector = createRoundLoopDetector();
 
   for (let iter = 0; iter < maxIterations; iter++) {
     // step 边界注入：上一回合期间终态的后台任务通知在此 flush 进 messages，
@@ -631,6 +640,25 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
             measuredLength: messages.length,
             billedDelta: billedTokens(outcome.usage),
           };
+        }
+        // 跨回合零进展检测：在本轮 assistant + tool_result 完整落地后、下一回合继续前检查。
+        // 只挂 tool_use 分支——end_turn 直接收尾、max_tokens 走 continuation 守卫，
+        // 这两个分支天然不会陷入「调用与结果双双不变」的循环。
+        const fingerprint = fingerprintRound(messages);
+        const loopVerdict = roundLoopDetector.observe(fingerprint);
+        if (loopVerdict.action === 'warn') {
+          // 第 3 轮相同：注入警告给模型一次机会（不打断循环）
+          messages.push(
+            stored({ role: 'user', content: t('loop.roundLoop.inject') }, { kind: 'injection' }),
+          );
+          yield { type: 'notice', message: t('loop.roundLoop.warn', { n: loopVerdict.streak }) };
+          continue; // 模型看到警告后重试，进入下一回合
+        }
+        if (loopVerdict.action === 'stop') {
+          // 第 4 轮仍相同：硬停（模型行为问题，不是系统故障，不用 error 事件）
+          yield { type: 'notice', message: t('loop.roundLoop.stop') };
+          yield { type: 'turn_done' };
+          return;
         }
         // 这里**不再**做压缩：本回合结束等价于下一回合开始，而循环顶部的预检就在那个
         // 位置、用同一口径（`lastUsage.total + 尾部估算`，lastUsage 正是用本回合的

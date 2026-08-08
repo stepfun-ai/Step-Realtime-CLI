@@ -264,9 +264,13 @@ describe('runner 消费 usage 事件（计费口径累计上抛）', () => {
     // 同构序列让任何触发时机都不越界：摘要调用若落在某一项上，该项不是文本、
     // 摘要为空会被质量闸门挡下（压缩失败，不产出估算 usage）；压缩若成功则产出
     // 一条无 billedDelta 的估算 usage。两种情况本用例的判据都成立。
-    const many = Array.from({ length: 14 }, () => ({
+    //
+    // 注意：每轮的工具 input 必须逐轮不同（{ i }）。跨回合零进展检测（roundLoop.ts）
+    // 会把「调用与结果双双完全相同的连续 3 轮」判为死循环并硬停——完全同构的
+    // 序列会在压缩触发前就被拦下，测不到本用例要测的压缩路径。
+    const many = Array.from({ length: 14 }, (_, i) => ({
       textChunks: [] as string[],
-      finalContent: [toolUseBlock(`c${Math.random().toString(36).slice(2, 8)}`, 'nonexistent_tool', {})],
+      finalContent: [toolUseBlock(`c${Math.random().toString(36).slice(2, 8)}`, 'nonexistent_tool', { i })],
       usage,
     }));
     const { provider } = makeFakeProvider([
