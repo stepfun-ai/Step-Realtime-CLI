@@ -624,7 +624,11 @@ if (resumeHit && session.messages.length === 0) {
 const resumeDelivered: ReadonlySet<string> = resolved.delivered;
 // 模型来源优先级：命令行 --model 显式覆盖 > 会话存储的 model（恢复时保留）> config 默认。
 // opts.model 存在表示用户命令行显式指定，覆盖会话；否则新建会话用 config.model，恢复会话保留其存储值。
-// session.model 存的是展开后的真实模型 id（不是别名），保证后续 provider.stream 直接用。
+// 会话 model 落盘存「别名 ?? 裸 id」而非真实 id：别名承载 provider/窗口/显示名整组绑定，
+// 是当初选择的完整信息；resume 直接按它重建（applyModelAlias 自判别名/裸 id），不必反查。
+// 反查在同 id 多别名（step37/step37-plan 同为 step-3.7-flash）时会任取其一、激活错 provider。
+// 恢复时若命中别名，resolveModelEntry 在上文展开为真实 id 并同步回 session.model（第 652 行），
+// 保证后续 provider.stream 拿到的是真实模型 id。
 if (opts.model !== undefined) {
   // opts.model 可能是别名（如 'router'）或裸模型 id（如 'step-router-v1'）；
   // loadConfig 已经展开过一次（config.model 是真实 id），这里直接用展开后的值。
@@ -649,6 +653,7 @@ if (session.model !== '' && session.model !== config.model) {
     try {
       provider = createProvider(resolved);
       sessionMaxContextSize = resolved.maxContextSize;
+      session.model = resolved.model;
     } catch {
       // 会话 model 无法解析成有效 provider（如配置已删除该别名、api_key 缺失）时，
       // 回退到 config.model，不让旧会话因配置变动而无法启动；同时改写 session.model
