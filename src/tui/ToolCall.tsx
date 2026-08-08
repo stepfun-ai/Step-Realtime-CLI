@@ -137,6 +137,12 @@ export function ToolCall({
       <Text>
         <Text color={mark.color}>{mark.symbol} </Text>
         <Text color="cyan">{item.name}</Text>
+        {/* spawn_agent：角色名 + 任务简述用灰色显示，形如 "spawn_agent [general-fast · 修复登录页样式]" */}
+        {item.subagentType !== undefined || item.description !== undefined ? (
+          <Text color="gray">
+            {` [${[item.subagentType, item.description].filter(Boolean).join(' · ')}]`}
+          </Text>
+        ) : null}
         {/* skill 名用黄色而非常规参数灰：技能激活会改变后续行为，比读写路径更需要一眼认出激活了哪个 */}
         {arg !== '' ? <Text color={item.name === 'skill' ? 'yellow' : 'gray'}>{`  ${arg}`}</Text> : null}
         {elapsedSec !== null ? <Text color="gray">{t('toolCall.elapsed', { s: elapsedSec })}</Text> : null}

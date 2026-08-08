@@ -129,4 +129,18 @@ describe('planTurnEnd 回合收尾决策', () => {
     planTurnEnd({ continuation: 'c', goalActive: true, queue, hasPendingPrompt: false });
     expect(queue).toEqual(['x', 'y']);
   });
+
+  // ─────────────────────────────────────────────────────────────────
+  // submit() 的 fromQueue 语义契约（ behavioural contract ）：
+  //
+  // planTurnEnd 返回 submit-queue 后，调用方通过 submit(text, { fromQueue: true })
+  // 告知 submit：这是队列自动发送，不得 setInput('')——用户可能正在输入框里编辑草稿。
+  //
+  // 对应修复：submit 非 busy 分支的 setInput('')  guarded by !opts?.fromQueue。
+  // settleHandler 空闲路径同样传 fromQueue: true（系统合成注入，不清草稿）。
+  //
+  // 用户主动提交（Enter / busy 时入队）不走 fromQueue，setInput('') 正常执行。
+  // cronFire / skillInject 走 silent 路径在 busy 分支 return，不进入非 busy 分支，
+  // 因此不受 fromQueue 影响，行为不变。
+  // ─────────────────────────────────────────────────────────────────
 });

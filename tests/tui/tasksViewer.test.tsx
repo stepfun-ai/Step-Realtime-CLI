@@ -300,6 +300,62 @@ describe('TasksViewer 完整输出模式（Enter/o）', () => {
   });
 });
 
+describe('TasksViewer 排序（运行中优先 / 同级启动时间倒序）', () => {
+  const now = new Date().toISOString();
+  const earlier = new Date(Date.now() - 60_000).toISOString(); // 60 秒前
+  const oldest = new Date(Date.now() - 120_000).toISOString(); // 120 秒前
+
+  const mixedTasks = (): BackgroundTask[] => [
+    makeTask({ id: 'completed-old', command: 'z-completed', status: 'completed', startedAt: oldest, endedAt: now }),
+    makeTask({ id: 'running-new', command: 'a-running', status: 'running', startedAt: now }),
+    makeTask({ id: 'failed-mid', command: 'y-failed', status: 'failed', startedAt: earlier, endedAt: now }),
+    makeTask({ id: 'running-old', command: 'b-running-old', status: 'running', startedAt: earlier }),
+    makeTask({ id: 'completed-new', command: 'x-completed', status: 'completed', startedAt: now, endedAt: now }),
+    makeTask({ id: 'killed-mid', command: 'w-killed', status: 'killed', startedAt: earlier, endedAt: now }),
+  ];
+
+  it('ALL 过滤：running 排最前，failed/killed 次之，completed 最后；同级启动时间倒序', async () => {
+    const { lastFrame } = renderViewer(makeSource(mixedTasks()));
+    await delay();
+    const plain = stripAnsi(lastFrame() ?? '');
+    // 顺序断言：running (a-running-new → b-running-old) → failed/killed (y-failed → w-killed) → completed (z-completed-old → x-completed-new)
+    const idxA = plain.indexOf('a-running');
+    const idxB = plain.indexOf('b-running-old');
+    const idxY = plain.indexOf('y-failed');
+    const idxW = plain.indexOf('w-killed');
+    const idxZ = plain.indexOf('z-completed');
+    const idxX = plain.indexOf('x-completed');
+    expect(idxA).toBeGreaterThanOrEqual(0);
+    expect(idxB).toBeGreaterThanOrEqual(0);
+    expect(idxY).toBeGreaterThanOrEqual(0);
+    // running 在前
+    expect(idxA).toBeLessThan(idxY);
+    expect(idxB).toBeLessThan(idxY);
+    // failed/killed 在 completed 前
+    expect(idxY).toBeLessThan(idxZ);
+    expect(idxW).toBeLessThan(idxZ);
+    // 同级 running：新的在前
+    expect(idxA).toBeLessThan(idxB);
+    // 同级 completed：新的在前
+    expect(idxX).toBeLessThan(idxZ);
+  });
+
+  it('运行中过滤仍保持启动时间倒序', async () => {
+    const source = makeSource(mixedTasks());
+    const { stdin: s, lastFrame: lf } = renderViewer(source);
+    await delay();
+    s.write('\t');
+    await delay();
+    const plain = stripAnsi(lf() ?? '');
+    expect(plain).toContain('filter=运行中');
+    const idxA = plain.indexOf('a-running');
+    const idxB = plain.indexOf('b-running-old');
+    expect(idxA).toBeGreaterThanOrEqual(0);
+    expect(idxB).toBeGreaterThanOrEqual(0);
+    expect(idxA).toBeLessThan(idxB); // 新的 running 在前
+  });
+});
+
 describe('TasksViewer 停止确认', () => {
   it('终态任务按 s：提示已是终态，不调 stop', async () => {
     const source = makeSource([

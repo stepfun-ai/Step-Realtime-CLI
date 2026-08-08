@@ -48,6 +48,7 @@ function goalStatusColor(status: GoalStatus): string {
 export function StatusBar({
   mode,
   planMode = false,
+  teamActive = false,
   model,
   thinking,
   busy,
@@ -56,11 +57,14 @@ export function StatusBar({
   maxContextSize,
   hints,
   backgroundCount = 0,
+  latestBgTaskName,
   goal,
 }: {
   mode: PermissionMode;
   /** plan 模式开启时优先显示 plan 标签。 */
   planMode?: boolean;
+  /** team 团队模式活跃时显示 team 徽章（任务详情走 /team status）。 */
+  teamActive?: boolean;
   model: string;
   /** 思考深度档位标签（如 'high' / 'off'；undefined 不显示）。紧凑缩写不进 i18n（同 bg:N）。 */
   thinking?: string;
@@ -72,6 +76,8 @@ export function StatusBar({
   hints: string;
   /** 运行中的后台任务数（>0 时在运行状态后显示 bg:N 徽章）。 */
   backgroundCount?: number;
+  /** 最近一个 running 状态后台任务的命令名（组件内截断到 20 字符，超出加 …），在 bg:N 后灰色显示。 */
+  latestBgTaskName?: string;
   /** 进行中的 goal 摘要（存在时在 bg 徽章后显示 goal 徽章；elapsedMs 由调用方按当前时刻算好）。 */
   goal?: {
     status: GoalStatus;
@@ -119,6 +125,9 @@ export function StatusBar({
             </Box>
             <Box flexShrink={0}>
               <Text color="cyan">{`bg:${backgroundCount}`}</Text>
+              {latestBgTaskName !== undefined ? (
+                <Text color="gray">{` ${latestBgTaskName.length > 20 ? `${latestBgTaskName.slice(0, 20)}…` : latestBgTaskName}`}</Text>
+              ) : null}
             </Box>
           </>
         ) : null}
@@ -134,6 +143,17 @@ export function StatusBar({
                 <Text color={goalStatusColor(goal.status)}>●</Text>
                 <Text color="gray">{` ${formatElapsed(goal.elapsedMs)} · ${goal.turnBudget !== undefined ? `${goal.turnsUsed}/${goal.turnBudget}` : goal.turnsUsed}`}</Text>
               </Text>
+            </Box>
+          </>
+        ) : null}
+        {/* team 徽章：团队模式活跃时常驻；同 bg:N 为紧凑缩写不进 i18n */}
+        {teamActive === true ? (
+          <>
+            <Box flexShrink={0}>
+              <Text color="gray">{'  '}</Text>
+            </Box>
+            <Box flexShrink={0}>
+              <Text color="magenta">team</Text>
             </Box>
           </>
         ) : null}

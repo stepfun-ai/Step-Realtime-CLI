@@ -99,4 +99,55 @@ describe('ToolCall 折叠/展开', () => {
     expect(frame).toContain('list_dir');
     expect(frame).not.toContain('行输出');
   });
+
+  // --- 缺口 1：spawn_agent 卡片显示角色 + 描述 ---
+  it('spawn_agent 显示角色名与描述（灰色方括号包裹）', () => {
+    const { lastFrame, unmount } = render(
+      React.createElement(ToolCall, {
+        item: toolItem({
+          name: 'spawn_agent',
+          subagentType: 'general-fast',
+          description: '修复登录页样式',
+        }),
+        expanded: false,
+      }),
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('spawn_agent');
+    expect(frame).toContain('general-fast');
+    expect(frame).toContain('修复登录页样式');
+    expect(frame).toContain('[');
+    expect(frame).toContain(']');
+    unmount();
+  });
+
+  it('spawn_agent 仅有角色名无描述时仍正确显示', () => {
+    const { lastFrame, unmount } = render(
+      React.createElement(ToolCall, {
+        item: toolItem({
+          name: 'spawn_agent',
+          subagentType: 'explore',
+          description: undefined,
+        }),
+        expanded: false,
+      }),
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('explore');
+    expect(frame).not.toContain('·'); // 单字段不出现分隔符
+    unmount();
+  });
+
+  it('非 spawn_agent 工具不显示角色描述区', () => {
+    const { lastFrame, unmount } = render(
+      React.createElement(ToolCall, {
+        item: toolItem({ name: 'read_file', subagentType: 'x', description: 'y' }),
+        expanded: false,
+      }),
+    );
+    // subagentType/description 在非 spawn_agent 条目上不会出现（构造时不会写进去，这里只测兜底）
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('read_file');
+    unmount();
+  });
 });

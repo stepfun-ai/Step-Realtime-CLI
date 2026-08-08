@@ -15,6 +15,10 @@ export type DisplayItem =
       startedAt?: number;
       /** dynamic_workflow 的动态阶段面板状态（tool_start 时造空序列，phase 事件逐个追加阶段）。 */
       dynamicWorkflow?: import('./DynamicWorkflowPanel.js').DynamicWorkflowPanelState;
+      /** spawn_agent 角色名（tool_start 时从 ev.input.subagent_type 提取）。 */
+      subagentType?: string;
+      /** spawn_agent 任务简述（tool_start 时从 ev.input.description 提取）。 */
+      description?: string;
     }
   | {
       kind: 'note';

@@ -160,6 +160,15 @@ export function TasksViewer({
   }, [background]);
 
   const filtered = tasks.filter((tk) => matchFilter(tk, filter));
+  // 稳定排序：running 最前 → failed/killed 次之 → completed 最后；同级内按启动时间倒序（新的在前）
+  const STATUS_ORDER: Record<string, number> = { running: 0, failed: 1, killed: 1, completed: 2 };
+  filtered.sort((a, b) => {
+    const ao = STATUS_ORDER[a.status] ?? 3;
+    const bo = STATUS_ORDER[b.status] ?? 3;
+    if (ao !== bo) return ao - bo;
+    // 同级：startedAt 倒序（新的在前）；缺省值兜底防 NaN
+    return b.startedAt.localeCompare(a.startedAt);
+  });
   // 选中漂移兜底：过滤切换后选中 id 不在列表里则回落到首条
   const selectedIndex = Math.max(
     0,

@@ -42,6 +42,38 @@ describe('StatusBar 后台任务徽章', () => {
     expect(lastFrame() ?? '').not.toContain('bg:');
   });
 
+  // --- 缺口 3：徽章后追加最近一个 running 任务名 ---
+  it('latestBgTaskName 存在时在 bg:N 后灰色显示任务名', () => {
+    const { lastFrame } = render(
+      React.createElement(StatusBar, { ...base, backgroundCount: 1, latestBgTaskName: 'npm run build' }),
+    );
+    const line1 = frameLines(lastFrame() ?? '')[0] ?? '';
+    expect(line1).toContain('bg:1');
+    expect(line1).toContain('npm run build');
+    expect(line1.indexOf('npm run build')).toBeGreaterThan(line1.indexOf('bg:1'));
+  });
+
+  it('latestBgTaskName 超 20 字符截断并加 …', () => {
+    const longName = 'a'.repeat(25);
+    const { lastFrame } = render(
+      React.createElement(StatusBar, { ...base, backgroundCount: 1, latestBgTaskName: longName }),
+    );
+    const line1 = frameLines(lastFrame() ?? '')[0] ?? '';
+    expect(line1).toContain('bg:1');
+    expect(line1).toContain('aaaaa…');
+    expect(line1).not.toContain(longName);
+  });
+
+  it('latestBgTaskName 缺省不传时徽章仅显示 bg:N', () => {
+    const { lastFrame } = render(React.createElement(StatusBar, { ...base, backgroundCount: 2 }));
+    const line1 = frameLines(lastFrame() ?? '')[0] ?? '';
+    expect(line1).toContain('bg:2');
+    // bg:2 之后紧跟的是 cwd（中间没有插入任务名）
+    const bgIdx = line1.indexOf('bg:2');
+    const afterBg = line1.slice(bgIdx + 'bg:2'.length);
+    expect(afterBg.trim()).toBe(base.cwd);
+  });
+
   // 窄终端：徽章不收缩（优先级高于路径），路径被截断，两行各自单行
   it('columns=40 带徽章不挤爆：每行宽度不超限且徽章完整保留', () => {
     const props = {
