@@ -210,7 +210,10 @@ const zh = {
 
   // --- TODO 面板（TodoPanel）---
   'todo.title': '任务清单',
-  'todo.more': '… +{count} more',
+  'todo.more': '… +{count}（{detail}）',
+  'todo.status.doing': '进行中',
+  'todo.status.pending': '待办',
+  'todo.status.done': '已完成',
 
   // --- /lang 命令 ---
   'lang.current': '当前界面语言：{lang}（可用：zh / en）',
@@ -888,7 +891,10 @@ const en: Record<keyof typeof zh, string> = {
   'app.restore.usage': 'Usage: /restore <file path> (reverts the most recent edit_file/write_file change)',
 
   'todo.title': 'Tasks',
-  'todo.more': '… +{count} more',
+  'todo.more': '… +{count} ({detail})',
+  'todo.status.doing': 'in progress',
+  'todo.status.pending': 'pending',
+  'todo.status.done': 'done',
 
   'lang.current': 'Current UI language: {lang} (available: zh / en)',
   'lang.switched': 'UI language switched to: {lang}',
