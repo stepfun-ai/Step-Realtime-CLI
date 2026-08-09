@@ -5,6 +5,7 @@
  * 更详尽的协作人格约束放在项目根的 AGENTS.md，由 agent 读取后自行遵循。
  */
 import { resolveShell, shellPromptHint } from '../tools/shellResolve.js';
+import { timeSection } from './nowContext.js';
 
 /** 角色清单的字符预算。角色数量远少于 skill，1500 足够常态全量展示。 */
 const SUBAGENT_LISTING_BUDGET = 1500;
@@ -69,8 +70,10 @@ export function subagentListing(
   return out;
 }
 
-export function buildSystemPrompt(cwd: string, options?: { pureMode?: boolean }): string {
+export function buildSystemPrompt(cwd: string, options?: { pureMode?: boolean; now?: Date }): string {
   const shellHint = shellPromptHint(resolveShell().family);
+  // now 允许注入：测试锁定时刻，避免用例随真实日期漂移。
+  const now = options?.now ?? new Date();
   const skillRouteLine = options?.pureMode === true
     ? ''  // 纯净模式：不包含 skill 路由指引，避免模型把所有输入都理解成「配置问题」
     : '- 自身配置问题（config.toml、渠道/模型别名、环境变量、改配置）：激活 update-config skill 处理，不要凭记忆回答或联网搜索。\n';
@@ -82,6 +85,8 @@ export function buildSystemPrompt(cwd: string, options?: { pureMode?: boolean })
 ${skillRouteLine}- 当前工作目录：${cwd}
 - 操作系统：${process.platform}
 - 你通过工具直接读写用户的真实文件、执行真实命令。任何操作都会立即作用于用户系统，务必谨慎。
+
+${timeSection(now)}
 
 # 行为准则
 - 面对涉及代码或文件的任务，用工具真正动手，而不是只在回复里描述方案。

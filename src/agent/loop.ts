@@ -20,6 +20,7 @@ import type { AgentEvent } from './events.js';
 import { type LoopHooks, resolveContinuation } from './hooks.js';
 import { type StoredMessage, stored } from './message.js';
 import { buildSettleMessage } from './background/notify.js';
+import { crossedLocalMidnight, formatLocalNow } from './nowContext.js';
 import type { WireEvent } from './wirelog.js';
 import { runTurn } from './runTurn.js';
 import { emptyContinuationState, advanceContinuation, checkContinuationSafety } from './continuation.js';
@@ -354,6 +355,24 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         // 「事件在、消息不在」的崩溃窗口——对账误判已送达，通知丢失（待办 #17）。
         // 统一由 persist 与消息本体同刻补写；消息带 background_task origin，补写可寻址。
       }
+    }
+    // ── 跨天提醒 ──
+    // 会话跨过本地午夜后，system prompt 里那份时间快照的日期部分就错了。system 整块打
+    // cache_control（见 provider/prepare.ts 的 buildSystemBlocks），逐轮改写它会连带
+    // 让其后的 tools 与历史缓存断点一起失效，所以不动 system，改用一条注入消息修正。
+    //
+    // baseline 取「最后一条消息的本地日期」而不是局部状态变量：runLoop 每个 prompt 回合
+    // 重新调用一次，局部变量在回合边界就重置了，而跨天几乎总是发生在回合之间——用局部
+    // 变量等于永远检测不到。messages 跨回合累积且落盘，resume 后同样成立。
+    // 注入的提醒自身成为最后一条消息、其 ts 即今天，故天然只注入一次，不需要 warned 标记。
+    const nowForDateCheck = new Date();
+    if (crossedLocalMidnight(messages[messages.length - 1]?.ts, nowForDateCheck)) {
+      messages.push(
+        stored(
+          { role: 'user', content: t('loop.dateChanged', { now: formatLocalNow(nowForDateCheck) }) },
+          { kind: 'injection' },
+        ),
+      );
     }
     // 单轮步数分级提醒：达到 mid（50%）/ late（80%）阈值时各注入一次，不重复。
     // 挂在循环顶部而非 tool_use 分支：保证 roundLoop.stop 等提前返回的场景下
