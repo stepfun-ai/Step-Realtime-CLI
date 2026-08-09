@@ -21,8 +21,13 @@ export type FirstRunResult =
 interface ProviderOption {
   /** 在 [providers.<name>] 里写的渠道名。 */
   name: string;
-  /** 显示名称。 */
-  label: string;
+  /**
+   * 显示名称的 i18n key（不是文案本身）。
+   * 为什么存 key：PROVIDER_OPTIONS 是模块级常量，若在此处直接调 t() 会在 import 时求值，
+   * 把语言固化成加载时的那一种，运行时 /lang 切换后选项文案不会跟着变。
+   * 存 key、渲染时再 t()，才能让语言切换生效。
+   */
+  labelKey: string;
   /** base_url 默认值。 */
   baseUrl: string;
   /**
@@ -36,7 +41,7 @@ interface ProviderOption {
 const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     name: 'stepfun-plan',
-    label: 'StepFun Plan 订阅',
+    labelKey: 'firstRun.optionPlan',
     baseUrl: 'https://api.stepfun.com/step_plan/v1',
     models: [
       { alias: 'router', modelId: 'step-router-v1', displayName: 'Step Router V1' },
@@ -45,7 +50,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   },
   {
     name: 'stepfun',
-    label: 'StepFun API 按量',
+    labelKey: 'firstRun.optionApi',
     baseUrl: 'https://api.stepfun.com/v1',
     models: [
       { alias: 'step37', modelId: 'step-3.7-flash', displayName: 'Step 3.7 Flash' },
@@ -55,11 +60,22 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     // 3 号是「自定义」占位，name 实际在 step2 由用户输入决定
     name: 'custom',
-    label: '自定义 base_url',
+    labelKey: 'firstRun.optionCustom',
     baseUrl: 'https://',
     models: [],
   },
 ];
+
+/**
+ * 选项列表末位的「查看文档，稍后手动配置」出口。
+ * 它不是 provider（没有 baseUrl / models），所以不进 PROVIDER_OPTIONS，
+ * 只在渲染与键盘路由里按索引单独处理。设计要求见「首次运行引导设计」第 20-21 行。
+ */
+const DOCS_OPTION_IDX = PROVIDER_OPTIONS.length;
+/** select 步骤可选项总数 = 渠道数 + 文档出口。方向键取模必须用它，否则光标到不了文档出口。 */
+const SELECT_OPTION_COUNT = DOCS_OPTION_IDX + 1;
+const DOCS_URL =
+  'https://github.com/li-xiu-qi/Step-Realtime-CLI/blob/step-code-explore/docs/zh/quickstart.md#2-%E9%85%8D%E7%BD%AE-api-key';
 
 /**
  * 向导步骤：选择接入方式 → 输入 base_url（仅自定义）/ 粘贴 key → 选择默认模型 → 确认。
@@ -203,15 +219,16 @@ export function FirstRunSetup({
       if (!key.return && !/^[1-4]$/.test(input)) return;
       if (step === 'select') {
         const idx = input === '1' ? 0 : input === '2' ? 1 : input === '3' ? 2 : input === '4' ? 3 : selIdx;
-        const option = PROVIDER_OPTIONS[idx]!;
-        if (!option) return;
-        if (idx === 3) {
-          console.log(
-            '\n配置文档：https://github.com/li-xiu-qi/Step-Realtime-CLI/blob/step-code-explore/docs/zh/quickstart.md#2-%E9%85%8D%E7%BD%AE-api-key\n',
-          );
+        // 文档出口必须在取 PROVIDER_OPTIONS[idx] 的守卫之前判断。
+        // PROVIDER_OPTIONS[DOCS_OPTION_IDX] 恒为 undefined，若放在 `if (!option) return` 之后，
+        // 按 4 会被该守卫提前 return，文档分支成为永不可达的死代码（2026-08-09 修复）。
+        if (idx === DOCS_OPTION_IDX) {
+          console.log(`\n${t('firstRun.docsNotice', { url: DOCS_URL })}\n`);
           onDone({ kind: 'cancel' });
           return;
         }
+        const option = PROVIDER_OPTIONS[idx]!;
+        if (!option) return;
         setChosen(option);
         setKeyState({ text: '', cursor: 0 });
         setModelSelIdx(0);
@@ -254,9 +271,9 @@ export function FirstRunSetup({
     (_input, key) => {
       if (step === 'select') {
         if (key.upArrow) {
-          setSelIdx((i) => (i - 1 + PROVIDER_OPTIONS.length) % PROVIDER_OPTIONS.length);
+          setSelIdx((i) => (i - 1 + SELECT_OPTION_COUNT) % SELECT_OPTION_COUNT);
         } else if (key.downArrow) {
-          setSelIdx((i) => (i + 1) % PROVIDER_OPTIONS.length);
+          setSelIdx((i) => (i + 1) % SELECT_OPTION_COUNT);
         }
       } else if (step === 'model') {
         if (chosen === null) return;
@@ -323,9 +340,12 @@ export function FirstRunSetup({
         <Text> </Text>
         {PROVIDER_OPTIONS.map((opt, i) => (
           <Text key={opt.name} color={i === selIdx ? 'cyan' : 'white'} bold={i === selIdx}>
-            {i === selIdx ? '› ' : '  '}[{i + 1}] {opt.label}
+            {i === selIdx ? '› ' : '  '}[{i + 1}] {t(opt.labelKey)}
           </Text>
         ))}
+        <Text color={selIdx === DOCS_OPTION_IDX ? 'cyan' : 'white'} bold={selIdx === DOCS_OPTION_IDX}>
+          {selIdx === DOCS_OPTION_IDX ? '› ' : '  '}[{DOCS_OPTION_IDX + 1}] {t('firstRun.optionDocs')}
+        </Text>
         <Text> </Text>
         <Text color="gray">{t('firstRun.escHint')}</Text>
       </Box>
@@ -353,7 +373,7 @@ export function FirstRunSetup({
       <Box flexDirection="column">
         {chosen !== null && (
           <Text color="gray">
-            {t('firstRun.providerLabel', { label: chosen.label })} · {displayBaseUrl}
+            {t('firstRun.providerLabel', { label: t(chosen.labelKey) })} · {displayBaseUrl}
           </Text>
         )}
         <EditableInput
@@ -411,7 +431,7 @@ export function FirstRunSetup({
         <Text bold color="green">{t('firstRun.confirmTitle')}</Text>
         <Text> </Text>
         <Text>
-          {t('firstRun.confirmProvider', { label: chosen.label })}
+          {t('firstRun.confirmProvider', { label: t(chosen.labelKey) })}
           {'\n'}
           {t('firstRun.confirmBaseUrl', { url: chosen.baseUrl })}
           {'\n'}
