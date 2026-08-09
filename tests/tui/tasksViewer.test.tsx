@@ -70,28 +70,45 @@ describe('TasksViewer 空态与列表', () => {
   });
 
   it('↓/j 选择下一条，tail 预览跟着切换', async () => {
+    // startedAt 显式给，且让 ta 比 tb 新：列表排序是「运行中优先，同级按 startedAt 倒序」，
+    // 两个任务同为 running，谁排在前完全由 startedAt 决定。若用 makeTask 的默认值（各自
+    // 现取 new Date()），顺序就取决于「两次调用是否落在同一毫秒」——本机通常相同，稳定
+    // 排序保持声明顺序，凑巧满足断言；CI 上一旦跨过时钟 tick，tb 变新排到最前，初始选中
+    // 就成了 tb，预览显示（tb）而非（ta）。2026-08-09 windows CI 即因此失败。
+    // 偏移只取 50ms，两条都仍算「刚启动」，时长显示不受影响。
+    const base = Date.now();
     const source = makeSource([
-      makeTask({ id: 'ta', command: 'first', output: 'OUT-A' }),
-      makeTask({ id: 'tb', command: 'second', output: 'OUT-B' }),
+      makeTask({ id: 'ta', command: 'first', output: 'OUT-A', startedAt: new Date(base).toISOString() }),
+      makeTask({
+        id: 'tb',
+        command: 'second',
+        output: 'OUT-B',
+        startedAt: new Date(base - 50).toISOString(),
+      }),
     ]);
     const { stdin, lastFrame } = renderViewer(source);
-    await delay();
-    expect(stripAnsi(lastFrame() ?? '')).toContain('输出预览（ta）');
+    // 用 vi.waitFor 而非固定 delay：预览区要等一次 ink re-render 才出现，固定 20ms 在 CI
+    // 负载高时不够。但 waitFor 只解决「等得够不够」，解决不了上面那个排序不确定——
+    // 2026-08-09 先换成 waitFor 后 windows CI 仍挂在同一条断言，真因是 startedAt。
+    await vi.waitFor(() => {
+      expect(stripAnsi(lastFrame() ?? '')).toContain('输出预览（ta）');
+    });
     expect(stripAnsi(lastFrame() ?? '')).toContain('OUT-A');
     stdin.write('\x1b[B');
-    await delay();
-    let plain = stripAnsi(lastFrame() ?? '');
-    expect(plain).toContain('输出预览（tb）');
-    expect(plain).toContain('OUT-B');
+    await vi.waitFor(() => {
+      expect(stripAnsi(lastFrame() ?? '')).toContain('输出预览（tb）');
+    });
+    expect(stripAnsi(lastFrame() ?? '')).toContain('OUT-B');
     // k 回到第一条
     stdin.write('k');
-    await delay();
-    plain = stripAnsi(lastFrame() ?? '');
-    expect(plain).toContain('输出预览（ta）');
+    await vi.waitFor(() => {
+      expect(stripAnsi(lastFrame() ?? '')).toContain('输出预览（ta）');
+    });
     // j 再下一条
     stdin.write('j');
-    await delay();
-    expect(stripAnsi(lastFrame() ?? '')).toContain('输出预览（tb）');
+    await vi.waitFor(() => {
+      expect(stripAnsi(lastFrame() ?? '')).toContain('输出预览（tb）');
+    });
   });
 
   it('r 手动刷新：新任务立即出现在列表里', async () => {
