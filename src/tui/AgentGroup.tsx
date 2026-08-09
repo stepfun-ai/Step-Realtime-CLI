@@ -139,6 +139,7 @@ export function AgentGroup({
       <Box marginTop={1}>
         <Text color="gray" wrap="truncate">
           ⠶ {t('agentGroup.busySummary', { total: agents.length, running, done })}
+          {running > 0 ? t('agentGroup.busyBackgroundHint') : ''}
         </Text>
       </Box>
     );

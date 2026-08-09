@@ -98,6 +98,30 @@ describe('AgentGroup 面板', () => {
     expect(lastFrame() ?? '').toBe('');
   });
 
+  // --- busy 摘要行的 Ctrl+B 提示（回归守卫）---
+  // 背景：backgroundHint 原先只在非 busy 的完整渲染路径里，而前台派生子 agent 时主 agent
+  // 必然 busy → 提示在真正需要它的场景永远不显示。修复后 busy 摘要行在有 running 时也带提示。
+  it('busy 且有 running → 摘要行带 Ctrl+B 转后台提示，且不增加行数', () => {
+    const agents = [
+      { id: '1', type: 'explore', description: 'a', status: 'running' as const, toolCount: 1, startedAt: Date.now() },
+    ];
+    const { lastFrame } = render(React.createElement(AgentGroup, { agents, busy: true }));
+    const out = lastFrame() ?? '';
+    expect(out).toContain('Ctrl+B');
+    // 仍是 marginTop 1 + 文本 1 = 2 行：靠 wrap="truncate" 保证，别让提示把帧高顶出预算
+    expect(out.split('\n').length).toBeLessThanOrEqual(2);
+    expect(agentGroupRows(agents, true)).toBe(1);
+  });
+
+  it('busy 但全部已完成 → 摘要行不带 Ctrl+B 提示（已无可转后台的任务）', () => {
+    const agents = [
+      { id: '1', type: 'explore', description: 'a', status: 'done' as const, toolCount: 1, startedAt: 0, endedAt: 1000 },
+      { id: '2', type: 'explore', description: 'b', status: 'done' as const, toolCount: 1, startedAt: 0, endedAt: 1000 },
+    ];
+    const { lastFrame } = render(React.createElement(AgentGroup, { agents, busy: true }));
+    expect(lastFrame() ?? '').not.toContain('Ctrl+B');
+  });
+
   it('idle 时恢复完整列表（busy 默认 false）', () => {
     const agents = [
       { id: '1', type: 'explore', description: '搜索', status: 'running', toolCount: 1, startedAt: Date.now() },
