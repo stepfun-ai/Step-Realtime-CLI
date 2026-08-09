@@ -110,64 +110,75 @@ export function fingerprintRound(messages: StoredMessage[]): string | null {
 }
 
 /* ------------------------------------------------------------------ */
-/* 检测器（有状态，闭包持有 streak）                                   */
+/* 检测器（有状态，闭包持有窗口）                                       */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 滑动窗口大小。选 8 的理由：
+ * - 8 ≥ 4×2，能覆盖周期 2、3、4 的交替循环；
+ * - 窗口内出现 4 次意味着至少绕了 4 圈，误报空间为零（合法轮询不会在 8 轮内 4 次产出完全相同的指纹）。
+ */
+const WINDOW_SIZE = 8;
 
 /**
  * 阈值理据：
  *
- * - 连续相同第 1、2 次不触发（`action: 'none'`）：合理确认性重试（模型复核一次结果）
- *   在两轮内完成，正常任务极少出现 3 轮完全相同的情况。
- * - 连续相同第 3 次 → `action: 'warn'`：与 `thinkingLoop.ts` 的 `REPEAT_THRESHOLD=3` 口径一致；
- *   3 轮相同说明模型大概率卡住，但偶发（如网络抖动导致模型重发同一条调用）仍有可能，
+ * - 窗口内出现 1、2 次不触发（`action: 'none'`）：合理确认性重试（模型复核一次结果）
+ *   在两轮内完成，正常任务极少出现 3 次完全相同的情况。
+ * - 窗口内出现恰好 3 次 → `action: 'warn'`：与 `thinkingLoop.ts` 的 `REPEAT_THRESHOLD=3` 口径一致；
+ *   3 次相同说明模型大概率卡住，但偶发（如网络抖动导致模型重发同一条调用）仍有可能，
  *   先注入警告给一次机会。
- * - 注入后仍相同（第 4 次）→ `action: 'stop'`：与 thinkingLoop「诱导重试最多 1 次」、
+ * - 窗口内出现 4 次及以上 → `action: 'stop'`：与 thinkingLoop「诱导重试最多 1 次」、
  *   hooks「续行只给一次机会」同款收敛策略——给机会是为了不冤枉偶发，给完还犯就是真困住，
  *   继续烧全量上下文没有价值。
  * - streak ≥ 5 理论上在 stop 后不会发生（loop 已停），函数保持有定义行为。
+ *
+ * streak 字段语义：从「连续轮数」变为「窗口内出现次数」。调用方仅用它做展示，
+ * 类型名与字段名保持不变。
  */
 export function createRoundLoopDetector(): {
   observe(fingerprint: string | null): RoundLoopVerdict;
   reset(): void;
 } {
-  /** 当前连续相同指纹的轮数。 */
-  let streak = 0;
-  /** 上一轮观察到的指纹（null 表示尚未有有效观察）。 */
-  let lastFingerprint: string | null = null;
+  /** 最近 WINDOW_SIZE 轮的指纹（新元素追加到尾部）。 */
+  const window: string[] = [];
 
   /**
    * 观察一轮的指纹，返回处置建议。
    * 调用方按 action 决定：none → 继续；warn → 注入警告后继续；stop → 停止。
+   *
+   * streak 字段语义：当前指纹在滑动窗口内（含本轮）出现的次数。
    */
   function observe(fingerprint: string | null): RoundLoopVerdict {
-    // null = 尾部结构不匹配或首轮，清零 streak
+    // null = 尾部结构不匹配或首轮，清零窗口
     if (fingerprint === null) {
-      streak = 0;
-      lastFingerprint = null;
+      window.length = 0;
       return { action: 'none' };
     }
 
-    if (fingerprint !== lastFingerprint) {
-      // 与上轮不同：清零
-      streak = 0;
-      lastFingerprint = fingerprint;
+    // 追加当前指纹
+    window.push(fingerprint);
+
+    // 维持窗口大小
+    while (window.length > WINDOW_SIZE) {
+      window.shift();
     }
 
-    streak += 1;
+    // 统计当前指纹在窗口内出现次数
+    const count = window.filter((fp) => fp === fingerprint).length;
 
-    if (streak >= 4) {
-      return { action: 'stop', streak };
+    if (count >= 4) {
+      return { action: 'stop', streak: count };
     }
-    if (streak === 3) {
-      return { action: 'warn', streak };
+    if (count === 3) {
+      return { action: 'warn', streak: 3 };
     }
-    // streak 1、2：不干预
+    // count 1、2：不干预
     return { action: 'none' };
   }
 
   function reset(): void {
-    streak = 0;
-    lastFingerprint = null;
+    window.length = 0;
   }
 
   return { observe, reset };

@@ -388,6 +388,74 @@ describe('createRoundLoopDetector：判定逻辑', () => {
     });
   });
 
+  describe('滑动窗口：周期 2 交替', () => {
+    it('A B A B A B A B → 第 7 轮（A 第 4 次出现）→ stop', () => {
+      const d = makeDetector();
+      // A B A B A B A B：A 出现 4 次，B 出现 4 次
+      const seq = ['fp-A', 'fp-B', 'fp-A', 'fp-B', 'fp-A', 'fp-B', 'fp-A', 'fp-B'];
+      const results = seq.map((fp) => observe(d, fp));
+      // 窗口大小 8，前 7 轮都在窗口内
+      expect(results[0]).toEqual({ action: 'none' }); // A count=1
+      expect(results[1]).toEqual({ action: 'none' }); // B count=1
+      expect(results[2]).toEqual({ action: 'none' }); // A count=2
+      expect(results[3]).toEqual({ action: 'none' }); // B count=2
+      expect(results[4]).toEqual({ action: 'warn', streak: 3 }); // A count=3
+      expect(results[5]).toEqual({ action: 'warn', streak: 3 }); // B count=3
+      expect(results[6]).toEqual({ action: 'stop', streak: 4 }); // A count=4
+      expect(results[7]).toEqual({ action: 'stop', streak: 4 }); // B count=4
+    });
+
+    it('A B A B A B → 第 6 轮（A 第 3 次出现）→ warn，未到 stop', () => {
+      const d = makeDetector();
+      const seq = ['fp-A', 'fp-B', 'fp-A', 'fp-B', 'fp-A', 'fp-B'];
+      const results = seq.map((fp) => observe(d, fp));
+      // A 出现 3 次（位置 0,2,4），B 出现 3 次（位置 1,3,5）
+      // 窗口大小 8，前 6 轮都在窗口内
+      expect(results[4]).toEqual({ action: 'warn', streak: 3 }); // 第 5 轮 A 第 3 次
+      expect(results[5]).toEqual({ action: 'warn', streak: 3 }); // 第 6 轮 B 第 3 次
+    });
+  });
+
+  describe('滑动窗口：周期 3 交替', () => {
+    it('A B C A B C A B C → 第 9 轮（A 第 3 次出现）→ warn', () => {
+      const d = makeDetector();
+      const seq = ['fp-A', 'fp-B', 'fp-C', 'fp-A', 'fp-B', 'fp-C', 'fp-A', 'fp-B', 'fp-C'];
+      const results = seq.map((fp) => observe(d, fp));
+      // 窗口 8，第 9 轮时窗口内为 [B,C,A,B,C,A,B,C]（A 出现 2 次，B 3 次，C 3 次）
+      expect(results[6]).toEqual({ action: 'warn', streak: 3 }); // 第 7 轮 A 第 3 次
+      expect(results[7]).toEqual({ action: 'warn', streak: 3 }); // 第 8 轮 B 第 3 次
+      expect(results[8]).toEqual({ action: 'warn', streak: 3 }); // 第 9 轮 C 第 3 次
+    });
+  });
+
+  describe('滑动窗口：边界条件', () => {
+    it('同一指纹间隔超过 K 轮时不累计', () => {
+      const d = makeDetector();
+      // A 出现 3 次，但第 3 次与第 1 次间隔 8 轮（超出窗口）
+      observe(d, 'fp-A'); // 窗口 [A]
+      for (let i = 0; i < 7; i++) {
+        observe(d, `fp-fill-${i}`); // 窗口 [A, fill-0..fill-6]
+      }
+      // 此时窗口 8 个元素，A 在头部，再给 A 时 A 会被挤掉
+      expect(observe(d, 'fp-A')).toEqual({ action: 'none' }); // A 第 2 次（窗口内只有 1 次 A）
+      // 再给 7 个 fill，然后第 9 次 A → 窗口内只有 1 次 A
+      for (let i = 0; i < 7; i++) {
+        observe(d, `fp-fill2-${i}`);
+      }
+      expect(observe(d, 'fp-A')).toEqual({ action: 'none' });
+    });
+
+    it('null 打断后不误累计', () => {
+      const d = makeDetector();
+      observe(d, 'fp-A');
+      observe(d, 'fp-A');
+      expect(observe(d, null)).toEqual({ action: 'none' }); // 清零
+      observe(d, 'fp-A');
+      expect(observe(d, 'fp-A')).toEqual({ action: 'none' }); // 从 1 重新开始
+      expect(observe(d, 'fp-A')).toEqual({ action: 'warn', streak: 3 }); // null 后第 3 次
+    });
+  });
+
   describe('合法轮询不误伤（指纹每次变化 → 不触发）', () => {
     it('工具调用相同、结果每次不同 → 持续 none', () => {
       // 模拟合法轮询：同一查询，结果每次变化，指纹不同
@@ -529,7 +597,7 @@ describe('runAgent：跨回合零进展检测接线', () => {
       (e) =>
         e.type === 'notice' &&
         typeof (e as { message?: string }).message === 'string' &&
-        (e as { message: string }).message.includes('连续'),
+        (e as { message: string }).message.includes('相同回合'),
     );
     expect(warnNotice).toBeDefined();
 
@@ -662,7 +730,7 @@ describe('runAgent：跨回合零进展检测接线', () => {
       (e) =>
         e.type === 'notice' &&
         typeof (e as { message?: string }).message === 'string' &&
-        (e as { message: string }).message.includes('连续'),
+        (e as { message: string }).message.includes('相同回合'),
     );
     expect(warnNotices.length).toBe(2);
     // 无 stop notice（模型两次都换了方法）

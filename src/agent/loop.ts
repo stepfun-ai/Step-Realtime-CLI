@@ -272,6 +272,19 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
   const allowedSet = allowedTools === undefined ? undefined : new Set(allowedTools);
   let overflowRetries = 0;
   /**
+   * 单轮步数上限前的分级提醒标记：每档在一轮交互内只触发一次。
+   *
+   * 阈值按 maxIterations 的比例计算（不硬编码），覆盖可配置的小值场景。
+   * 两档比例写成具名常量，注释选型理由。
+   */
+  const MID_RATIO = 0.5; // 50%：首道预警——烧掉一半预算时提醒，留足收尾空间
+  const LATE_RATIO = 0.8; // 80%：末道预警——逼近上限，必须立即收敛
+  const midThreshold = Math.floor(maxIterations * MID_RATIO);
+  const lateThreshold = Math.floor(maxIterations * LATE_RATIO);
+  // 防止极小 maxIterations 下两档撞在同一轮（如 maxIterations=1 → 两档都是 0）
+  let midWarned = false;
+  let lateWarned = false;
+  /**
    * 上一次真实 usage 的快照，供**发请求前**的压缩预检使用（见循环顶部的 preflight）。
    *
    * 为什么要记它：预检发生在 API 响应之前，本回合没有真实 usage 可用；而纯字符估算
@@ -341,6 +354,30 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         // 「事件在、消息不在」的崩溃窗口——对账误判已送达，通知丢失（待办 #17）。
         // 统一由 persist 与消息本体同刻补写；消息带 background_task origin，补写可寻址。
       }
+    }
+    // 单轮步数分级提醒：达到 mid（50%）/ late（80%）阈值时各注入一次，不重复。
+    // 挂在循环顶部而非 tool_use 分支：保证 roundLoop.stop 等提前返回的场景下
+    // 也能在命中阈值时发出提醒（与 roundLoop 的接线并列，不互相吞没）。
+    // iter + 1 = 已完成轮数，与 maxIterations 撞线判定同一口径。
+    const turnCount = iter + 1;
+    if (!midWarned && turnCount >= midThreshold) {
+      midWarned = true;
+      messages.push(
+        stored(
+          { role: 'user', content: t('loop.turnWarning.mid', { n: turnCount, max: maxIterations }) },
+          { kind: 'injection' },
+        ),
+      );
+      yield { type: 'notice', message: t('loop.turnWarning.mid', { n: turnCount, max: maxIterations }) };
+    } else if (!lateWarned && turnCount >= lateThreshold) {
+      lateWarned = true;
+      messages.push(
+        stored(
+          { role: 'user', content: t('loop.turnWarning.late', { n: turnCount, max: maxIterations }) },
+          { kind: 'injection' },
+        ),
+      );
+      yield { type: 'notice', message: t('loop.turnWarning.late', { n: turnCount, max: maxIterations }) };
     }
     // 发请求前的压缩预检。**这是本轮补上的缺口**：原先压缩只挂在 `tool_use` 分支
     // （即「回合结束、且模型确实调了工具」），于是三条常见路径完全绕过压缩——
