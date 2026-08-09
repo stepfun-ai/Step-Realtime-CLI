@@ -433,4 +433,49 @@ describe('checkBashWrite', () => {
       if (!r.ok) { expect(r.tier).toBe('A'); }
     });
   });
+
+  /* ---------------------------------------------------------------- */
+  /*  丢弃型特殊设备：放行（写它们不产生文件）                        */
+  /* ---------------------------------------------------------------- */
+
+  describe('丢弃型特殊设备', () => {
+    /**
+     * 这组是误报防线。/dev/null 会被解析成一个绝对路径，天然落在 allowRoot 外，
+     * 不显式白名单就会判成 A 档——而 `> /dev/null` 是最常见的丢弃输出写法，
+     * 拦下去会直接卡死正常命令（接线前实测的 21 条 worker 典型命令里只有它被误拦）。
+     */
+    it('/dev/null 的三种重定向形态都放行', () => {
+      expect(checkBashWrite('ls -la > /dev/null', ALLOW, ALLOW).ok).toBe(true);
+      expect(checkBashWrite('npm test 2>/dev/null', ALLOW, ALLOW).ok).toBe(true);
+      expect(checkBashWrite('ls &> /dev/null', ALLOW, ALLOW).ok).toBe(true);
+    });
+
+    it('/dev/stdout、/dev/stderr、/dev/tty 放行', () => {
+      expect(checkBashWrite('echo x > /dev/stdout', ALLOW, ALLOW).ok).toBe(true);
+      expect(checkBashWrite('echo x > /dev/stderr', ALLOW, ALLOW).ok).toBe(true);
+      expect(checkBashWrite('echo x > /dev/tty', ALLOW, ALLOW).ok).toBe(true);
+    });
+
+    it('文件描述符别名 /dev/fd/N 与 /proc/self/fd/N 放行', () => {
+      expect(checkBashWrite('echo x > /dev/fd/2', ALLOW, ALLOW).ok).toBe(true);
+      expect(checkBashWrite('echo x > /proc/self/fd/1', ALLOW, ALLOW).ok).toBe(true);
+    });
+
+    it('带引号的 /dev/null 也放行', () => {
+      expect(checkBashWrite('ls > "/dev/null"', ALLOW, ALLOW).ok).toBe(true);
+      expect(checkBashWrite("ls > '/dev/null'", ALLOW, ALLOW).ok).toBe(true);
+    });
+
+    it('白名单不是「所有 /dev/*」：写块设备仍按越界拦截', () => {
+      // 否则 `> /dev/sda` 这类真实破坏性写入会被一并放过
+      const r = checkBashWrite('dd if=/dev/zero of=/dev/sda', ALLOW, ALLOW);
+      expect(r.ok).toBe(false);
+      if (!r.ok) { expect(r.tier).toBe('A'); }
+    });
+
+    it('Windows 的 NUL 放行', () => {
+      expect(checkBashWrite('echo x > NUL', ALLOW, ALLOW).ok).toBe(true);
+      expect(checkBashWrite('echo x > nul', ALLOW, ALLOW).ok).toBe(true);
+    });
+  });
 });

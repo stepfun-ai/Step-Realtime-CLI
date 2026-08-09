@@ -3,6 +3,7 @@ import { sep } from 'node:path';
 import type { ChatProvider } from '../../provider/types.js';
 import { allToolNames } from '../../tools/index.js';
 import { resolvePath as resolveToolPath } from '../../tools/fsutil.js';
+import { checkBashWrite } from '../../tools/bashWriteGuard.js';
 import type { ToolContext } from '../../tools/types.js';
 import type { CompactionThresholds } from '../compaction/compact.js';
 import type { SubagentProgressEvent } from '../events.js';
@@ -23,8 +24,15 @@ const SUMMARY_MIN_LEN = 200;
 const SPAWN_TOOL = 'spawn_agent';
 
 /**
- * per-worker 写根约束包装：write_file/edit_file 的目标必须落在 allowRoot 内，
- * 其余调用透传给 base。提取为独立函数以便单测（team worker 的硬隔离靠它）。
+ * per-worker 写根约束包装：write_file/edit_file 的目标必须落在 allowRoot 内，bash 的
+ * 写入目标由 checkBashWrite 做静态判定，其余调用透传给 base。
+ * 提取为独立函数以便单测（team worker 的硬隔离靠它）。
+ *
+ * bash 为什么也要拦：不拦的话 worker 可以用一句重定向或 cp 写到工作间外，范围互斥
+ * 就只剩 team_merge 合并时的 diff 事后检查兜着——已经发生过踩穿。
+ * 而拦 bash 曾被担心会拦死 git（worker 要在工作间里提交），实测不会：守卫只看命令行里
+ * 的显式写入语法（重定向、cp/mv/rm/tee/sed -i/dd/truncate），git 子命令与 npm/npx
+ * 一律判为无写入迹象放行。接线前用 21 条 worker 典型命令验证过误报面。
  */
 export function wrapWriteGuard(
   base: NonNullable<LoopHooks['authorizeToolCall']>,
@@ -41,6 +49,22 @@ export function wrapWriteGuard(
           return {
             decision: 'deny',
             reason: `你的写操作被限制在本任务工作间内（${allowRoot}）。请使用该目录下的路径。`,
+          };
+        }
+      }
+    }
+    if (subReq.name === 'bash') {
+      const cmd = (subReq.input as { command?: unknown } | undefined)?.command;
+      if (typeof cmd === 'string') {
+        const verdict = checkBashWrite(cmd, cwd, allowRoot);
+        if (!verdict.ok) {
+          return {
+            decision: 'deny',
+            reason:
+              `${verdict.reason} 你的写操作被限制在本任务工作间内（${allowRoot}）。` +
+              (verdict.tier === 'B'
+                ? '请把写入目标改写成该目录下的显式路径后重试。'
+                : '请改用该目录下的路径。'),
           };
         }
       }

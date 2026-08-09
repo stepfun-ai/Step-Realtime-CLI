@@ -410,7 +410,54 @@ describe('wrapWriteGuard（per-worker 写隔离）', () => {
     const outside = await guard({ id: '3', name: 'write_file', input: { path: join(tmpdir(), 'other', 'a.ts') } });
     expect(outside.decision).toBe('deny');
     const bash = await guard({ id: '4', name: 'bash', input: { command: 'echo hi' } });
-    expect(bash.decision).toBe('allow'); // bash 不拦（一期边界）
+    expect(bash.decision).toBe('allow'); // 无写入迹象 → 放行
+  });
+
+  /**
+   * bash 分支：之前 bash 完全透传，worker 一句重定向就能写到工作间外，范围互斥只剩
+   * team_merge 的事后 diff 检查兜着。这组用例锁住两端——越界写要拦住，而 worker
+   * 日常命令（git 提交、跑测试、丢弃输出）不能被误拦。
+   */
+  describe('bash 分支', () => {
+    /** 用正斜杠形式，贴近模型实际写法，也避开命令字符串里的反斜杠转义。 */
+    const fwd = (p: string): string => p.replace(/\\/g, '/');
+    const guard = wrapWriteGuard(allowBase, cwd, cwd);
+
+    it('放行：git 提交与跑测试（命令行无显式写入语法）', async () => {
+      for (const command of ['git add -A && git commit -m x', 'git push origin br', 'npm test', 'npx tsc --noEmit']) {
+        const r = await guard({ id: 'b', name: 'bash', input: { command } });
+        expect(r.decision, command).toBe('allow');
+      }
+    });
+
+    it('放行：工作间内的重定向与子目录写入', async () => {
+      for (const command of ['echo hi > notes.txt', 'echo hi > sub/a.txt', 'echo hi >> CHANGELOG.md']) {
+        const r = await guard({ id: 'b', name: 'bash', input: { command } });
+        expect(r.decision, command).toBe('allow');
+      }
+    });
+
+    it('放行：丢弃输出到 /dev/null（最常见的写法，误报会卡死正常命令）', async () => {
+      for (const command of ['ls -la > /dev/null', 'npm test 2>/dev/null', 'ls &> /dev/null']) {
+        const r = await guard({ id: 'b', name: 'bash', input: { command } });
+        expect(r.decision, command).toBe('allow');
+      }
+    });
+
+    it('拦截：越界重定向、拷贝与删除', async () => {
+      const out = fwd(join(tmpdir(), 'other', 'a.txt'));
+      for (const command of [`echo hi > ${out}`, `cp a.txt ${out}`, `rm -rf ${fwd(join(tmpdir(), 'other'))}`]) {
+        const r = await guard({ id: 'b', name: 'bash', input: { command } });
+        expect(r.decision, command).toBe('deny');
+        expect(r.reason ?? '').toContain('本任务工作间内');
+      }
+    });
+
+    it('拦截：动态路径无法静态校验（B 档），提示改写成显式路径', async () => {
+      const r = await guard({ id: 'b', name: 'bash', input: { command: 'echo hi > $OUT_DIR/a.txt' } });
+      expect(r.decision).toBe('deny');
+      expect(r.reason ?? '').toContain('显式路径');
+    });
   });
 });
 

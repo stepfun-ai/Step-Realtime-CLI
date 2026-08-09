@@ -25,6 +25,25 @@ export type CheckResult =
 /*  工具函数                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 丢弃型特殊设备：写它们不产生任何文件，必须放行。
+ *
+ * 不加这条白名单的话，`cmd > /dev/null`（以及 `2>/dev/null`、`&>/dev/null`）会因为
+ * /dev/null 被解析成绝对路径而判成 A 档越界。这是最常见的丢弃输出写法，误报会直接
+ * 卡住正常命令——接线前实测 21 条 worker 典型命令，唯一被误拦的就是 `ls -la > /dev/null`。
+ * /dev/fd/N 与 /proc/self/fd/N 一并放行：它们是文件描述符别名，不是文件路径。
+ */
+const DISCARD_DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', 'NUL']);
+
+function isDiscardDevice(rawToken: string): boolean {
+  let t = rawToken.trim().replace(/\s+#.*$/, '').trim();
+  if ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"'))) {
+    t = t.slice(1, -1);
+  }
+  if (DISCARD_DEVICES.has(t)) return true;
+  return /^\/dev\/fd\/\d+$/.test(t) || /^\/proc\/self\/fd\/\d+$/.test(t);
+}
+
 /** 判断 target 是否在 allowRoot 内（含 allowRoot 自身）。防兄弟前缀陷阱。 */
 function isUnderAllowRoot(target: string, allowRoot: string): boolean {
   const normTarget = normalize(target);
@@ -418,6 +437,8 @@ export function checkBashWrite(
 
   /* ---- A 档判定 ---- */
   for (const raw of writeTargets) {
+    // 丢弃型特殊设备先放行：写它们不产生文件。
+    if (isDiscardDevice(raw)) continue;
     const abs = resolveTarget(effectiveCwd, raw);
     if (!abs) {
       return {
