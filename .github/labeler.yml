@@ -1,0 +1,71 @@
+# PR path-based auto-labeling — actions/labeler@v5 格式（每个标签下 changed-files/any-glob-to-any-file）。
+# area/* 路径与 .github/labels.yml 的 area 标签保持一致。
+# 对应 step-code 单包结构：源码在 src/<domain>/，非 monorepo。
+
+"area/agent":
+  - changed-files:
+      - any-glob-to-any-file: "src/agent/**"
+
+"area/config":
+  - changed-files:
+      - any-glob-to-any-file: "src/config/**"
+
+"area/provider":
+  - changed-files:
+      - any-glob-to-any-file: "src/provider/**"
+
+"area/tools":
+  - changed-files:
+      - any-glob-to-any-file: "src/tools/**"
+
+"area/mcp":
+  - changed-files:
+      - any-glob-to-any-file: "src/mcp/**"
+
+"area/session":
+  - changed-files:
+      - any-glob-to-any-file: "src/session/**"
+
+"area/skill":
+  - changed-files:
+      - any-glob-to-any-file: "src/skill/**"
+
+"area/plugin":
+  - changed-files:
+      - any-glob-to-any-file: "src/plugin/**"
+
+"area/tui":
+  - changed-files:
+      - any-glob-to-any-file: "src/tui/**"
+
+"area/cli":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/main.ts"
+          - "src/cli.tsx"
+          - "src/env.ts"
+          - "src/i18n.ts"
+          - "src/version.ts"
+          - "src/utils/**"
+
+"area/test":
+  - changed-files:
+      - any-glob-to-any-file: "tests/**"
+
+"area/build":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "scripts/**"
+          - ".github/**"
+          - "package.json"
+          - "pnpm-lock.yaml"
+          - "pnpm-workspace.yaml"
+          - "tsconfig.json"
+
+"area/docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - "AGENTS.md"
+          - "README.md"
+          - "licenses/**"

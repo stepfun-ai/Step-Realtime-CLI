@@ -1,0 +1,105 @@
+# Declarative label manifest — single source of truth for repo labels.
+# Synced to GitHub by .github/workflows/labels-sync.yml (EndBug/label-sync).
+# area/* paths must stay aligned with .github/labeler.yml.
+# NOTE: color values are quoted so YAML never parses hex like "5319e7" as a
+# number (label-sync requires color to be a string).
+
+# --- priority (owner-only, set during triage) ---
+- name: priority/P0
+  color: "b60205"
+  description: Immediate fix; blocks main / security / production
+- name: priority/P1
+  color: "d93f0b"
+  description: Must ship this iteration
+- name: priority/P2
+  color: "fbca04"
+  description: Planned for next iteration
+- name: priority/P3
+  color: "c2e0c6"
+  description: Nice to have, backlog
+
+# --- type (auto-applied by issue templates / chosen in PR) ---
+- name: type/bug
+  color: "d73a4a"
+  description: Something is broken
+- name: type/feat
+  color: "a2eeef"
+  description: New feature or capability
+- name: type/docs
+  color: "0075ca"
+  description: Documentation
+- name: type/chore
+  color: "cfd3d7"
+  description: Maintenance / build / CI
+- name: type/refactor
+  color: "5319e7"
+  description: Refactor with no behavior change
+- name: type/test
+  color: "0e8a16"
+  description: Tests only
+- name: type/question
+  color: "d876e3"
+  description: Question / discussion
+
+# --- area (issue: owner manual; PR: labeler by path) ---
+- name: area/agent
+  color: "bfd4f2"
+  description: src/agent
+- name: area/config
+  color: "bfd4f2"
+  description: src/config
+- name: area/provider
+  color: "bfd4f2"
+  description: src/provider
+- name: area/tools
+  color: "bfd4f2"
+  description: src/tools
+- name: area/mcp
+  color: "bfd4f2"
+  description: src/mcp
+- name: area/session
+  color: "bfd4f2"
+  description: src/session
+- name: area/skill
+  color: "bfd4f2"
+  description: src/skill
+- name: area/plugin
+  color: "bfd4f2"
+  description: src/plugin
+- name: area/tui
+  color: "bfd4f2"
+  description: src/tui
+- name: area/cli
+  color: "bfd4f2"
+  description: src/main.ts, src/cli.tsx, src/i18n.ts, src/version.ts, src/utils
+- name: area/test
+  color: "bfd4f2"
+  description: tests
+- name: area/build
+  color: "bfd4f2"
+  description: scripts, .github, package.json, tsconfig, lockfile
+- name: area/docs
+  color: "bfd4f2"
+  description: docs, AGENTS.md, README(s), licenses
+
+# --- status ---
+- name: status/needs-triage
+  color: "ededed"
+  description: Waiting for owner triage
+- name: status/in-progress
+  color: "fbca04"
+  description: Someone is actively working on it
+- name: status/blocked
+  color: "b60205"
+  description: Blocked by something else
+- name: status/ready-for-review
+  color: "0e8a16"
+  description: PR is ready for review
+
+# --- special ---
+- name: skip-issue-link
+  color: "cccccc"
+  description: Allow PR without linked issue (owner override)
+- name: good-first-issue
+  color: "7057ff"
+  description: Friendly for new contributors
