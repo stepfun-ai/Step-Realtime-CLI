@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { stored, type StoredMessage } from '../../src/agent/message.js';
 import type { MessageOriginKind } from '../../src/agent/message.js';
 import type { ChatProvider } from '../../src/provider/types.js';
-import { runReflect, segmentMessages } from '../../src/agent/reflect.js';
+import { REFLECT_EMPTY_HISTORY, REFLECT_NO_FINDINGS, runReflect, segmentMessages } from '../../src/agent/reflect.js';
 import { makeFakeProvider, textBlock } from '../helpers/fakeProvider.js';
 
 /** 造一条指定角色/文本的 StoredMessage。 */
@@ -143,5 +143,18 @@ describe('runReflect', () => {
     expect(out).toContain('共 3 段');
     expect(out).toContain('仅回顾了前 2 段');
     expect(streamCalls()).toBe(3); // 2 map + 1 reduce，第 3 段未处理
+  });
+});
+describe('占位文案常量（App 侧 === 判断的依赖）', () => {
+  it('空历史返回 REFLECT_EMPTY_HISTORY 常量本身（引用相等）', async () => {
+    // App 用 === 判断要不要把产出注入会话流；若有人把返回改成同内容的新字面量，
+    // 注入判断会静默失效，占位文本就被写进会话流。这里锁引用相等。
+    const { provider } = makeFakeProvider([]);
+    expect(await runReflect(provider, [], {})).toBe(REFLECT_EMPTY_HISTORY);
+  });
+
+  it('常量的文案保持占位形态（以（开头），UI 直出不变', () => {
+    expect(REFLECT_EMPTY_HISTORY.startsWith('（')).toBe(true);
+    expect(REFLECT_NO_FINDINGS.startsWith('（')).toBe(true);
   });
 });

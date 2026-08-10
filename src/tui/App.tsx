@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { runAgent, type AgentEvent } from '../agent/loop.js';
 import type { AgentsMdTruncation } from '../agent/agentsMd.js';
 import { estimateTokens, fullCompact } from '../agent/compaction/compact.js';
-import { runReflect } from '../agent/reflect.js';
+import { runReflect, REFLECT_EMPTY_HISTORY, REFLECT_NO_FINDINGS } from '../agent/reflect.js';
 import type { LoopHooks } from '../agent/hooks.js';
 import { composeLoopHooks, type HookEngine } from '../agent/hooks/engine.js';
 import { stored, type StoredMessage } from '../agent/message.js';
@@ -2475,6 +2475,24 @@ export function App({
               const source = full.length > 0 ? full : history.current;
               const text = await runReflect(providerRef.current, source, {});
               pushItem({ kind: 'note', text: t('app.reflect.done', { count: source.length, text }) });
+              // reflect 产出同步进会话流：否则用户说「记住第 2 条」时 agent 上下文里没有这份清单，
+              // 两阶段搭配（反思产出 → 挑选沉淀 memory）就断在这里。占位产出（空历史/无经验）不注入。
+              // 与跨天提醒、memory 开启引导同一 injection 通道：落盘、resume 后可见。
+              if (text !== REFLECT_EMPTY_HISTORY && text !== REFLECT_NO_FINDINGS) {
+                history.current.push(
+                  stored(
+                    {
+                      role: 'user',
+                      content:
+                        '以下是 /reflect 对本次会话历史提炼的方法论清单（用户刚在界面上看过）。' +
+                        '如果用户从中挑选条目让你沉淀（如「记住第 2 条」「把这个记下来」），' +
+                        '按记忆机制写入对应目录；用户没有此类要求时不需要主动写。\n\n' +
+                        text,
+                    },
+                    { kind: 'injection' },
+                  ),
+                );
+              }
             } catch (e) {
               pushItem({ kind: 'error', text: t('app.reflect.failed', { message: (e as Error).message }) });
             } finally {

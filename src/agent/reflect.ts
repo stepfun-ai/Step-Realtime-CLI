@@ -16,6 +16,12 @@ import type { StoredMessage } from './message.js';
  * 纯函数：provider 以参数注入，便于单测用 fake provider 覆盖切段/map/reduce/护栏。
  */
 
+/** 空历史占位文案。App 侧据此判断：占位产出不注入会话流（注入了也没内容可选摘）。 */
+export const REFLECT_EMPTY_HISTORY = '（没有可回顾的对话历史。）';
+
+/** 未提炼出经验的占位文案。同上。 */
+export const REFLECT_NO_FINDINGS = '（未从历史中提炼出可复用的方法论经验。）';
+
 /** map 阶段的系统提示词：取向定死为可复用方法论，排除一次性事实。 */
 const MAP_SYSTEM =
   '你是一个协作复盘器。给你一段 AI 助手与用户的对话历史，请只提炼**可复用的通用方法论经验**，' +
@@ -121,7 +127,7 @@ export async function runReflect(
   fullMessages: readonly StoredMessage[],
   opts: ReflectOptions = {},
 ): Promise<string> {
-  if (fullMessages.length === 0) return '（没有可回顾的对话历史。）';
+  if (fullMessages.length === 0) return REFLECT_EMPTY_HISTORY;
 
   const maxTokensPerSegment = opts.maxTokensPerSegment ?? DEFAULT_MAX_TOKENS_PER_SEGMENT;
   const maxSegments = opts.maxSegments ?? DEFAULT_MAX_SEGMENTS;
@@ -144,7 +150,7 @@ export async function runReflect(
 
   let result: string;
   if (findings.length === 0) {
-    result = '（未从历史中提炼出可复用的方法论经验。）';
+    result = REFLECT_NO_FINDINGS;
   } else if (findings.length === 1) {
     // 只有一段有产出，无需再 reduce
     result = findings[0]!;
