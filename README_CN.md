@@ -3,6 +3,9 @@
   <a href="./README_CN.md">简体中文</a>
 </p>
 
+> [!IMPORTANT]
+> **非官方 —— 社区自主探索的 CLI。** Step Code 由社区贡献者自主探索实现。
+
 # Step Code
 
 [![CI](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml/badge.svg?branch=step-code-explore)](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml)

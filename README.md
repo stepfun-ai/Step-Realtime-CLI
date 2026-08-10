@@ -3,6 +3,9 @@
   <a href="./README_CN.md">简体中文</a>
 </p>
 
+> [!IMPORTANT]
+> **Unofficial — a community-driven exploration.** Step Code is a CLI explored independently by community contributors.
+
 # Step Code
 
 [![CI](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml/badge.svg?branch=step-code-explore)](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml)
