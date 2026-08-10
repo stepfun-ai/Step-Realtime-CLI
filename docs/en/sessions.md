@@ -9,7 +9,7 @@ This page covers saving, resuming, forking, compacting, and reviewing sessions, 
 
 ## Persistence
 
-Every conversation is automatically saved as a snapshot under `~/.step-code/sessions/`, bucketed by working directory: when you start in project A's directory, you only see project A's sessions. The session title is derived automatically from the first message.
+Every conversation is automatically saved as a snapshot under `~/.step-code/sessions/`, bucketed by working directory: when you start in project A's directory, you only see project A's sessions. The session title is initially derived from the first message; after the first complete answer, a semantic title is generated once asynchronously with the current model, replacing the derived value (on failure the derived value is kept and the session is unaffected). Sessions that have been renamed (`r`) or whose title was changed externally are never overwritten.
 
 ## Continuing and resuming
 

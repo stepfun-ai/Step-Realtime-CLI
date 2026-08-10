@@ -178,6 +178,23 @@ describe('SessionStore', () => {
     expect(store.rename(cwd, 'nope', 'x')).toBe(false);
   });
 
+  it('updateTitle 往返：写入 AI 生成标题、list 可见、不刷新 updatedAt', () => {
+    const s = store.create(cwd, 'm');
+    s.messages.push(stored({ role: 'user', content: '原始标题来源' }, { kind: 'user' }));
+    store.save(s);
+    const before = store.load(cwd, s.id)!;
+
+    expect(store.updateTitle(cwd, s.id, 'AI 生成的语义标题')).toBe(true);
+    expect(store.load(cwd, s.id)!.title).toBe('AI 生成的语义标题');
+    const metas = store.list(cwd);
+    expect(metas[0]!.title).toBe('AI 生成的语义标题');
+    // 不刷新 updatedAt（标题是元数据变化，不把会话顶到列表最前）
+    expect(metas[0]!.updatedAt).toBe(before.updatedAt);
+
+    // 不存在的会话返回 false
+    expect(store.updateTitle(cwd, 'nope', 'x')).toBe(false);
+  });
+
   it('model 随会话 save/load 往返（恢复时不再被 config 覆盖）', () => {
     const s = store.create(cwd, 'step-3.5-flash');
     store.save(s);

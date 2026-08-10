@@ -108,6 +108,8 @@ import { TodoPanel, allTodosDone } from './TodoPanel.js';
 import { WorkingStatus } from './WorkingStatus.js';
 import { applyDynamicPhaseEvent, parseDynamicWorkflowInput } from './DynamicWorkflowPanel.js';
 import { WelcomeBox } from './WelcomeBox.js';
+import { deriveTitle } from '../session/store.js';
+import { canOverwriteTitle, generateSessionTitle } from '../session/title.js';
 import type { SessionData, SessionMeta, SessionStore } from '../session/store.js';
 import { exportDebugBundle } from '../session/debugBundle.js';
 import { aggregateModelUsage } from '../session/usageReport.js';
@@ -498,6 +500,8 @@ export function App({
   // 见 persist 内注释——待办 #17：事件即时写而消息本体回合末才落盘，
   // 中间崩溃会让对账误判已送达、通知丢失）。初值 = resume 时的已送达集合。
   const deliveredWrittenRef = useRef<Set<string>>(new Set(resumeDelivered ?? []));
+  // 标题生成每会话只尝试一次（失败不重试，避免每轮都发请求）；按 sessionId 记录
+  const titleGenTriedRef = useRef<Set<string>>(new Set());
   // busy 时入队的系统合成注入（cron prompt / skill 正文 / goal 续跑文本）的文本登记：
   // queue 是 string[] 存不下标记，drain 时据此还原 silent，避免系统正文被当真人输入渲染成气泡。
   // 后台通知不靠它——通知有 notifyMsgRef 的预装配本体，drain 时按 prepared 判定。
@@ -3006,6 +3010,24 @@ export function App({
           todos.current = [];
         }
         persist();
+        // 会话标题 AI 生成：第一轮回答后异步触发一次（fire-and-forget，不阻塞回合收尾）。
+        // 覆盖纪律见 session/title.ts：用户 rename 过或外部改过标题的会话不动。
+        const sessForTitle = sessionRef.current;
+        if (!titleGenTriedRef.current.has(sessForTitle.id)) {
+          const derived = deriveTitle(sessForTitle.messages);
+          if (canOverwriteTitle(sessForTitle, derived)) {
+            titleGenTriedRef.current.add(sessForTitle.id);
+            void (async () => {
+              const generated = await generateSessionTitle(providerRef.current, history.current, {});
+              if (generated === undefined) return;
+              // 写回前重新加载再判一次：生成期间用户可能已 rename 或改标题
+              const latest = store.load(sessForTitle.cwd, sessForTitle.id);
+              if (latest === null) return;
+              if (!canOverwriteTitle(latest, deriveTitle(latest.messages))) return;
+              store.updateTitle(sessForTitle.cwd, sessForTitle.id, generated);
+            })();
+          }
+        }
         // 回合收尾（队列排空/续接决策）统一在 turnEndRef，/compact 收尾复用同一入口
         turnEndRef.current();
       }

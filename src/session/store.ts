@@ -683,6 +683,19 @@ export class SessionStore {
     this.updateIndexEntry(cwd, this.toIndexEntry(data));
     return true;
   }
+
+  /**
+   * 写入 AI 生成的标题。与 rename 同一模式：直接写文件、不刷新 updatedAt，
+   * 不把会话顶到 /resume 列表最前（标题只是元数据变化，不是会话活动）。
+   */
+  updateTitle(cwd: string, id: string, title: string): boolean {
+    const data = this.load(cwd, id);
+    if (data === null) return false;
+    data.title = title;
+    writeAtomic(this.fileFor(cwd, id), JSON.stringify(data, null, 2));
+    this.updateIndexEntry(cwd, this.toIndexEntry(data));
+    return true;
+  }
 }
 
 /** tmp + rename 原子写：先写临时文件再替换目标，避免半写文件被当成完整快照。 */
