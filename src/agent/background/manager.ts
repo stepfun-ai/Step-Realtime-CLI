@@ -38,8 +38,12 @@ export interface BackgroundTask {
   pid?: number;
   /** 完整输出落盘路径（<tasksDir>/<id>/output.log；配置了 tasksDir 才有）。内存 output 只是非权威尾部。 */
   outputPath?: string;
-  /** 落盘输出总字节数（进 XML 信封的 bytes 属性）。 */
+  /** 落盘输出当前字节数（进 XML 信封的 bytes 属性）。 */
   outputBytes?: number;
+  /** 落盘输出是否触发过滚动截断（超 maxOutputFileBytes 保护）。 */
+  outputTruncated?: boolean;
+  /** 历史总产出字节数（含被截断省略的；outputBytes 只是当前文件大小）。 */
+  outputTotalBytes?: number;
 }
 
 interface Internal extends BackgroundTask {
@@ -81,14 +85,49 @@ export interface BackgroundManagerOptions {
    */
   tasksDir?: string;
   /**
+   * output.log 磁盘上限（字节）：超过即滚动截断、保留尾部一半。缺省 32 MB。
+   * 内存截断防 RAM，磁盘截断防磁盘写满——2026-08-10 事故：失控 python REPL 死循环
+   * 3 天写 287 GB 把 C 盘归零、pagefile 无法扩展致 V8 FatalOOM。测试可注入小值。
+   */
+  maxOutputFileBytes?: number;
+  /**
    * resume 对账发现 lost 任务时同步调用（reconcile 是同步方法，回调须同步返回，不得 await）。
    */
   onLost?: (lost: LostTask) => void;
 }
 
 const MAX_OUTPUT_BYTES = 64 * 1024; // 内存只留 64KB 尾部
+/** output.log 磁盘上限缺省值（32 MB）。 */
+const DEFAULT_MAX_OUTPUT_FILE_BYTES = 32 * 1024 * 1024;
 /** SIGTERM 后的宽限期（ms），未退出再 SIGKILL 强杀。 */
 const KILL_GRACE_MS = 2000;
+
+/**
+ * 终止进程及其整棵子树（best-effort，不抛错）。
+ * Windows：taskkill /T 杀整棵树——单 kill 只杀 Git Bash 包装层，python/node 孙进程会变孤儿
+ * 继续跑（2026-08-10 事故：任务标 killed 后孙进程又写了 24 GB）。
+ * POSIX：杀进程组（依赖 spawn 时 detached:true 建立独立组），失败回退单 pid。
+ */
+export function terminateProcTree(proc: ChildProcess | undefined, signal: NodeJS.Signals = 'SIGTERM'): void {
+  if (proc === undefined || proc.pid === undefined) return;
+  if (process.platform === 'win32') {
+    try {
+      spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).unref();
+    } catch {
+      // best-effort
+    }
+    return;
+  }
+  try {
+    process.kill(-proc.pid, signal);
+  } catch {
+    try {
+      proc.kill(signal);
+    } catch {
+      // best-effort
+    }
+  }
+}
 let counter = 0;
 
 function nextId(): string {
@@ -127,6 +166,7 @@ export class BackgroundManager {
       mkdirSync(dir, { recursive: true });
       task.outputPath = join(dir, 'output.log');
       task.outputBytes = Buffer.byteLength(task.output, 'utf8');
+      task.outputTotalBytes = task.outputBytes;
       if (task.output !== '') appendFileSync(task.outputPath, task.output, 'utf8');
       this.persistMeta(task);
     } catch {
@@ -148,12 +188,43 @@ export class BackgroundManager {
     }
   }
 
-  /** 追加输出到 output.log 并累计字节数（内存 output 仍只留尾部，磁盘是权威全量）。 */
+  /** 追加输出到 output.log 并累计字节数（内存 output 仍只留尾部；磁盘留权威尾部，超上限滚动截断）。 */
   private persistOutputChunk(task: Internal, chunk: string): void {
     if (task.outputPath === undefined) return;
     try {
-      appendFileSync(task.outputPath, chunk, 'utf8');
-      task.outputBytes = (task.outputBytes ?? 0) + Buffer.byteLength(chunk, 'utf8');
+      const max = this.options.maxOutputFileBytes ?? DEFAULT_MAX_OUTPUT_FILE_BYTES;
+      const keep = Math.max(1, Math.floor(max / 2));
+      let buf: Buffer = Buffer.from(chunk, 'utf8');
+      task.outputTotalBytes = (task.outputTotalBytes ?? task.outputBytes ?? 0) + buf.length;
+      // 单 chunk 就可能超保留量（pipe data chunk 可达 64KB）：自身先截尾，否则追加后必然又超限
+      if (buf.length > keep) {
+        buf = buf.subarray(buf.length - keep);
+        task.outputTruncated = true;
+        const note = Buffer.from(
+          `\n[... step-code 滚动截断：单批输出超保留量，仅留尾部 ${keep} 字节 ...]\n`,
+          'utf8',
+        );
+        buf = Buffer.concat([note, buf]);
+      }
+      if ((task.outputBytes ?? 0) + buf.length > max) {
+        // 滚动截断：保留尾部一半，头部留截断标记行（含省略量与总产出，打开文件即可见）
+        let existing: Buffer = Buffer.alloc(0);
+        try {
+          existing = readFileSync(task.outputPath);
+        } catch {
+          // 读失败按空处理
+        }
+        const tail = existing.subarray(Math.max(0, existing.length - keep));
+        const marker =
+          `\n[... step-code 滚动截断：已省略前 ${(task.outputTotalBytes ?? 0) - tail.length} 字节` +
+          `（总产出 ${task.outputTotalBytes} 字节）。单任务 output.log 上限 ${max} 字节，` +
+          `防失控进程写满磁盘；需完整输出请让命令自行重定向到文件 ...]\n`;
+        writeFileSync(task.outputPath, Buffer.concat([Buffer.from(marker, 'utf8'), tail]));
+        task.outputTruncated = true;
+        task.outputBytes = Buffer.byteLength(marker, 'utf8') + tail.length;
+      }
+      appendFileSync(task.outputPath, buf);
+      task.outputBytes = (task.outputBytes ?? 0) + buf.length;
     } catch {
       // best-effort
     }
@@ -278,7 +349,15 @@ export class BackgroundManager {
     if (this.activeCount() >= this.maxRunning) {
       throw new Error(`后台任务已达上限（${this.maxRunning}），请先等待或停止部分任务。`);
     }
-    const proc = spawn(shellCmd, shellArgs, { cwd });
+    const proc = spawn(shellCmd, shellArgs, {
+      cwd,
+      // stdin 接空设备立即 EOF：agent 没有向运行中任务喂 stdin 的通道，默认 pipe 永不关闭
+      // 只会让读 stdin 的命令挂起或死循环（2026-08-10 事故诱因：python REPL 等不到 EOF）。
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // POSIX 独立进程组：终止时 kill(-pid) 杀整组，防孙进程逃逸。
+      // Windows 不需要 detached（杀树靠 taskkill /T），且要避免新 console 窗口问题。
+      detached: process.platform !== 'win32',
+    });
     return this.adopt(command, proc, '');
   }
 
@@ -471,10 +550,10 @@ export class BackgroundManager {
   private terminate(task: Internal, note: string): void {
     if (task.status !== 'running') return;
     task.output += `${task.output === '' ? '' : '\n'}[${note}]`;
-    task.proc?.kill('SIGTERM');
+    terminateProcTree(task.proc, 'SIGTERM');
     task.onStop?.();
     const force = setTimeout(() => {
-      if (task.exited !== true) task.proc?.kill('SIGKILL');
+      if (task.exited !== true) terminateProcTree(task.proc, 'SIGKILL');
     }, KILL_GRACE_MS);
     force.unref?.();
     task.status = 'killed';
@@ -639,7 +718,7 @@ export class BackgroundManager {
   stop(id: string): boolean {
     const t = this.tasks.get(id);
     if (t === undefined || t.status !== 'running') return false;
-    t.proc?.kill('SIGTERM');
+    terminateProcTree(t.proc, 'SIGTERM');
     t.onStop?.();
     t.status = 'killed';
     t.endedAt = new Date().toISOString();

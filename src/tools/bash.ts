@@ -4,6 +4,7 @@ import { fail, ok, type ToolContext, type ToolDef, type ToolResult } from './typ
 import { resolveShell, winPathToWsl, rewriteNulRedirect, type ResolvedShell } from './shellResolve.js';
 import { createOutputCollector, renderOutputNotes, type OutputSnapshot } from './bashOutput.js';
 import { truncateMiddle } from '../agent/toolResultLimit.js';
+import { terminateProcTree } from '../agent/background/manager.js';
 
 const schema = z.object({
   command: z.string().describe('要执行的 shell 命令。'),
@@ -105,7 +106,13 @@ function runForeground(
     }
     let proc: ChildProcess;
     try {
-      proc = spawn(shell.cmd, shell.args(command), { cwd: spawnCwd });
+      proc = spawn(shell.cmd, shell.args(command), {
+        cwd: spawnCwd,
+        // stdin 立即 EOF：agent 无 stdin 通道，pipe 永不关闭会让读 stdin 的命令挂起
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // POSIX 独立进程组，中断/超时杀整组防孙进程逃逸；Windows 杀树靠 taskkill /T
+        detached: process.platform !== 'win32',
+      });
     } catch (e) {
       resolve(fail(`命令执行异常：${(e as Error).message}`));
       return;
@@ -162,7 +169,7 @@ function runForeground(
     const onAbort = (): void => {
       // 已转后台的任务独立于回合存活：中断只杀还在前台的进程
       if (taskId !== undefined && ctx.background?.isDetached(taskId) === true) return;
-      proc.kill();
+      terminateProcTree(proc);
       finish(fail('用户中断，命令已终止。'));
     };
     ctx.signal?.addEventListener('abort', onAbort, { once: true });
@@ -233,7 +240,7 @@ function runForeground(
       if (settled) return;
       if (taskId === undefined || ctx.background === undefined) {
         // 配置关闭或上下文不支持后台：保持旧行为，超时即杀返回错误
-        proc.kill();
+        terminateProcTree(proc);
         finish(fail(`命令超时（${timeoutSec}s）后被终止。`));
         return;
       }
