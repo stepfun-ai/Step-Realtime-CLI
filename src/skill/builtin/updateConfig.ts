@@ -118,6 +118,14 @@ STEP_CODE_BASE_URL。
   一般不需要动。
 - 档位名固定三个，不支持自定义名称（档位名要直接作为 effort 值发给服务端）。
 
+### [memory] 记忆观察池
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| enabled | boolean | false | 记忆观察池开关。开启后 system 注入记忆段（目录说明+索引），agent 可将观察沉淀到 ~/.step-code/memory/ 与 .step-code/memory/；关闭保留已有文件不删除 |
+
+观察池定位：agent 写入的是**未经确认的观察**，不直接生效；定期回顾经用户确认后才晋升到 AGENTS.md / skills。/memory 命令查看与管理（on/off）。
+
 ### [search] 联网搜索
 
 | 键 | 类型 | 默认值 | 说明 |

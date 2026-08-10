@@ -224,6 +224,15 @@ export interface ProviderEntry {
 }
 
 /**
+ * memory 观察池配置（[memory] 段）。
+ * enabled 默认 false：不注入记忆段、不创建目录、/memory 提示未开启。
+ * 关闭不是删除——已有记忆文件原样保留，重新开启即恢复。
+ */
+export interface MemoryConfig {
+  enabled: boolean;
+}
+
+/**
  * step-code 运行时配置。
  *
  * StepFun 服务端走 Anthropic Messages 协议，有几条硬约束（见 provider 层）：
@@ -256,6 +265,8 @@ export interface StepCodeConfig {
   background?: BackgroundConfig;
   /** thinking（推理过程）请求配置（[thinking] 段）。loadConfig 恒赋值（默认 { enabled: false }），消费方仍按可选处理。 */
   thinking?: ThinkingConfig;
+  /** memory 观察池开关（[memory] 段）。loadConfig 恒赋值（默认 { enabled: false }）。 */
+  memory?: MemoryConfig;
   /** 联网搜索配置（[search] 段）。loadConfig 恒赋值（可能为空对象 {}），消费方按「专用段 → 通用段 → 主会话渠道」解析。 */
   search?: SearchConfig;
   /** 网页结果缓存容量配置（[tools.web] 段）。未配置时使用内置默认值（条目数 100 / 总字节 32MB / 单条 2MB）。 */
@@ -492,6 +503,7 @@ interface TomlConfigShape {
   continuation?: unknown;
   background?: unknown;
   thinking?: unknown;
+  memory?: unknown;
   search?: unknown;
   tools?: unknown;
   language?: unknown;
@@ -842,6 +854,11 @@ function parseThinkingLevels(raw: unknown): Partial<Record<ThinkingLevelName, nu
  * @throws 出现已删除的 budget_tokens 键；default_level 非法；levels 含未知档位名；
  *         启用时 levels 某档未给正文留出最小余量。
  */
+export function resolveMemoryConfig(raw: unknown): MemoryConfig {
+  const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  return { enabled: t['enabled'] === true };
+}
+
 export function resolveThinkingConfig(raw: unknown, maxTokens: number): ThinkingConfig {
   const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
 
@@ -1155,6 +1172,8 @@ export function loadConfig(
   };
   // thinking 请求配置：余量校验以最终生效的 maxTokens 为基准（启用且余量不足时抛配置错误）
   cfg.thinking = resolveThinkingConfig(toml.thinking, cfg.maxTokens);
+  // memory 观察池开关：默认关闭；恒赋值（默认 { enabled: false }）
+  cfg.memory = resolveMemoryConfig(toml.memory);
   // 联网搜索配置：所有字段可选，缺省时消费方缺省回退主会话渠道（零配置默认策略）
   cfg.search = resolveSearchConfig(toml.search);
   // 网页结果缓存容量：三个维度全部可选，未配置时使用内置默认值
@@ -1461,12 +1480,13 @@ export function saveDefaultModel(modelOrAlias: string, current?: string): void {
  * @param key 字段名
  * @param value 字段值（数字或字符串）
  */
-function saveSectionKey(sectionHeader: string, key: string, value: string | number): void {
+function saveSectionKey(sectionHeader: string, key: string, value: string | number | boolean): void {
   const dir = join(homedir(), '.step-code');
   const tomlPath = join(dir, 'config.toml');
   const safeValue =
     typeof value === 'number' ? String(value) : String(value).replace(/[\r\n]+/g, '');
-  const line = `  ${key} = ${typeof value === 'number' ? safeValue : `"${safeValue}"`}`;
+  // boolean 走 TOML 裸值（true/false），字符串加引号，数字原样
+  const line = `  ${key} = ${typeof value === 'string' ? `"${safeValue}"` : safeValue}`;
   const text = existsSync(tomlPath) ? readFileSync(tomlPath, 'utf8') : '';
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/) || [];
@@ -1521,6 +1541,11 @@ function saveSectionKey(sectionHeader: string, key: string, value: string | numb
  *
  * @param level 合法档位名（low / medium / high）；'off' 被静默忽略
  */
+/** memory 开关写回 config.toml 的 [memory] enabled（TOML 裸布尔值）。 */
+export function saveMemoryEnabled(enabled: boolean): void {
+  saveSectionKey('[memory]', 'enabled', enabled);
+}
+
 export function saveDefaultThinkingLevel(level: ThinkingLevelName | 'off'): void {
   if (level === 'off') return;
   const current = (() => {

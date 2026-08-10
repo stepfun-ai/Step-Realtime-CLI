@@ -89,6 +89,17 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: 'memory',
+    describe: 'cmd.memory',
+    getArgumentCompletions: (partial) => {
+      const q = partial.toLowerCase();
+      return [
+        { value: 'on', description: t('cmd.memory.sub.on') },
+        { value: 'off', description: t('cmd.memory.sub.off') },
+      ].filter((c) => q === '' || c.value.startsWith(q));
+    },
+  },
+  {
     name: 'goal',
     describe: 'cmd.goal',
     getArgumentCompletions: (partial) => {

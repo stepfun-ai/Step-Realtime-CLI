@@ -27,7 +27,7 @@ When you resume a session (`step -r` / `/resume`), the conversation history is r
 
 Type `/` to bring up the command menu: ↑↓ to select (wrapping around), Tab to complete, Enter to execute, Esc to close the menu and clear the input box. Matching rules: prefix matching takes priority; with exactly 2 characters a subsequence fallback is additionally enabled, covering abbreviations like `cp` → `compact`. The menu shows 6 entries per screen; beyond that it scrolls in a window and shows `(current/total)`.
 
-All 25 commands (the table below has 26 rows, because `/skill reload` is listed separately: it is a subcommand of `/skill`, not a command of its own):
+All 26 commands (the table below has 27 rows, because `/skill reload` is listed separately: it is a subcommand of `/skill`, not a command of its own):
 
 | Command | What it does |
 |------|------|
@@ -52,6 +52,7 @@ All 25 commands (the table below has 26 rows, because `/skill reload` is listed 
 | `/usage [--all]` | Show per-model token usage and cache hit rate for this session; `--all` aggregates every session in this working directory (including crash leftovers that have an event log but no snapshot). Read-only, runs instantly while busy |
 | `/resume [id]` (alias `/sessions`) | With no argument, opens the interactive session picker (main sessions only); with an id, resumes directly |
 | `/lang [zh\|en]` | With no argument, shows the current language; with an argument, switches the interface between Chinese and English and writes `language` back to `config.toml` |
+| `/memory [on\|off]` | Memory observation pool: with no argument, lists current observations (global + project layers, with index usage and files needing repair); `on`/`off` toggles and persists to `[memory] enabled` in `config.toml`. Off by default; observations do not take effect directly — they are promoted to your rules only after your review |
 | `/mcp` | Check MCP server connection status and tool counts |
 | `/skill [name] [args]` | With no argument, opens the interactive skill picker (type to filter, ↑↓ to select, Enter to activate, Esc to cancel); with an argument, activates one manually |
 | `/skill reload` | Force a rescan of the skill directories (changes to SKILL.md made mid-session take effect immediately; turn boundaries also detect them automatically) |

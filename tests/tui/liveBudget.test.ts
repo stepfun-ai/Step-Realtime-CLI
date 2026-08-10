@@ -131,8 +131,8 @@ describe('displayWidth 终端显示宽度', () => {
 
 describe('matchSlashCommands 斜杠命令匹配', () => {
   it('前缀匹配命令名与别名；含空格或非 / 开头不匹配', () => {
-    // /mo 仅前缀命中 model（permission 的 o 在位置 8，超出跨度限制）
-    expect(matchSlashCommands('/mo').map((c) => c.name)).toEqual(['model']);
+    // /mo 前缀命中 model 与 memory（permission 的 o 在位置 8，超出跨度限制）
+    expect(matchSlashCommands('/mo').map((c) => c.name)).toEqual(['model', 'memory']);
     expect(matchSlashCommands('/q').map((c) => c.name)).toEqual(['exit']); // quit 别名
     expect(matchSlashCommands('/model x')).toEqual([]);
     expect(matchSlashCommands('hello')).toEqual([]);
@@ -168,10 +168,10 @@ describe('computePromptRows 输入区实测行数', () => {
   });
 
   it('斜杠菜单可见时计入菜单行数（边框 2 + 窗口条数 + 页码行）', () => {
-    // / 匹配全部 21 条 → 2 + 6 + 1 = 9 行菜单 + 输入框 3 = 12
+    // / 匹配全部 22 条 → 2 + 6 + 1 = 9 行菜单 + 输入框 3 = 12
     expect(computePromptRows('/', { busy: false, columns: 80 })).toBe(12);
-    // /mo 匹配 1 条 → 2 + 1 = 3 行菜单 + 输入框 3 = 6
-    expect(computePromptRows('/mo', { busy: false, columns: 80 })).toBe(6);
+    // /mo 匹配 2 条 → 2 + 2 = 4 行菜单 + 输入框 3 = 7
+    expect(computePromptRows('/mo', { busy: false, columns: 80 })).toBe(7);
     // busy 期间敲 / 也不漏算：12（busy 不加 tip 行，tip 归 WorkingStatus）
     expect(computePromptRows('/', { busy: true, columns: 80 })).toBe(12);
   });

@@ -17,6 +17,7 @@ import { createProvider } from '../../provider/factory.js';
 import { buildAgentRegistry } from './registry.js';
 import { closeDanglingToolUse } from '../wirelog.js';
 import { timeSection } from '../nowContext.js';
+import { memorySection, scanMemory } from '../memory.js';
 import type { SubagentStore } from './store.js';
 import type { AgentDefinition, RunSubagentFn, SpawnSubagentRequest, SubagentResult } from './types.js';
 
@@ -312,7 +313,10 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       // cwd 覆盖（team worker 落进自己工作间）：system 提示与 ctx 同步用覆盖值
       const cwd = req.cwd ?? deps.cwd;
       const skillPart = deps.skills !== undefined ? skillListing(deps.skills) : '';
-      const system = `${agentDef.systemPrompt}\n\n当前工作目录：${cwd}\n\n${timeSection(new Date())}${skillPart}`;
+      // 记忆索引对子 agent 只读注入（开启时）：它做调研需要偏好上下文，但无写入权
+      const memoryPart =
+        deps.config?.memory?.enabled === true ? `\n\n${memorySection(scanMemory(cwd), 'readonly')}` : '';
+      const system = `${agentDef.systemPrompt}\n\n当前工作目录：${cwd}\n\n${timeSection(new Date())}${memoryPart}${skillPart}`;
       // 深度未达上限时给子 agent 注入 runSubagent（同一 runner，可再派生）；达上限则不注入（拿不到派生能力）。
       // 嵌套派生时把自己的子会话 id 线程化传递下去，下一层的 meta.parentId 才能指向真实的直接父级。
       const selfRunner = canSpawnDeeper

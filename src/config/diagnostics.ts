@@ -28,6 +28,7 @@ export const CONFIG_TOP_LEVEL_KEYS = [
   'continuation',
   'background',
   'thinking',
+  'memory',
   'search',
   'tools',
   'language',

@@ -33,9 +33,11 @@ import {
   saveDefaultProvider,
   saveDefaultThinkingLevel,
   saveLanguage,
+  saveMemoryEnabled,
   type ThinkingLevelName,
 } from '../config/config.js';
 import { getLocale, setLocale, t, type Locale } from '../i18n.js';
+import { memorySection, scanMemory, MEMORY_ONBOARDING_INJECTION, MEMORY_INDEX_BUDGET, formatMemoryEntryLine, measureMemoryIndex } from '../agent/memory.js';
 import { createProvider } from '../provider/factory.js';
 import { resolveCompactionBinding } from '../provider/compaction.js';
 import { isAbortError } from '../provider/retry.js';
@@ -1940,6 +1942,64 @@ export function App({
           setThinkPickerOpen(true);
           break;
         }
+        case 'memory': {
+          const arg = args.trim().toLowerCase();
+          const enabled = configRef.current.memory?.enabled === true;
+          if (arg === 'on' || arg === 'off') {
+            const next = arg === 'on';
+            if (enabled === next) {
+              pushItem({ kind: 'note', text: t(next ? 'app.memory.alreadyOn' : 'app.memory.alreadyOff') });
+              break;
+            }
+            configRef.current.memory = { enabled: next };
+            try {
+              saveMemoryEnabled(next);
+            } catch {
+              // 持久化失败只影响下次启动，本次切换已在内存生效
+            }
+            if (next) {
+              // 中途开启的回看引导：注入会话消息流，agent 下一轮看到并补沉淀本次会话的遗留观察
+              // （落盘、resume 后可见；与跨天提醒同一 injection 通道）
+              history.current.push(
+                stored({ role: 'user', content: MEMORY_ONBOARDING_INJECTION }, { kind: 'injection' }),
+              );
+            }
+            pushItem({ kind: 'note', text: t(next ? 'app.memory.nowOn' : 'app.memory.nowOff') });
+            break;
+          }
+          if (arg !== '') {
+            pushItem({ kind: 'note', text: t('app.memory.usage') });
+            break;
+          }
+          if (!enabled) {
+            pushItem({ kind: 'note', text: t('app.memory.disabled') });
+            break;
+          }
+          const scan = scanMemory(ctx.cwd);
+          const lines: string[] = [];
+          const globals = scan.entries.filter((e) => e.scope === 'global');
+          const projects = scan.entries.filter((e) => e.scope === 'project');
+          lines.push(t('app.memory.listGlobal'));
+          if (globals.length === 0) lines.push(t('app.memory.listEmpty'));
+          for (const e of globals) lines.push(formatMemoryEntryLine(e));
+          lines.push(t('app.memory.listProject'));
+          if (projects.length === 0) lines.push(t('app.memory.listEmpty'));
+          for (const e of projects) lines.push(formatMemoryEntryLine(e));
+          lines.push(t('app.memory.indexUsage', { used: measureMemoryIndex(scan), budget: MEMORY_INDEX_BUDGET }));
+          if (scan.broken.length > 0) {
+            lines.push(t('app.memory.brokenHeader'));
+            for (const e of scan.broken) lines.push(`  - ${e.absPath}`);
+          }
+          // 回顾兜底提示：条目多或最旧条目超 30 天
+          const oldest = scan.entries[scan.entries.length - 1];
+          const thirtyDaysMs = 30 * 24 * 3600 * 1000;
+          const tooOld = oldest !== undefined && oldest.updatedAt !== '' && Date.now() - Date.parse(oldest.updatedAt) > thirtyDaysMs;
+          if (scan.entries.length > 30 || tooOld) {
+            lines.push(t('app.memory.reviewHint'));
+          }
+          pushItem({ kind: 'note', text: lines.join('\n') });
+          break;
+        }
         case 'lang': {
           const arg = args.trim().toLowerCase();
           if (arg === '') {
@@ -2840,11 +2900,14 @@ export function App({
       // system 按当前 skill 注册表逐轮组合：systemPrefix + skill 清单 + 自定义子 agent 角色 + AGENTS.md 尾部（reload 后下一轮即生效）
       const systemNow =
         systemPrefix + skillListing(skillsRef.current) + subagentListing([...subagentRegistry.values()]) + (agentsMd !== '' ? `\n\n${agentsMd}` : '');
+      // memory 观察池段：仅开启时注入，拼在 AGENTS.md 之后（system 尾部：低频变动内容，保住缓存前缀）。
+      // 每轮现扫目录——条目数小（几十内），开销可忽略；换来的是 agent 自己写完文件后下轮即被索引到。
+      const memoryPart = configRef.current.memory?.enabled === true ? `\n\n${memorySection(scanMemory(ctx.cwd))}` : '';
       try {
         for await (const ev of runAgent({
           provider: providerRef.current,
           // SessionStart hook 注入的上下文拼在 system 尾部（注入前为空串则原样）
-          system: sessionContextRef.current !== '' ? `${systemNow}\n\n${sessionContextRef.current}` : systemNow,
+          system: sessionContextRef.current !== '' ? `${systemNow}${memoryPart}\n\n${sessionContextRef.current}` : `${systemNow}${memoryPart}`,
           ctx: {
             ...ctx,
             skills: skillsRef.current, // 覆盖启动快照，取当前注册表

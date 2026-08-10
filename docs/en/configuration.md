@@ -375,6 +375,26 @@ When the recent messages that must be kept already exceed the budget, compaction
 
 One case does not count as "cannot compact further": when history is still short and there is nothing outside the keep window to summarize, compaction has nothing to work with — this does not trigger the stop above, and normal compaction resumes as the conversation grows.
 
+### `[memory]`: the memory observation pool
+
+A long-term observation store maintained by the agent itself: when the user explicitly asks to remember something, corrects the agent, or a stable project convention shows up, the agent writes an observation into two markdown directory layers (global `~/.step-code/memory/` and project `.step-code/memory/`), and the system prompt carries a directory note plus an observation index at its tail. Observations **do not take effect directly** (marked as unconfirmed; confirmed rules like AGENTS.md win on conflict) — they are promoted into your rules only after your periodic review.
+
+```toml
+[memory]
+enabled = true   # default false: no memory section, no directories created; existing files are kept
+```
+
+| Field | Default | Notes |
+|------|------|------|
+| `enabled` | false | Observation pool toggle. Enabling mid-session via `/memory on` injects a review prompt so the agent backfills observations from the current session |
+
+Notes:
+
+- Storage is markdown body + a `<!-- MEMORY_FIELDS {...} -->` comment block (version / occurrences / updated_at); files are human-editable.
+- No embeddings, no background extraction pipeline; updates happen only inside conversation turns (the agent writes with file tools), and the index is re-scanned every turn.
+- Sub-agents are read-only: they see the index but cannot write (avoids parallel-write conflicts and noise from ephemeral contexts).
+- `/memory` with no argument lists all observations, index character usage, and files that failed to parse.
+
 ### `[background]`: background tasks
 
 All four fields are optional and fall back to the defaults in the table below.
