@@ -5,6 +5,7 @@
  */
 import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile, access } from 'node:fs/promises';
+import { existsSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -15,7 +16,7 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 import { TeamMode } from '../../src/agent/team/mode.js';
 import { normalizeScope, scopeMatches, TeamStore } from '../../src/agent/team/store.js';
-import { branchTip } from '../../src/agent/team/git.js';
+import { addWorktree, branchTip, linkSharedNodeModules } from '../../src/agent/team/git.js';
 import { workerBriefing } from '../../src/tools/team.js';
 import { wrapWriteGuard } from '../../src/agent/subagent/runner.js';
 

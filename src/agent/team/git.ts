@@ -3,6 +3,9 @@
  * 只覆盖 team 需要的最小集：仓内判定 / 有提交判定 / 当前分支 / worktree 增删 / diff 文件清单 / merge。
  */
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { TeamError } from './types.js';
@@ -62,8 +65,46 @@ export async function refExists(repoRoot: string, ref: string): Promise<boolean>
   }
 }
 
+/**
+ * 把主仓的 node_modules 以目录联接的形式挂进工作间。返回是否挂上（或已存在）。
+ *
+ * 为什么需要：worktree 只 checkout 版本控制里的文件，而 node_modules 被 gitignore，
+ * 所以工作间是「有源码、没依赖」的状态。worker 一跑 vitest / tsc 就会因为找不到依赖
+ * 卡到超时被杀——它于是无法在自己的改动上自验，只能提交未验证的代码，把验证责任
+ * 全压到收编后的主仓复跑上。这是实际发生过两次的失败模式。
+ *
+ * 为什么用联接而不是复制：node_modules 动辄数百 MB，且内部本身就是符号链接农场
+ * （pnpm 指向 .pnpm store），复制既慢又可能破坏链接结构。
+ *
+ * 副作用需要知情：依赖是**共享**的。worker 若在工作间里跑 npm install / pnpm add，
+ * 会写到主仓的 node_modules，影响主仓与其他并行 worker。worker 本不该装依赖
+ * （依赖已齐备），但这条约束得靠任务提示传达，联接本身拦不住。
+ *
+ * 失败不阻塞：Windows 上建目录联接通常不需要管理员权限，但真失败了也只是 worker
+ * 跑不了测试，不该让任务启动不起来——静默跳过，由调用方决定是否提示。
+ */
+export async function linkSharedNodeModules(repoRoot: string, worktreeDir: string): Promise<boolean> {
+  const src = join(repoRoot, 'node_modules');
+  const dest = join(worktreeDir, 'node_modules');
+  try {
+    if (!existsSync(src)) return false; // 主仓自己都没装依赖，无事可做
+    if (existsSync(dest)) return true; // 复用工作间时已经挂过
+    // 'junction' 在非 Windows 平台被 Node 视作 'dir'，故无需分平台
+    await symlink(src, dest, 'junction');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 开出 worktree：`<dir>` 处挂 `<branch>`（不存在则从 base 新建）。幂等：dir 已是挂着 branch 的 worktree 时直接复用（rework 重派场景）。 */
 export async function addWorktree(repoRoot: string, dir: string, branch: string, base: string): Promise<void> {
+  await mountWorktree(repoRoot, dir, branch, base);
+  // 挂载成功后补依赖联接（三条挂载路径都要，故放在外层统一做）
+  await linkSharedNodeModules(repoRoot, dir);
+}
+
+async function mountWorktree(repoRoot: string, dir: string, branch: string, base: string): Promise<void> {
   if (!(await refExists(repoRoot, branch))) {
     await git(repoRoot, ['worktree', 'add', dir, '-b', branch, base]);
     return;
