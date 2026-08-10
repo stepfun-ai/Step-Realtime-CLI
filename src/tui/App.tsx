@@ -2333,7 +2333,8 @@ export function App({
           todos.current = [];
           imageStore.current.clear();
           pasteStore.current.clear();
-          sessionRef.current = store.create(ctx.cwd, model);
+          // 新会话 model 存别名（同 persist 口径），避免真实 id 被 resolveStartupModelAlias 误反查
+          sessionRef.current = store.create(ctx.cwd, currentModelAliasRef.current ?? model);
           // 后台任务管理器换绑到新会话：任务落盘目录随会话切换；
           // 旧管理器在途任务（属于旧会话）不再接管，新任务落到新会话目录。
           background.current = new BackgroundManager(10, {

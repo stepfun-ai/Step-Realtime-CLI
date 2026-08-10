@@ -579,7 +579,7 @@ function resumeSession(
 }
 
 const resolveResume = (r: { session: SessionData; delivered: ReadonlySet<string> } | null): { session: SessionData; delivered: ReadonlySet<string> } =>
-  r ?? { session: store.create(cwd, config.model), delivered: new Set() };
+  r ?? { session: store.create(cwd, config.modelAlias ?? config.model), delivered: new Set() };
 let resolved: { session: SessionData; delivered: ReadonlySet<string> };
 /** 恢复是否成功命中了一个已存在的会话（区别于 resume 失败后 fallback 新建）。 */
 let resumeHit = false;
@@ -623,18 +623,20 @@ if (resumeHit && session.messages.length === 0) {
 /** 本次恢复带回的已送达通知幂等键集合（TUI 组合根交给 App 做后台任务对账；新建会话为空集）。 */
 const resumeDelivered: ReadonlySet<string> = resolved.delivered;
 // 模型来源优先级：命令行 --model 显式覆盖 > 会话存储的 model（恢复时保留）> config 默认。
-// opts.model 存在表示用户命令行显式指定，覆盖会话；否则新建会话用 config.model，恢复会话保留其存储值。
+// opts.model 存在表示用户命令行显式指定，覆盖会话；否则新建会话用 config 默认，恢复会话保留其存储值。
 // 会话 model 落盘存「别名 ?? 裸 id」而非真实 id：别名承载 provider/窗口/显示名整组绑定，
 // 是当初选择的完整信息；resume 直接按它重建（applyModelAlias 自判别名/裸 id），不必反查。
 // 反查在同 id 多别名（step37/step37-plan 同为 step-3.7-flash）时会任取其一、激活错 provider。
-// 恢复时若命中别名，resolveModelEntry 在上文展开为真实 id 并同步回 session.model（第 652 行），
-// 保证后续 provider.stream 拿到的是真实模型 id。
+// provider.stream 需要真实模型 id：由 providerModel 单独承载，session.model 保留别名。
+let providerModel = config.model;
 if (opts.model !== undefined) {
   // opts.model 可能是别名（如 'router'）或裸模型 id（如 'step-router-v1'）；
   // loadConfig 已经展开过一次（config.model 是真实 id），这里直接用展开后的值。
-  session.model = config.model;
+  session.model = config.modelAlias ?? config.model;
+  providerModel = config.model;
 } else if (session.model === '' || session.model === undefined) {
-  session.model = config.model;
+  session.model = config.modelAlias ?? config.model;
+  providerModel = config.model;
 }
 // 权限模式来源优先级：命令行 --yolo/--auto 显式指定 > config.toml permission_mode（常驻表态）
 // > 恢复会话存储的 mode > manual。config 未设置且未恢复会话时落 manual，与历史行为完全一致。
@@ -646,6 +648,7 @@ const initialMode: PermissionMode = resolveStartupMode({
 
 // provider 在上游按 config.model 建立；若恢复的会话存了不同的 model，按会话 model 重建 provider，
 // 保证 App 拿到的 provider 与 model 一致（否则首轮请求会用错模型）。命令行 --model 已在上面覆盖过 session.model。
+// session.model 保留别名（用于 resolveStartupModelAlias 反查与持久化）；providerModel 承载真实 id 给 provider.stream。
 let sessionMaxContextSize = config.maxContextSize;
 if (session.model !== '' && session.model !== config.model) {
   const resolved = resolveModelEntry(config, session.model);
@@ -653,16 +656,18 @@ if (session.model !== '' && session.model !== config.model) {
     try {
       provider = createProvider(resolved);
       sessionMaxContextSize = resolved.maxContextSize;
-      session.model = resolved.model;
+      providerModel = resolved.model;
     } catch {
       // 会话 model 无法解析成有效 provider（如配置已删除该别名、api_key 缺失）时，
-      // 回退到 config.model，不让旧会话因配置变动而无法启动；同时改写 session.model
+      // 回退到 config 默认模型，不让旧会话因配置变动而无法启动；同时改写 session.model
       // 使会话后续请求走默认模型。
-      session.model = config.model;
+      session.model = config.modelAlias ?? config.model;
+      providerModel = config.model;
     }
   } else {
-    // 会话存储的 model 既不是别名也不是有效配置，直接回退到 config.model。
-    session.model = config.model;
+    // 会话存储的 model 既不是别名也不是有效配置，直接回退到 config 默认模型。
+    session.model = config.modelAlias ?? config.model;
+    providerModel = config.model;
   }
 }
 
@@ -888,7 +893,7 @@ async function runPrint(prompt: string): Promise<void> {
   const runOnce = (): ReturnType<typeof runAgent> => runAgent({
     provider,
     providerName: config.provider,
-    model: session.model,  // ← 修复：原先缺失，导致 --model 指定的模型在 runAgent → runTurn → provider.stream 链路中断裂
+    model: providerModel,  // ← 真实模型 id：session.model 存别名，provider.stream 需要真实 id
     // SessionStart hook 注入的上下文拼在 system 尾部（仅本轮生效）
     // 非交互模式专项指令：明确告知模型「直接执行任务，不要解释命令，不要激活 skill」
     system: (() => {
@@ -1031,7 +1036,7 @@ if (opts.reflect === true) {
       subagentRegistry={subagentRegistry}
       reloadSkills={reloadSkills}
       ctx={ctx}
-      model={session.model}
+      model={providerModel}
       config={config}
       initialMode={initialMode}
       store={store}

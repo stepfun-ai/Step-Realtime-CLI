@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- **会话模型别名回退错误**：新建会话或 `/new` 后，状态栏与渠道绑定会错误回退到同名真实 id 的别名（如 `kimi-for-coding` 而非 `song`）。根因是 `session.model` 在新建/resume 路径被写成真实模型 id，而 `resolveStartupModelAlias` 反查时命中了配置表中同名的另一个别名条目。修复为 `session.model` 统一存别名（与 `persist()` 口径一致），provider 所需真实 id 由独立的 `providerModel` 变量承载，两者分离。
 - **busy 摘要行补「Ctrl+B 转后台」提示**：子 agent 运行中的压缩摘要行此前看不到转后台入口（提示只在用不上的场景显示）。
 - **session 索引过期判定的同毫秒竞态**：`rebuiltAt` 与快照 mtime 相等时 `>` 漏判索引过期，改 `>=`。
 
