@@ -64,7 +64,6 @@ await build({
   },
   define: {
     "process.env.STEP_CLI_BUILD_VERSION": JSON.stringify(buildVersion),
-    "process.env.STEP_CLI_ENABLE_OPENTUI": JSON.stringify("0"),
   },
   output: {
     file: bundlePath,

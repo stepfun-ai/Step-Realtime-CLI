@@ -46,6 +46,7 @@ import type {
   StepCliSessionSnapshot as ProtocolSessionSnapshot,
   StepCliSessionRunResult,
   StepCliSessionSnapshotResult,
+  StepCliSlashCommandResult,
   StepCliRuntimeSummary as ProtocolRuntimeSummary,
   StepCliTurnResult as ProtocolTurnResult,
   StepCliSessionWakeReceipt,
@@ -757,6 +758,19 @@ export class StepCliSessionService {
       session: this.buildLoadedDescriptor(prepared.sessionId, entry),
       result: toProtocolTurnResult(result),
     };
+  }
+
+  async executeSlashCommand(
+    sessionIdInput: string,
+    commandLine: string,
+  ): Promise<StepCliSlashCommandResult> {
+    const sessionId = normalizeSessionId(sessionIdInput);
+    await this.ensureSession(sessionId);
+    const entry = this.sessions.get(sessionId);
+    if (!entry) {
+      throw new Error(`Failed to load session: ${sessionId}`);
+    }
+    return await entry.app.executeSlashCommandExternal(commandLine);
   }
 
   async getPendingClarification(

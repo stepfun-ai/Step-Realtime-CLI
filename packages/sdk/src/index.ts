@@ -12,6 +12,7 @@ import type {
   StepCliSessionDescriptor,
   StepCliSessionRunResult,
   StepCliSessionSnapshotResult,
+  StepCliSlashCommandResult,
   StepCliSessionWakeReceipt,
   StepCliSessionWakeRequest,
   StepCliStartGoalRequest,
@@ -115,6 +116,13 @@ export class StepCliSdk {
     signal?: AbortSignal,
   ): Promise<StepCliSessionRunResult> {
     return await this.gateway.runPrompt(sessionId, prompt, signal);
+  }
+
+  async executeSlashCommand(
+    sessionId: string,
+    commandLine: string,
+  ): Promise<StepCliSlashCommandResult> {
+    return await this.gateway.executeSlashCommand(sessionId, commandLine);
   }
 
   async getPendingClarification(

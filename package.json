@@ -40,6 +40,7 @@
   "dependencies": {
     "@opentui/core": "^0.1.90",
     "@opentui/react": "^0.1.90",
+    "@step-cli/agent-sdk": "workspace:*",
     "@step-cli/core": "workspace:*",
     "@step-cli/llm": "workspace:*",
     "@step-cli/mcp": "workspace:*",

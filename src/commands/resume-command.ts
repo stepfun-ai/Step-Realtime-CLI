@@ -15,10 +15,9 @@ import {
   loadOpenTuiClientAppFactoryAtRuntime,
 } from "../runtime/open-tui-capability.js";
 
-// Keep this build flag in the command module so rolldown can fold the bundle's
-// TTY startup path away before it ever reaches the OpenTUI loader.
-const OPEN_TUI_COMPILE_TIME_ENABLED =
-  process.env.STEP_CLI_ENABLE_OPENTUI !== "0";
+// OpenTUI is always enabled; keep this compile-time constant so rolldown
+// can fold the bundle's TTY startup path away before it reaches the loader.
+const OPEN_TUI_COMPILE_TIME_ENABLED = true;
 
 export async function runResumeCommand(argv: string[]): Promise<void> {
   const resumeProgram = configureCommanderProgram(new Command());

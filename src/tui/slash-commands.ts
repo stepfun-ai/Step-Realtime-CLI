@@ -19,6 +19,12 @@ export const TUI_SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] =
       description: "Show current session status",
     },
     {
+      command: "/swarm",
+      insertText: "/swarm ",
+      description: "Toggle swarm mode or run a swarm task",
+      argHint: "[on|off|task]",
+    },
+    {
       command: "/goal",
       insertText: "/goal ",
       description: "Manage the persistent session goal",

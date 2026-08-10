@@ -38,7 +38,16 @@ const config: KnipConfig = {
     // (see realtime-vad-silero/silero-adapter.ts); knip can't see the indirect
     // specifier.
     "avr-vad",
+    // @step-cli/agent-sdk is consumed by extensions/realtime-voice (not matched by
+    // the root workspace's src/**/*.ts project glob), so knip flags it as unused
+    // from the root perspective even though it is a valid workspace dependency.
+    "@step-cli/agent-sdk",
   ],
+  ignoreIssues: {
+    // rg (ripgrep) is an external system binary spawned by shell-tools.ts;
+    // not a Node.js package binary declared in package.json.
+    "packages/core/src/tools/native-impls/shell-tools.ts": ["binaries"],
+  },
   ignoreExportsUsedInFile: true,
   treatConfigHintsAsErrors: false,
 };
