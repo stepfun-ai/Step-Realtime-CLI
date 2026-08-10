@@ -172,9 +172,15 @@ describe('read_media', () => {
     expect(r.content).toContain('无需分块');
   });
 
-  it('probe 模式：长图给出按高度方向的建议分块，末块按剩余收窄', async () => {
-    // 508×30173 长图（模拟真实公众号长截图）
-    writePng('tall.png', await pngBytes(508, 30173));
+  it(
+    'probe 模式：长图给出按高度方向的建议分块，末块按剩余收窄',
+    { timeout: 60_000 },
+    async () => {
+      // 单跑基线 11–15s，并发放大系数约 1.4×（21094ms 实测），再留 4 倍余量到 60s。
+      // 全局 20s 是给 16 核并发下 3 倍放大预留的，但这个用例光编码+20 次 region 解码就超基线。
+      // 不动全局：全局放宽会把其它测试的死锁假阴性窗口一起放大。见 vitest.config.ts。
+      // 508×30173 长图（模拟真实公众号长截图）
+      writePng('tall.png', await pngBytes(508, 30173));
     const r = await executeTool('read_media', { path: 'tall.png', probe: true }, ctx);
     expect(r.isError).toBe(false);
     expect(r.images).toBeUndefined();
