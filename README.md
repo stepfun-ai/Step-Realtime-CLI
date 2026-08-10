@@ -22,6 +22,7 @@ Key capabilities:
 - **Permission tiers + plan mode**: enforce "say what you'll change before changing it"
 - **Sub-agents and JS dynamic workflows**: split large tasks and run them in parallel
 - **Autonomous goals**: keep driving one objective across turns
+- **Memory observation pool (/memory)**: the agent records observed preferences and conventions into plain markdown directories (global + project); observations stay inert until your review promotes them into your rules. Off by default
 - **Team mode (/team)**: parallel multi-mission repo changes — git worktree isolation, mutually exclusive write scopes, system-enforced dependency gating, and a five-gate reviewed merge; cross-repo supported
 - **Context compaction + session persistence**: resume days later with full history
 - **Skills, plugins, and MCP**: lazily loaded external capabilities on demand

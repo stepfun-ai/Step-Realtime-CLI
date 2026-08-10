@@ -46,7 +46,7 @@ All 26 commands (the table below has 27 rows, because `/skill reload` is listed 
 | `/new` | Start a new session (clears the context, todo list, plan mode, dynamic tools, and thinking level override) |
 | `/compact` | Compact the context manually, printing the token count before and after |
 | `/history [N]` (alias `/undo`) | With no argument, opens the input history panel for this session (Enter backtracks to that turn and recalls the original text for resending, Tab only recalls the text); with an argument, undoes the last N turns directly without opening the panel |
-| `/reflect` | Review the full session history, distill reusable methodology, and print it |
+| `/reflect` | Review the full session history, distill reusable methodology, and print it; the output also enters the conversation stream, so you can say "remember item N" to have the agent save it to memory |
 | `/agents` | List sub-agent sessions spawned from the current session; select one to drill in and read back its history |
 | `/export-debug-zip` | Export a session debug bundle (session body + redacted config + runtime logs) |
 | `/usage [--all]` | Show per-model token usage and cache hit rate for this session; `--all` aggregates every session in this working directory (including crash leftovers that have an event log but no snapshot). Read-only, runs instantly while busy |
