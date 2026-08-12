@@ -14,7 +14,7 @@ import {
   type SkillDefinition,
   type SkillRegistry,
 } from '../../src/skill/registry.js';
-import { MAX_SKILL_ACTIVATION_DEPTH, skillTool } from '../../src/tools/skill.js';
+import { skillTool } from '../../src/tools/skill.js';
 
 let dir: string;
 
@@ -217,7 +217,7 @@ describe('renderSkillActivation', () => {
   });
 });
 
-describe('skill 工具 args 与递归防护', () => {
+describe('skill 工具 args', () => {
   it('传 args 时正文占位被展开', async () => {
     const reg: SkillRegistry = { skills: new Map() };
     reg.skills.set('k', makeDef('目标：$ARGUMENTS；目录：${STEP_SKILL_DIR}', { name: 'k' }));
@@ -227,24 +227,7 @@ describe('skill 工具 args 与递归防护', () => {
     expect(r.content).toContain('目录：/abs/skill/dir');
   });
 
-  it('单轮激活超上限被拒绝', async () => {
-    const reg: SkillRegistry = { skills: new Map() };
-    reg.skills.set('k', makeDef('正文', { name: 'k' }));
-    const counter = { count: 0 };
-    const ctx = { cwd: process.cwd(), skills: reg, skillActivations: counter };
-    // 前 MAX 次成功
-    for (let i = 0; i < MAX_SKILL_ACTIVATION_DEPTH; i++) {
-      const ok = await skillTool.execute({ skill: 'k' }, ctx);
-      expect(ok.isError).toBe(false);
-    }
-    // 第 MAX+1 次被拒
-    const denied = await skillTool.execute({ skill: 'k' }, ctx);
-    expect(denied.isError).toBe(true);
-    expect(denied.content).toContain('上限');
-    expect(counter.count).toBe(MAX_SKILL_ACTIVATION_DEPTH + 1);
-  });
-
-  it('无计数器时不做递归限制（如单测直调）', async () => {
+  it('同一 skill 多次激活不受限（激活次数上限已于 2026-08-11 撤除）', async () => {
     const reg: SkillRegistry = { skills: new Map() };
     reg.skills.set('k', makeDef('正文', { name: 'k' }));
     for (let i = 0; i < 10; i++) {

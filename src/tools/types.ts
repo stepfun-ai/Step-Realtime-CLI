@@ -40,11 +40,6 @@ export interface ToolContext {
   bashAutoBackgroundOnTimeout?: boolean;
   /** skill 注册表（组合根注入，供 skill 激活工具查询）。缺失表示当前上下文不支持技能。 */
   skills?: import('../skill/registry.js').SkillRegistry;
-  /**
-   * skill 激活计数器（组合根按每次 runAgent 新建注入）：单轮累计 skill 工具激活次数，
-   * 超 MAX_SKILL_ACTIVATION_DEPTH 时拒绝，防连环激活。缺失表示不做递归防护（如单测直调）。
-   */
-  skillActivations?: { count: number };
   /** goal 管理器（组合根注入，主 agent 自主目标）。缺失表示当前上下文不支持 goal。 */
   goal?: import('../agent/goal/mode.js').GoalMode;
   /** team 团队模式状态（组合根注入）。缺失表示当前上下文不支持 team。 */
@@ -66,6 +61,10 @@ export interface ToolContext {
    * 裸模型 / 未命中别名时为 undefined。供 read_media 等多模态工具做能力门控。
    */
   capabilities?: readonly string[];
+  /** 当前模型的图片输入长边上限（像素，来自别名 image_max_edge_px）。缺省由 read_media 回退全局保守值 1568。 */
+  imageMaxEdgePx?: number;
+  /** 当前模型的单图交付字节预算（来自别名 image_budget_bytes）。缺省由 read_media 回退 256KB。 */
+  imageBudgetBytes?: number;
 }
 
 /** 工具结果附带的图片载荷（如 read_media 读图），回灌时内嵌进 tool_result 的 content 块数组。 */

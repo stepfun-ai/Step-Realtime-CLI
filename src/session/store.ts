@@ -56,8 +56,6 @@ export interface SessionData extends SessionMeta {
   thinkOverride?: string;
   /** 会话级 Plan 模式。 */
   planMode?: boolean;
-  /** skill 激活计数（仅子 agent 会话使用）：随快照持久化，resume 时带回，防递归防护被 resume 重置。 */
-  skillActivations?: number;
   /**
    * 检查点游标：本快照覆盖到事件日志（wire.jsonl）的第几条事件。
    * 快照自本版本起降级为「检查点 + 派生缓存」，事件日志才是事实源；resume 时从本游标
@@ -376,18 +374,13 @@ export class SessionStore {
       const preview = derivePreview(session.messages);
       if (preview !== undefined) session.preview = preview;
     }
-    // 检查点游标：快照记录自己覆盖到事件日志的哪一条，resume 只重放游标之后的尾段。
-    // 本进程从未见过该会话的事件日志（无缓存、无文件）时保持缺失，
-    // resume 按「无检查点」处理：忽略快照 messages，全量重放事件。
     const wireCount = this.wireEventCount(session.cwd, session.id);
     if (wireCount !== undefined) session.wireSeq = wireCount;
-    // 落盘前把图片 base64 卸载成 stepref 指针（作用于副本，不污染内存 session.messages）
     const toWrite: SessionData = {
       ...session,
       messages: session.messages.map((m) => this.offloadForStorage(session.cwd, m)),
     };
     writeAtomic(this.fileFor(session.cwd, session.id), JSON.stringify(toWrite, null, 2));
-    // 同步更新索引
     this.updateIndexEntry(session.cwd, this.toIndexEntry(toWrite));
   }
 

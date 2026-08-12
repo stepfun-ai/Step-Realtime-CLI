@@ -2,14 +2,6 @@ import { z } from 'zod';
 import { renderSkillActivation } from '../skill/registry.js';
 import { fail, ok, type ToolDef } from './types.js';
 
-/**
- * 单轮 agent 循环内 skill 激活次数上限（MAX_SKILL_QUERY_DEPTH=3）。
- * 计数挂在 ToolContext.skillActivations 上，每次 runAgent 组装 ctx 时新建一个计数器，
- * 因此「同一轮」= 单次 runAgent 内累计（跨回合、含子 agent 各自独立计数）。
- * 防止 skill 正文诱导模型无限连环激活 skill。
- */
-export const MAX_SKILL_ACTIVATION_DEPTH = 3;
-
 const schema = z.object({
   skill: z.string().describe('要激活的技能名称（见 system prompt 里的可用技能清单）。'),
   args: z
@@ -33,15 +25,6 @@ export const skillTool: ToolDef<z.infer<typeof schema>> = {
   async execute(input, ctx) {
     if (ctx.skills === undefined) {
       return fail('当前上下文不支持技能。');
-    }
-    // 递归防护：单轮累计激活次数超上限则拒绝，避免技能正文诱导无限连环激活
-    if (ctx.skillActivations !== undefined) {
-      ctx.skillActivations.count += 1;
-      if (ctx.skillActivations.count > MAX_SKILL_ACTIVATION_DEPTH) {
-        return fail(
-          `本轮技能激活次数已达上限（${MAX_SKILL_ACTIVATION_DEPTH} 次）。不要再激活技能，直接用已加载的指令完成任务。`,
-        );
-      }
     }
     const def = ctx.skills.skills.get(input.skill);
     if (def === undefined) {
