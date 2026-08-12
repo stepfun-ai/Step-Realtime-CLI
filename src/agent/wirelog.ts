@@ -111,7 +111,7 @@ export type WireEvent =
       model?: string;
       /** 服务端 usage 四项相加（口径见 usageTotalTokens）。 */
       totalTokens: number;
-      /** 计费口径增量（input − cache_read + output，见 billedTokens）。 */
+      /** 计费口径增量（input + output；input_tokens 本身已排除缓存命中部分，见 billedTokens）。 */
       billedTokens: number;
       inputTokens?: number;
       outputTokens?: number;

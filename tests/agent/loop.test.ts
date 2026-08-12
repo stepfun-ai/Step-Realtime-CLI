@@ -327,8 +327,8 @@ describe('runAgent', () => {
       runAgent({ ...baseOpts(provider, messages), ctx: { cwd: process.cwd(), goal } }),
     );
     expect(events.at(-1)!.type).toBe('turn_done');
-    // (1000-600+200) + (500+100) = 1200
-    expect(goal.get()?.tokensUsed).toBe(1200);
+    // (1000 + 200) + (500 + 100) = 1800（input_tokens 本身已排除缓存命中部分）
+    expect(goal.get()?.tokensUsed).toBe(1800);
   });
 
   it('goal token 计量：paused 期间回合不累计；无 goal 上下文不影响循环', async () => {

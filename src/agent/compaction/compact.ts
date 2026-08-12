@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { DEFAULT_THINKING_LEVELS } from '../../config/config.js';
 import { isAbortError } from '../../provider/retry.js';
 import type { ChatProvider } from '../../provider/types.js';
 import { isStepref, STEPREF_PREFIX } from '../../session/attachments.js';
@@ -160,12 +161,13 @@ export function usageTotalTokens(usage: Anthropic.Usage): number {
 }
 
 /**
- * 本轮请求的计费 token 增量：input − cache_read + output（缓存命中不计成本）。
+ * 本轮请求的计费 token 增量：input + output（Anthropic 的 input_tokens 本身已排除缓存命中部分，
+ * 不再额外减去 cache_read；缓存命中不计费，未命中部分已含在 input_tokens 里）。
  * 与 usageTotalTokens（上下文占用快照）不同，这是逐轮单调递增的成本口径，
  * goal 预算计量与子 agent 卡片 token 展示共用此公式。
  */
 export function billedTokens(usage: Anthropic.Usage): number {
-  return (usage.input_tokens ?? 0) - (usage.cache_read_input_tokens ?? 0) + (usage.output_tokens ?? 0);
+  return (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
 }
 
 /** 压缩触发阈值。 */
@@ -715,6 +717,13 @@ export async function fullCompact(
         tools: [],
         messages: [{ role: 'user', content: summaryPrompt }],
         model,
+        // 压缩摘要压到最低思考档：摘要是机械交接任务，不需要推理深度；更关键的是
+        // 思考模型面对超长历史输入时思考量爆炸，会吃光 max_tokens 使 text block 为空，
+        // candidate 恒空 → 质量闸门必挂 → 重试耗尽放弃压缩（2026-08-11 实测现场）。
+        // 用 low 而非 null：阶跃渠道「不发 effort」≠不思考，而是跑服务端默认深度（≈high），
+        // null 会适得其反；low 档实测可压掉约 85% 思考量。sendThinking=false 的渠道
+        // 此参数被门控拦下（字段不带出），是无害 no-op。
+        thinking: { level: 'low', budgetTokens: DEFAULT_THINKING_LEVELS.low },
         signal,
       });
       const final: Anthropic.Message = await stream.finalMessage();

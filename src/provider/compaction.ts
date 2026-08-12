@@ -20,7 +20,7 @@
  *
  * 纯装配，不做 I/O；构造失败只记日志不抛错——压缩是兜底路径，不该因配置问题掀翻会话。
  */
-import { resolveModelEntry, type StepCodeConfig } from '../config/config.js';
+import { DEFAULT_THINKING_LEVELS, resolveModelEntry, type StepCodeConfig } from '../config/config.js';
 import { logError } from '../utils/logger.js';
 import { createProvider } from './factory.js';
 import type { ChatProvider } from './types.js';
@@ -55,7 +55,28 @@ export function resolveCompactionBinding(
   if (cached !== undefined) return { provider: cached, model: resolved.model };
 
   try {
-    const provider = createProvider(resolved);
+    // 压缩摘要压到最低思考档（按模型能力门控）：摘要是机械交接任务，不需要推理深度；
+    // 更关键的是思考模型面对 20 万 token 级的历史输入时思考量爆炸，吃光 max_tokens
+    // 导致摘要正文为空、质量闸门连续拦截后放弃压缩（2026-08-11 实测现场：
+    // step-3.5-flash-2603 @ step_plan，max_tokens=50 探测请求 content 为空、reasoning 满
+    // ——不发 effort 时阶跃服务端默认思考深度≈high；发 low 后同请求正文正常）。
+    // 门控：仅当模型 capabilities 声明 'thinking' 才注入 enabled+low——非思考模型
+    // 强发 effort 可能 400（stepfun 实测部分模型如此），不发字段天然安全。
+    // 注入后构造默认即 {level:'low', budgetTokens:1024}，不受用户主 [thinking] 配置
+    // 影响；该 provider 实例仅用于压缩，无副作用面。
+    const modelCanThink = resolved.capabilities?.includes('thinking') === true;
+    const provider = createProvider(
+      modelCanThink
+        ? {
+            ...resolved,
+            thinking: {
+              enabled: true,
+              defaultLevel: 'low',
+              levels: resolved.thinking?.levels ?? DEFAULT_THINKING_LEVELS,
+            },
+          }
+        : resolved,
+    );
     cache?.set(name, provider);
     return { provider, model: resolved.model };
   } catch (e) {

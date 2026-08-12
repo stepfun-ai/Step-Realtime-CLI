@@ -124,22 +124,32 @@ describe('usageTotalTokens', () => {
   });
 });
 
-describe('billedTokens（计费口径：input − cache_read + output）', () => {
-  it('cache_read 全命中：增量只剩 output', () => {
+describe('billedTokens（计费口径：input + output；input_tokens 本身已排除缓存命中部分）', () => {
+  it('cache_read 存在时仍只计 input + output（不重复减去缓存读）', () => {
     expect(
       billedTokens({
         input_tokens: 100,
         cache_read_input_tokens: 100,
         output_tokens: 20,
       } as Anthropic.Usage),
-    ).toBe(20);
+    ).toBe(120);
   });
 
   it('无 cache 字段：input + output', () => {
     expect(billedTokens({ input_tokens: 100, output_tokens: 20 } as Anthropic.Usage)).toBe(120);
   });
 
-  it('混合：input 扣 cache_read 后加 output，cache_creation 不计入', () => {
+  it('全缓存命中（input_tokens=0）：增量只剩 output', () => {
+    expect(
+      billedTokens({
+        input_tokens: 0,
+        cache_read_input_tokens: 100,
+        output_tokens: 20,
+      } as Anthropic.Usage),
+    ).toBe(20);
+  });
+
+  it('cache_creation 不计入计费（仅 input + output）', () => {
     expect(
       billedTokens({
         input_tokens: 100,
@@ -147,7 +157,12 @@ describe('billedTokens（计费口径：input − cache_read + output）', () =>
         cache_creation_input_tokens: 25,
         output_tokens: 10,
       } as Anthropic.Usage),
-    ).toBe(70);
+    ).toBe(110);
+  });
+
+  it('缺失字段按 0 处理，结果恒为非负', () => {
+    expect(billedTokens({} as Anthropic.Usage)).toBe(0);
+    expect(billedTokens({ output_tokens: 5 } as Anthropic.Usage)).toBe(5);
   });
 });
 

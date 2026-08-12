@@ -56,8 +56,9 @@ describe('model.usage 事件落盘', () => {
     expect(u.cacheReadTokens).toBe(600);
     expect(u.cacheCreationTokens).toBe(50);
     // 两套聚合口径：totalTokens 是状态栏显示的事实源，billedTokens 是计费增量
+    // billedTokens = input + output（input_tokens 本身已排除缓存命中部分）
     expect(u.totalTokens).toBe(1000 + 200 + 600 + 50);
-    expect(u.billedTokens).toBe(1000 - 600 + 200);
+    expect(u.billedTokens).toBe(1000 + 200);
     // 估算口径同时记：与 totalTokens 的比值就是预检可信度
     expect(u.estimatedTokens).toBeGreaterThan(0);
     expect(u.stopReason).toBe('end_turn');

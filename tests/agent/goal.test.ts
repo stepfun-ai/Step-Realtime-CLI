@@ -78,13 +78,13 @@ describe('GoalMode', () => {
     expect(events).toEqual([]);
   });
 
-  it('token 计量：计费口径（input - cache_read + output），active 才累计', () => {
+  it('token 计量：计费口径（input + output；input_tokens 本身已排除缓存命中部分），active 才累计', () => {
     const g = new GoalMode();
     g.create('A');
     g.addTokens({ input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 600 } as never);
-    expect(g.get()?.tokensUsed).toBe(600); // (1000 - 600) + 200
+    expect(g.get()?.tokensUsed).toBe(1200); // 1000 + 200（cache_read 不计入）
     g.addTokens({ input_tokens: 500, output_tokens: 100 } as never); // cache_read 缺省按 0
-    expect(g.get()?.tokensUsed).toBe(1200);
+    expect(g.get()?.tokensUsed).toBe(1800);
   });
 
   it('token 计量：paused / blocked 不累计，resume 后继续累计', () => {
