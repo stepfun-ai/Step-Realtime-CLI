@@ -86,20 +86,20 @@ function buildNote(meta: ImageMeta, rawBytes: number, delivery: string): string 
  * 边界对齐：最后一块用 min(剩余, 块高) 收尾，调用方直接照抄即可不超界——
  * 这是「region 超出图片范围」试错的主要消除手段。
  */
-function buildProbeNote(meta: ImageMeta, rawBytes: number): string {
+function buildProbeNote(meta: ImageMeta, rawBytes: number, maxEdge: number, byteBudget: number): string {
   const { width, height, mime } = meta;
   const longEdge = Math.max(width, height);
   const base =
     `<system>图片元数据：${mime}，原始 ${rawBytes} 字节，原始尺寸 ${width}×${height}。`;
 
   // 短边图（长边 ≤ 交付上限）：无需分块
-  if (longEdge <= READ_MEDIA_MAX_EDGE_PX && rawBytes <= READ_MEDIA_IMAGE_BYTE_BUDGET) {
+  if (longEdge <= maxEdge && rawBytes <= byteBudget) {
     return base + '尺寸与字节均在交付预算内，无需分块，直接读取即可。</system>';
   }
 
-  // 建议块高：按交付长边上限切（每块长边 ≤1568，降采样后文字仍清晰）
+  // 建议块高：按交付长边上限切（每块长边不超上限，降采样后文字仍清晰）
   const isTall = height > width;
-  const chunkSpan = READ_MEDIA_MAX_EDGE_PX;
+  const chunkSpan = maxEdge;
   const count = Math.ceil((isTall ? height : width) / chunkSpan);
   const regions: string[] = [];
   for (let i = 0; i < count; i++) {
@@ -135,6 +135,11 @@ export const readMediaTool: ToolDef<Input> = {
     if (ctx.capabilities !== undefined && !ctx.capabilities.includes('image_in')) {
       return fail('当前模型不支持图片输入（capabilities 无 image_in），请 /model 切换到支持图片的模型。');
     }
+
+    // 交付预算：模型别名可声明 image_max_edge_px / image_budget_bytes 按渠道放宽；
+    // 未声明回退全局保守值（1568px / 256KB，主流视觉模型的最小公分母）。
+    const maxEdge = ctx.imageMaxEdgePx ?? READ_MEDIA_MAX_EDGE_PX;
+    const byteBudget = ctx.imageBudgetBytes ?? READ_MEDIA_IMAGE_BYTE_BUDGET;
 
     const abs = resolvePath(ctx.cwd, input.path);
     let st;
@@ -175,16 +180,16 @@ export const readMediaTool: ToolDef<Input> = {
     // 不再靠「猜 region → 报错 → 再猜」的试错循环（30000px 长图场景的真实痛点）。
     if (input.probe === true) {
       return {
-        content: buildProbeNote(meta, buf.length),
+        content: buildProbeNote(meta, buf.length, maxEdge, byteBudget),
         isError: false,
       };
     }
 
     const longEdge = Math.max(meta.width, meta.height);
-    const withinBudget = buf.length <= READ_MEDIA_IMAGE_BYTE_BUDGET && longEdge <= READ_MEDIA_MAX_EDGE_PX;
+    const withinBudget = buf.length <= byteBudget && longEdge <= maxEdge;
 
     // 直通：无裁剪、不超预算 → 原始字节直接交付，不重新编码（webp 也只能走这条，jimp 不支持 webp）
-    if (input.region === undefined && (withinBudget || (input.full_resolution === true && buf.length <= READ_MEDIA_IMAGE_BYTE_BUDGET))) {
+    if (input.region === undefined && (withinBudget || (input.full_resolution === true && buf.length <= byteBudget))) {
       const base64 = buf.toString('base64');
       return {
         content: buildNote(meta, buf.length, '原图未改动交付。'),
@@ -194,9 +199,9 @@ export const readMediaTool: ToolDef<Input> = {
     }
 
     // full_resolution：跳过降采样；超字节预算显式报错并建议 region
-    if (input.full_resolution === true && input.region === undefined && buf.length > READ_MEDIA_IMAGE_BYTE_BUDGET) {
+    if (input.full_resolution === true && input.region === undefined && buf.length > byteBudget) {
       return fail(
-        `图片原始字节 ${buf.length} 超过 ${READ_MEDIA_IMAGE_BYTE_BUDGET} 预算，full_resolution 下无法交付。` +
+        `图片原始字节 ${buf.length} 超过 ${byteBudget} 预算，full_resolution 下无法交付。` +
           '请用 region 参数分块读取原图区域，或去掉 full_resolution 让工具自动降采样。',
       );
     }
@@ -244,12 +249,12 @@ export const readMediaTool: ToolDef<Input> = {
       mime === 'image/jpeg' ? image.getBuffer('image/jpeg', { quality }) : image.getBuffer('image/png');
 
     if (input.full_resolution !== true) {
-      // 先等比缩到长边 ≤1568，再按双阶梯压进字节预算：
+      // 先等比缩到长边不超上限（缺省 1568，别名可声明 image_max_edge_px 放宽），再按双阶梯压进字节预算：
       // JPEG 走质量阶梯 [85,70,55,40]（PNG 无损，质量参数无效，直接进边长回退）；
       // 仍超预算则边长 ×0.8 回退，最多 6 轮。对齐主流视觉 CLI 的阶梯思路。
       let w = image.bitmap.width;
       let h = image.bitmap.height;
-      const scale = Math.min(1, READ_MEDIA_MAX_EDGE_PX / Math.max(w, h));
+      const scale = Math.min(1, maxEdge / Math.max(w, h));
       if (scale < 1) {
         w = Math.max(1, Math.round(w * scale));
         h = Math.max(1, Math.round(h * scale));
@@ -259,21 +264,21 @@ export const readMediaTool: ToolDef<Input> = {
       // JPEG 走质量阶梯，PNG 无损直接编码一次；out 在两条分支都必然被赋值。
       let out: Buffer = await encode(mime === 'image/jpeg' ? QUALITY_LADDER[0]! : 85);
       if (mime === 'image/jpeg') {
-        for (let i = 1; i < QUALITY_LADDER.length && out.length > READ_MEDIA_IMAGE_BYTE_BUDGET; i++) {
+        for (let i = 1; i < QUALITY_LADDER.length && out.length > byteBudget; i++) {
           out = await encode(QUALITY_LADDER[i]!);
         }
       }
       let shrink = 0;
-      while (out.length > READ_MEDIA_IMAGE_BYTE_BUDGET && shrink < 6) {
+      while (out.length > byteBudget && shrink < 6) {
         shrink++;
         w = Math.max(1, Math.round(w * 0.8));
         h = Math.max(1, Math.round(h * 0.8));
         image.resize({ w, h });
         out = await encode(mime === 'image/jpeg' ? 40 : 85);
       }
-      if (out.length > READ_MEDIA_IMAGE_BYTE_BUDGET) {
+      if (out.length > byteBudget) {
         return fail(
-          `多次降采样后仍有 ${out.length} 字节，超过 ${READ_MEDIA_IMAGE_BYTE_BUDGET} 预算。请用 region 参数分块读取。`,
+          `多次降采样后仍有 ${out.length} 字节，超过 ${byteBudget} 预算。请用 region 参数分块读取。`,
         );
       }
       const dw = image.bitmap.width;
@@ -295,9 +300,9 @@ export const readMediaTool: ToolDef<Input> = {
 
     // full_resolution + region：裁剪后按原格式交付，仍超预算则报错
     const out = await encode(95);
-    if (out.length > READ_MEDIA_IMAGE_BYTE_BUDGET) {
+    if (out.length > byteBudget) {
       return fail(
-        `裁剪后仍有 ${out.length} 字节，超过 ${READ_MEDIA_IMAGE_BYTE_BUDGET} 预算，full_resolution 下无法交付。请缩小 region。`,
+        `裁剪后仍有 ${out.length} 字节，超过 ${byteBudget} 预算，full_resolution 下无法交付。请缩小 region。`,
       );
     }
     return {

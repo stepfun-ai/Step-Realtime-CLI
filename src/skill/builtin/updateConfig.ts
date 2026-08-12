@@ -149,6 +149,12 @@ endpoint 解析优先级：[search.web]/[search.image] → [search] → 主会�
 三个维度任一传 ${'`'}0${'`'} 表示该维度不限制（等价于不配）。
 未配置 ${'`'}[tools.web]${'`'} 时使用内置默认值（100 条目 / 32MB / 2MB）。
 
+### [tui] 终端界面渲染
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| error_preview_lines | number | 4 | 工具错误输出折叠态预览行数，clamp [1, 20] |
+
 ### [models.<别名>] 模型别名表（渠道与模型分离）
 
 | 键 | 类型 | 说明 |
@@ -162,6 +168,8 @@ endpoint 解析优先级：[search.web]/[search.image] → [search] → 主会�
 | max_tokens | number | 覆盖顶层 |
 | display_name | string | 选择器与状态栏展示名 |
 | capabilities | string[] | 能力标记（如 thinking / image_in），原样透传给多模态门控 |
+| image_max_edge_px | number | 无（read_media 回退全局 1568） | 图片输入长边上限（像素），read_media 降采样阈值；高上限通道（如 GPT 系 2048）按别名放宽，下限钳制 256 |
+| image_budget_bytes | number | 无（read_media 回退全局 262144） | 单图交付字节预算（经济性预算，非 API 硬限制）；需要原图精度的读图场景按别名放宽，下限钳制 16384 |
 
 ### [providers.<id>] 渠道表
 

@@ -12,7 +12,7 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...orig, homedir: () => fakeHome };
 });
 
-import { loadConfig, conventionalApiKeyEnvVar, resolveCompactionConfig, resolveModelEntry, resolveModels, resolveProviders, resolveStringArray, resolveSubagentLimits, type StepCodeConfig } from '../src/config/config.js';
+import { loadConfig, conventionalApiKeyEnvVar, resolveCompactionConfig, resolveModelEntry, resolveModels, resolveProviders, resolveStringArray, resolveSubagentLimits, resolveTuiConfig, type StepCodeConfig } from '../src/config/config.js';
 
 const ENV_KEYS = [
   'STEPFUN_API_KEY',
@@ -754,5 +754,26 @@ describe('resolveModelEntry（apiKey 多渠道回落链）', () => {
     const merged = resolveModelEntry(cfg, 'c');
     expect(merged).not.toBeNull();
     expect(merged!.apiKey).toBeUndefined();
+  });
+});
+
+describe('resolveTuiConfig', () => {
+  it('缺省时返回 undefined（键不进结果对象）', () => {
+    expect(resolveTuiConfig(undefined)).toBeUndefined();
+    expect(resolveTuiConfig('not-object')).toBeUndefined();
+    expect(resolveTuiConfig([])).toBeUndefined();
+    expect(resolveTuiConfig({})).toBeUndefined(); // 空对象无字段
+  });
+
+  it('默认值 4，clamp [1, 20]', () => {
+    expect(resolveTuiConfig({ error_preview_lines: 1 })).toEqual({ errorPreviewLines: 1 });
+    expect(resolveTuiConfig({ error_preview_lines: 20 })).toEqual({ errorPreviewLines: 20 });
+    expect(resolveTuiConfig({ error_preview_lines: 0 })).toEqual({ errorPreviewLines: 1 });
+    expect(resolveTuiConfig({ error_preview_lines: 100 })).toEqual({ errorPreviewLines: 20 });
+    expect(resolveTuiConfig({ error_preview_lines: 3.7 })).toEqual({ errorPreviewLines: 4 });
+  });
+
+  it('非法值（非数字）视为缺失，返回 undefined', () => {
+    expect(resolveTuiConfig({ error_preview_lines: 'abc' })).toBeUndefined();
   });
 });

@@ -238,6 +238,15 @@ export function resolveCapabilitiesOnReload(
   return cfg.models?.[currentAlias]?.capabilities;
 }
 
+/** 轻量刷新时按当前别名解析图片输入上限（别名语义同 {@link resolveCapabilitiesOnReload}）。 */
+export function resolveImageLimitsOnReload(
+  cfg: StepCodeConfig,
+  currentAlias: string | null,
+): { imageMaxEdgePx?: number; imageBudgetBytes?: number } {
+  const entry = currentAlias === null ? undefined : cfg.models?.[currentAlias];
+  return { imageMaxEdgePx: entry?.imageMaxEdgePx, imageBudgetBytes: entry?.imageBudgetBytes };
+}
+
 /** 状态栏展示名：别名路径取 displayName；裸 id 按「别名解析出的真实 id 命中」反查 displayName，无则用真实 id。 */
 function displayNameOf(cfg: StepCodeConfig, model: string, alias: string | null): string {
   if (alias !== null) {

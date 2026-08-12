@@ -180,6 +180,18 @@ export interface ModelEntry {
   /** 能力标记（如 thinking / image_in），原样透传，消费方自己解释。 */
   capabilities?: string[];
   /**
+   * 按别名声明模型的图片输入长边上限（像素，config.toml [models.*] image_max_edge_px）。
+   * 消费方：read_media 交付降采样阈值。缺省走全局保守值（1568，Claude 推荐长边）；
+   * 高上限通道（如 GPT 系 high detail 长边 2048）可按别名放宽。
+   */
+  imageMaxEdgePx?: number;
+  /**
+   * 按别名声明单图交付字节预算（config.toml [models.*] image_budget_bytes）。
+   * 消费方：read_media 字节预算。缺省走全局保守值（256KB，上下文经济性预算，
+   * 远低于各家 API 硬限制）；需要原图精度的读图场景可按别名放宽。
+   */
+  imageBudgetBytes?: number;
+  /**
    * 按别名覆盖媒体降级保留张数（config.toml [models.*] media_keep_recent）。
    * 缺省继承顶层 media_keep_recent，再缺省 10。通道限制差异大（step-3.7 实测
    * 60 张、Gemini 10 张、GLM 5 张），宽松通道可多留、严格通道少留。
@@ -230,6 +242,14 @@ export interface ProviderEntry {
  */
 export interface MemoryConfig {
   enabled: boolean;
+}
+
+/**
+ * TUI 渲染配置（[tui] 段）。
+ */
+export interface TuiConfig {
+  /** 工具错误输出折叠态预览行数（clamp [1, 20]）。默认 4。 */
+  errorPreviewLines?: number;
 }
 
 /**
@@ -315,6 +335,13 @@ export interface StepCodeConfig {
    */
   capabilities?: string[];
   /**
+   * 当前模型的图片输入长边上限（像素）。同 capabilities 的带入语义：仅命中别名且声明时
+   * 由 {@link resolveModelEntry} 带入；缺省由消费方（read_media）回退全局保守值 1568。
+   */
+  imageMaxEdgePx?: number;
+  /** 当前模型的单图交付字节预算。带入语义同 {@link imageMaxEdgePx}；缺省回退 256KB。 */
+  imageBudgetBytes?: number;
+  /**
    * 用户原始选择的模型别名（展开前）。当 config.model 是别名（如 'step37-plan'）时，
    * 此字段保存该别名；config.model 是裸模型 id 时为 undefined。
    *
@@ -323,6 +350,8 @@ export interface StepCodeConfig {
    * 才能正确初始化 currentModelAliasRef 和 modelLabel。
    */
   modelAlias?: string;
+  /** TUI 渲染配置（[tui] 段）。未配置时键不进结果对象，消费方用 ?? 落默认。 */
+  tui?: TuiConfig;
 }
 
 const DEFAULT_BASE_URL = 'https://api.stepfun.com';
@@ -517,6 +546,7 @@ interface TomlConfigShape {
   models?: unknown;
   providers?: unknown;
   hooks?: unknown;
+  tui?: unknown;
 }
 
 /**
@@ -859,6 +889,22 @@ export function resolveMemoryConfig(raw: unknown): MemoryConfig {
   return { enabled: t['enabled'] === true };
 }
 
+/**
+ * 从 [tui] 段解析 TUI 渲染配置。纯函数，便于单测。
+ *
+ * error_preview_lines 缺省 4，clamp [1, 20]。
+ * 未配置或类型非法时键不进结果对象（下游 toEqual 精确断言依赖此形态）。
+ */
+export function resolveTuiConfig(raw: unknown): TuiConfig | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const t = raw as Record<string, unknown>;
+  if (!('error_preview_lines' in t)) return undefined;
+  const n = asNumber(t['error_preview_lines']);
+  if (n === undefined) return undefined;
+  const errorPreviewLines = clampInt(t['error_preview_lines'], 1, 20, 4);
+  return { errorPreviewLines };
+}
+
 export function resolveThinkingConfig(raw: unknown, maxTokens: number): ThinkingConfig {
   const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
 
@@ -930,6 +976,11 @@ export function resolveModels(raw: unknown): Record<string, ModelEntry> | undefi
     if (maxContextSize !== undefined) entry.maxContextSize = maxContextSize;
     const maxTokens = asNumber(t['max_tokens']);
     if (maxTokens !== undefined) entry.maxTokens = maxTokens;
+    // 图片输入上限：下限钳制防误配（edge <256px / bytes <16KB 的图已无读图价值），不设上限封顶。
+    const imageMaxEdgePx = asNumber(t['image_max_edge_px']);
+    if (imageMaxEdgePx !== undefined) entry.imageMaxEdgePx = Math.max(256, Math.floor(imageMaxEdgePx));
+    const imageBudgetBytes = asNumber(t['image_budget_bytes']);
+    if (imageBudgetBytes !== undefined) entry.imageBudgetBytes = Math.max(16 * 1024, Math.floor(imageBudgetBytes));
     const displayName = asString(t['display_name']);
     if (displayName !== undefined) entry.displayName = displayName;
     // capabilities 白名单校验：未知值直接报错，不静默失效。
@@ -1096,6 +1147,9 @@ export function resolveModelEntry(config: StepCodeConfig, name: string): StepCod
     // capabilities 只在命中别名时带入（别名未声明则 undefined，覆盖掉 spread 来的旧值）；
     // 裸模型 / 未命中别名（返回 null 的路径）不带
     capabilities: entry.capabilities,
+    // 图片输入上限同 capabilities 语义：只在命中别名且声明时带入，裸模型/未声明为 undefined
+    imageMaxEdgePx: entry.imageMaxEdgePx,
+    imageBudgetBytes: entry.imageBudgetBytes,
     // mediaKeepRecent 按别名覆盖，未声明继承顶层（再缺省由工厂/use 点补 10）
     mediaKeepRecentImages: entry.mediaKeepRecent ?? config.mediaKeepRecentImages,
   };
@@ -1174,6 +1228,9 @@ export function loadConfig(
   cfg.thinking = resolveThinkingConfig(toml.thinking, cfg.maxTokens);
   // memory 观察池开关：默认关闭；恒赋值（默认 { enabled: false }）
   cfg.memory = resolveMemoryConfig(toml.memory);
+  // TUI 渲染配置：未配置时键不进结果对象，消费方用 ?? 落默认
+  const tui = resolveTuiConfig(toml.tui);
+  if (tui !== undefined) cfg.tui = tui;
   // 联网搜索配置：所有字段可选，缺省时消费方缺省回退主会话渠道（零配置默认策略）
   cfg.search = resolveSearchConfig(toml.search);
   // 网页结果缓存容量：三个维度全部可选，未配置时使用内置默认值
