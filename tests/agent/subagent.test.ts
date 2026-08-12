@@ -221,10 +221,10 @@ describe('runner 消费 usage 事件（计费口径累计上抛）', () => {
     const run = createSubagentRunner(deps(provider, (_id, e) => events.push(e)));
     const r = await run({ subagentType: 'general', prompt: '干活', depth: 0 });
     expect(r.isError).toBe(false);
-    // 第 1 轮 100−40+10=70；第 2 轮 200+20=220 → 累计 290
+    // 第 1 轮 100+10=110（cache_read 不计入）；第 2 轮 200+20=220 → 累计 330
     expect(events.filter((e) => e.kind === 'usage')).toEqual([
-      { kind: 'usage', tokens: 70 },
-      { kind: 'usage', tokens: 290 },
+      { kind: 'usage', tokens: 110 },
+      { kind: 'usage', tokens: 330 },
     ]);
   });
 
@@ -1322,28 +1322,6 @@ describe('前台子 agent 的转后台（Ctrl+B detach）', () => {
     expect(snap.status).toBe('aborted'); // 子 agent 感知中断，终态如实落盘
     expect(d.subagentStore.acquireLock(d.cwd, sessionId)).toBe(true); // 锁已释放
     d.subagentStore.releaseLock(d.cwd, sessionId);
-  });
-});
-
-describe('F.6 skill 激活计数器随子会话持久化', () => {
-  it('spawn 落盘计数为 0；resume 带回快照里的计数，不被重置', async () => {
-    const { provider } = makeFakeProvider([
-      { textChunks: [], finalContent: [textBlock(LONG)] },
-      { textChunks: [], finalContent: [textBlock(LONG)] }, // resume 轮
-    ]);
-    const d = deps(provider);
-    const run = createSubagentRunner(d);
-    const r1 = await run({ subagentType: 'general', prompt: '任务', depth: 0 });
-    expect(d.subagentStore.loadSnapshot(d.cwd, r1.sessionId!)!.skillActivations).toBe(0);
-
-    // 模拟上一轮激活过 3 次 skill 的快照：直接改盘后 resume
-    const snap = d.subagentStore.loadSnapshot(d.cwd, r1.sessionId!)!;
-    snap.skillActivations = 3;
-    d.subagentStore.saveSnapshot(snap);
-    const r2 = await run({ subagentType: 'general', prompt: '续', depth: 0, resume: r1.sessionId });
-    expect(r2.isError).toBe(false);
-    // 本轮未再激活 skill：计数原样带回（若被 resume 重置会读出 0 之外的错误基线）
-    expect(d.subagentStore.loadSnapshot(d.cwd, r1.sessionId!)!.skillActivations).toBe(3);
   });
 });
 

@@ -31,7 +31,12 @@ function hasFoldedThinking(it: ThinkingItem): boolean {
 
 /** 可展开条目判定（收集口径的单一来源，收集与分组共用）。 */
 function isExpandable(it: DisplayItem): it is ViewerItem {
-  if (it.kind === 'tool') return hasCollapsedBody(it);
+  if (it.kind === 'tool') {
+    if (hasCollapsedBody(it)) return true;
+    // spawn_agent 带嵌套子调用事件时也纳入可展开集合（想看全过程走 Ctrl+O）
+    if (it.name === 'spawn_agent' && it.subagentToolEvents !== undefined && it.subagentToolEvents.length > 0) return true;
+    return false;
+  }
   if (it.kind === 'thinking') return hasFoldedThinking(it);
   return false;
 }
@@ -86,12 +91,15 @@ export function ExpandViewer({
   maxRows,
   onClose,
   termWidth,
+  errorPreviewLines,
 }: {
   items: readonly DisplayItem[];
   /** 可用行高（含标题栏与底栏，调用方给）；undefined = 不窗口化（非 TTY / 测试环境）。 */
   maxRows?: number;
   onClose: () => void;
   termWidth?: number;
+  /** 工具错误输出折叠态预览行数（默认 4）。 */
+  errorPreviewLines?: number;
 }): React.ReactElement {
   const groups = collectExpandable(items);
   const entryCount = groups.reduce((n, g) => n + g.entries.length, 0);
@@ -180,7 +188,7 @@ export function ExpandViewer({
         })}
       </Text>
       {g.entries.map((entry, ei) => (
-        <MessageItem key={entry.kind === 'tool' ? entry.id : `thinking-${ei}`} item={entry} expanded={true} termWidth={termWidth} />
+        <MessageItem key={entry.kind === 'tool' ? entry.id : `thinking-${ei}`} item={entry} expanded={true} termWidth={termWidth} errorPreviewLines={errorPreviewLines} />
       ))}
     </Box>
   ));

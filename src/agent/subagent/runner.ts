@@ -86,6 +86,9 @@ export interface SubagentRunnerDeps {
   baseUrl?: string;
   /** 当前模型的能力标记（如 image_in，来自别名 capabilities）：子 agent 与父 agent 同模型，原样继承。 */
   capabilities?: readonly string[];
+  /** 图片输入长边上限与单图字节预算（来自别名声明）：同 capabilities，原样继承。 */
+  imageMaxEdgePx?: number;
+  imageBudgetBytes?: number;
   /**
    * 完整配置（组合根注入）：角色定义里的 `model` 命中 `[models.<别名>]` 时，
    * 据此解析出该别名绑定的渠道并单独构造 provider——子 agent 因此可以跨渠道
@@ -127,6 +130,8 @@ interface ResolvedBinding {
   provider: ChatProvider;
   model?: string;
   capabilities?: readonly string[];
+  imageMaxEdgePx?: number;
+  imageBudgetBytes?: number;
   maxContextSize?: number;
   /** 渠道名（如 stepfun / openai），空响应诊断上下文用；fallback 路径为 undefined。 */
   providerName?: string;
@@ -149,6 +154,8 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       provider: deps.provider,
       model: alias,
       capabilities: deps.capabilities,
+      imageMaxEdgePx: deps.imageMaxEdgePx,
+      imageBudgetBytes: deps.imageBudgetBytes,
     };
     if (alias === undefined || alias === '' || deps.config === undefined) return fallback;
 
@@ -160,6 +167,8 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         provider: cached,
         model: resolved.model,
         capabilities: resolved.capabilities,
+        imageMaxEdgePx: resolved.imageMaxEdgePx,
+        imageBudgetBytes: resolved.imageBudgetBytes,
         maxContextSize: resolved.maxContextSize,
         providerName: resolved.provider,
       };
@@ -171,6 +180,8 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         provider,
         model: resolved.model,
         capabilities: resolved.capabilities,
+        imageMaxEdgePx: resolved.imageMaxEdgePx,
+        imageBudgetBytes: resolved.imageBudgetBytes,
         maxContextSize: resolved.maxContextSize,
         providerName: resolved.provider,
       };
@@ -257,12 +268,9 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
     }
     // 历史落盘：快照（恢复源）+ 全量日志（完整历史）双写，与主会话保持同一套快照+日志双写语义。
     // 持久化失败只丢落盘，不影响子 agent 运行与结果回灌。
-    // skill 激活计数器：resume 时从快照带回（递归防护不被 resume 重置），spawn 从 0 起
-    const skillActivations = { count: resumeId !== undefined ? (subSession.skillActivations ?? 0) : 0 };
     const persist = (): void => {
       try {
         subSession.messages = messages;
-        subSession.skillActivations = skillActivations.count;
         deps.subagentStore.appendMessages(deps.cwd, sessionId, messages);
         deps.subagentStore.saveSnapshot(subSession);
       } catch {
@@ -332,13 +340,14 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         signal: req.signal,
         depth: req.depth + 1,
         runSubagent: selfRunner,
-        // 子 agent 共享 skill：注册表 + 激活计数器（递归防护；计数随子会话快照持久化，resume 带回）
+        // 子 agent 共享 skill 注册表
         skills: deps.skills,
-        skillActivations,
         // resume 回灌的历史里图片是 stepref 指针：toWire 发 provider 前需要 attachments 做 rehydrate
         attachments: deps.subagentStore.attachments,
         // 能力标记随解析后的别名走（跨渠道时父模型的能力表不适用于子模型）
         capabilities: binding.capabilities,
+        imageMaxEdgePx: binding.imageMaxEdgePx,
+        imageBudgetBytes: binding.imageBudgetBytes,
       };
 
       // 显示描述优先用模型写的短标签（短 description 防多行/长 prompt 溢出 TUI 行宽、
@@ -390,7 +399,10 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
             toolUses += 1;
             progress({ kind: 'tool', name: ev.name });
           }
-          else if (ev.type === 'tool_end') persist(); // 每个工具回合结束落一次盘：崩溃时盘上保留到最近回合
+          else if (ev.type === 'tool_end') {
+            progress({ kind: 'tool_end', name: ev.name, isError: ev.isError });
+            persist(); // 每个工具回合结束落一次盘：崩溃时盘上保留到最近回合
+          }
           else if (ev.type === 'error') progress({ kind: 'error', message: ev.message });
           else if (ev.type === 'usage' && ev.billedDelta !== undefined) {
             tokensUsed += ev.billedDelta;

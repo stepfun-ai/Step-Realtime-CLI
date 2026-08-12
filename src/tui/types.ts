@@ -1,3 +1,9 @@
+/** 嵌套子 agent 的工具调用事件（由 runner onEvent 实时回传，挂到父 spawn_agent 条目下）。 */
+export interface SubagentToolEvent {
+  name: string;
+  status: 'ok' | 'error' | 'running';
+}
+
 /** UI 展示用的会话条目（独立于回灌给模型的 Anthropic 消息历史）。 */
 export type DisplayItem =
   | { kind: 'user'; text: string }
@@ -19,6 +25,8 @@ export type DisplayItem =
       subagentType?: string;
       /** spawn_agent 任务简述（tool_start 时从 ev.input.description 提取）。 */
       description?: string;
+      /** 嵌套子工具调用事件（仅 spawn_agent 工具使用，由 runner 的 onEvent 实时回传）。 */
+      subagentToolEvents?: SubagentToolEvent[];
     }
   | {
       kind: 'note';

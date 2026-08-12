@@ -66,6 +66,8 @@ const zh = {
   'toolCall.tooLong': '… 输出过长，仅显示前 {shown}/{total} 行',
   'toolCall.moreLines': '… 还有 {count} 行 · Ctrl+O 查看',
   'toolCall.collapsed': '{count} 行输出 · Ctrl+O 查看',
+  'toolCall.subagentCollapsed': '…（已完成 {count} 次工具调用）',
+  'toolCall.subagentSuccess': '({s}s · {count} 次工具调用)',
   // --- Ctrl+O 全屏查看器（ExpandViewer）---
   'expandViewer.title': '── 输出查看器（{turns} 轮 · {count} 条 · {lines} 行）──',
   'expandViewer.footer': '↑↓ 滚动 · PgUp/PgDn 翻页 · ←→ 轮次 · Home/End 顶底 · Esc/Ctrl+O 关闭',
@@ -771,6 +773,8 @@ const en: Record<keyof typeof zh, string> = {
   'toolCall.tooLong': '… output too long, showing first {shown}/{total} lines',
   'toolCall.moreLines': '… {count} more lines · Ctrl+O to view',
   'toolCall.collapsed': '{count} lines of output · Ctrl+O to view',
+  'toolCall.subagentCollapsed': '… ({count} tool calls completed)',
+  'toolCall.subagentSuccess': '({s}s · {count} tool calls)',
   'expandViewer.title': '── Output viewer ({turns} turns · {count} items · {lines} lines) ──',
   'expandViewer.footer': '↑↓ scroll · PgUp/PgDn page · ←→ turns · Home/End top/bottom · Esc/Ctrl+O close',
   'expandViewer.position': 'lines {start}-{end}/{total}',

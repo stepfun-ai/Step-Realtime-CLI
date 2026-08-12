@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import type { DisplayItem } from './types.js';
+import type { DisplayItem, SubagentToolEvent } from './types.js';
 import { useSpinnerFrame, BRAILLE_FRAMES } from './useSpinnerFrame.js';
 import { DynamicWorkflowPanel } from './DynamicWorkflowPanel.js';
 import { t } from '../i18n.js';
@@ -29,20 +29,25 @@ function statusMark(status: 'running' | 'ok' | 'error'): { symbol: string; color
   }
 }
 
-const COLLAPSED_ERROR_LINES = 4;
 const EXPANDED_MAX_LINES = 200;
+const DEFAULT_COLLAPSED_ERROR_LINES = 4;
+/** 运行中滚动窗口：最多保留最近 3 条子工具调用。 */
+const SUBAGENT_VISIBLE_TOOLS = 3;
 
 /**
  * 折叠态是否真的藏了内容（Ctrl+O 全屏查看器的条目筛选口径，与 ResultBody 折叠分支一一对应）：
  * 成功且非 diff 的输出整段折叠成一行提示 → 可展开；错误输出超过预览行数 → 可展开；
  * diff 结果与短错误输出折叠态已完整显示 → 不算；running / 无结果体不算。
  */
-export function hasCollapsedBody(item: Extract<DisplayItem, { kind: 'tool' }>): boolean {
+export function hasCollapsedBody(
+  item: Extract<DisplayItem, { kind: 'tool' }>,
+  errorPreviewLines = DEFAULT_COLLAPSED_ERROR_LINES,
+): boolean {
   if (item.status === 'running') return false;
   const result = item.result;
   if (result === undefined || result === '') return false;
   const lines = result.split('\n');
-  if (item.status === 'error') return lines.length > COLLAPSED_ERROR_LINES;
+  if (item.status === 'error') return lines.length > errorPreviewLines;
   return !hasDiffHeader(lines);
 }
 
@@ -92,17 +97,69 @@ function renderResultLine(line: string, key: number, fallbackColor: string): Rea
   );
 }
 
+/** 渲染一条嵌套子工具调用（带 ↳ 前缀）。 */
+function SubagentToolLine({ ev }: { ev: SubagentToolEvent }): React.ReactElement {
+  const symbol = ev.status === 'ok' ? '✓' : ev.status === 'error' ? '✗' : '⏳';
+  const color = ev.status === 'ok' ? 'green' : ev.status === 'error' ? 'red' : 'yellow';
+  return (
+    <Text>
+      <Text color="gray">{'  ↳ '}</Text>
+      <Text color={color}>{symbol}</Text>
+      <Text color="cyan">{` ${ev.name}`}</Text>
+    </Text>
+  );
+}
+
+/**
+ * 渲染子工具调用块（运行中滚动窗口 / 终态全量）。
+ *
+ * running 且 events 超过窗口：显示计数行 + 最近 3 条；
+ * running 且 events 在窗口内：全部显示；
+ * expanded（Ctrl+O）：全部显示；
+ * 终态：全部显示。
+ */
+function SubagentToolBlock({
+  events,
+  running,
+  expanded,
+}: {
+  events: SubagentToolEvent[];
+  running: boolean;
+  expanded: boolean;
+}): React.ReactElement {
+  if (events.length === 0) return <></>;
+  const visible = running && !expanded && events.length > SUBAGENT_VISIBLE_TOOLS
+    ? events.slice(-SUBAGENT_VISIBLE_TOOLS)
+    : events;
+  const collapsedCount = running && !expanded && events.length > SUBAGENT_VISIBLE_TOOLS
+    ? events.length - SUBAGENT_VISIBLE_TOOLS
+    : 0;
+  return (
+    <Box flexDirection="column">
+      {collapsedCount > 0 ? (
+        <Text color="gray">{`  ↳ ${t('toolCall.subagentCollapsed', { count: collapsedCount })}`}</Text>
+      ) : null}
+      {visible.map((ev, i) => (
+        <SubagentToolLine key={`${ev.name}-${i}`} ev={ev} />
+      ))}
+    </Box>
+  );
+}
+
 /**
  * 渲染一次工具调用：名称 + 入参摘要 + 状态。
- * 结果体默认折叠——出错时显示前几行预览，成功时只显示「N 行输出 · Ctrl+O 展开」提示；
- * expanded=true（全屏查看器/测试场景）时展开完整输出。
+ * spawn_agent 工具在运行中嵌套显示子工具调用（滚动窗口），成功后坍缩回一行，
+ * 失败时保留尾部现场；expanded=true（全屏查看器/测试场景）时展开完整嵌套历史。
  */
 export function ToolCall({
   item,
   expanded,
+  errorPreviewLines = DEFAULT_COLLAPSED_ERROR_LINES,
 }: {
   item: Extract<DisplayItem, { kind: 'tool' }>;
   expanded: boolean;
+  /** 错误输出折叠态预览行数（默认 4，clamp [1, 20] 由调用方保证）。 */
+  errorPreviewLines?: number;
 }): React.ReactElement {
   const running = item.status === 'running';
   // running 时转圈（80ms），非 running 时不起定时器；同一 re-render 也顺带刷新已运行秒数。
@@ -114,6 +171,8 @@ export function ToolCall({
   const result = item.result;
   const lines = result !== undefined && result !== '' ? result.split('\n') : [];
   const hasBody = lines.length > 0 && item.status !== 'running';
+  const subagentEvents = item.subagentToolEvents;
+  const isSpawnAgent = item.name === 'spawn_agent' && subagentEvents !== undefined && subagentEvents.length > 0;
 
   // dynamic_workflow 工具：运行中升级为动态阶段面板（phase 阶段序列 + 当前阶段高亮），
   // 完成后坍缩回一行摘要，结果体仍走原有折叠/Ctrl+O 机制。
@@ -127,7 +186,52 @@ export function ToolCall({
           {elapsedSec !== null ? <Text color="gray">{t('toolCall.elapsed', { s: elapsedSec })}</Text> : null}
         </Text>
         {running ? <DynamicWorkflowPanel state={dwf} /> : null}
-        {hasBody ? <ResultBody lines={lines} isError={item.status === 'error'} expanded={expanded} /> : null}
+        {hasBody ? <ResultBody lines={lines} isError={item.status === 'error'} expanded={expanded} errorPreviewLines={errorPreviewLines} /> : null}
+      </Box>
+    );
+  }
+
+  // spawn_agent 工具：三种终态渲染
+  if (isSpawnAgent) {
+    const totalToolCount = subagentEvents.length;
+    // 成功坍缩（Rule 2）
+    if (item.status === 'ok' && !expanded) {
+      const durationSec = item.startedAt !== undefined ? Math.floor((Date.now() - item.startedAt) / 1000) : 0;
+      return (
+        <Box flexDirection="column">
+          <Text>
+            <Text color={mark.color}>{mark.symbol} </Text>
+            <Text color="cyan">{item.name}</Text>
+            {item.subagentType !== undefined || item.description !== undefined ? (
+              <Text color="gray">
+                {` [${[item.subagentType, item.description].filter(Boolean).join(' · ')}]`}
+              </Text>
+            ) : null}
+            <Text color="gray">{` ${t('toolCall.subagentSuccess', { s: durationSec, count: totalToolCount })}`}</Text>
+          </Text>
+        </Box>
+      );
+    }
+    // 运行中 / 失败 / 展开：渲染嵌套子调用
+    const showErrorPreview = item.status === 'error' && hasBody;
+    return (
+      <Box flexDirection="column">
+        <Text>
+          <Text color={mark.color}>{mark.symbol} </Text>
+          <Text color="cyan">{item.name}</Text>
+          {item.subagentType !== undefined || item.description !== undefined ? (
+            <Text color="gray">
+              {` [${[item.subagentType, item.description].filter(Boolean).join(' · ')}]`}
+            </Text>
+          ) : null}
+          {elapsedSec !== null && item.status !== 'ok' ? <Text color="gray">{t('toolCall.elapsed', { s: elapsedSec })}</Text> : null}
+        </Text>
+        <SubagentToolBlock events={subagentEvents} running={running && !expanded} expanded={expanded} />
+        {showErrorPreview ? (
+          <Box marginLeft={2} flexDirection="column">
+            <ResultBody lines={lines} isError={true} expanded={expanded} errorPreviewLines={errorPreviewLines} />
+          </Box>
+        ) : null}
       </Box>
     );
   }
@@ -149,7 +253,7 @@ export function ToolCall({
         {/* 前台 bash 运行中提示可转后台：发现性入口，仅 running 时显示 */}
         {running && item.name === 'bash' ? <Text color="gray">{t('toolCall.bashBackgroundHint')}</Text> : null}
       </Text>
-      {hasBody ? <ResultBody lines={lines} isError={item.status === 'error'} expanded={expanded} /> : null}
+      {hasBody ? <ResultBody lines={lines} isError={item.status === 'error'} expanded={expanded} errorPreviewLines={errorPreviewLines} /> : null}
     </Box>
   );
 }
@@ -158,10 +262,13 @@ function ResultBody({
   lines,
   isError,
   expanded,
+  errorPreviewLines = DEFAULT_COLLAPSED_ERROR_LINES,
 }: {
   lines: string[];
   isError: boolean;
   expanded: boolean;
+  /** 错误输出折叠态预览行数（默认 4）。 */
+  errorPreviewLines?: number;
 }): React.ReactElement {
   if (expanded) {
     const shown = lines.slice(0, EXPANDED_MAX_LINES);
@@ -178,8 +285,8 @@ function ResultBody({
 
   // 折叠态
   if (isError) {
-    const preview = lines.slice(0, COLLAPSED_ERROR_LINES);
-    const more = lines.length - COLLAPSED_ERROR_LINES;
+    const preview = lines.slice(0, errorPreviewLines);
+    const more = lines.length - errorPreviewLines;
     return (
       <Box flexDirection="column" marginLeft={2}>
         {preview.map((line, i) => renderResultLine(line, i, 'red'))}

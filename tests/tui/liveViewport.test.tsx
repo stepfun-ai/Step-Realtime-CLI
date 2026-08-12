@@ -75,9 +75,9 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     const lines = frameLines(out);
     // 隐藏 21 − 5 = 16 行（空白 margin + l01..l15），可见 l16..l20
     expect(out).toContain('已隐藏 16 行早期输出');
-    expect(lines).toContain('l16');
-    expect(lines).toContain('l20');
-    expect(lines).not.toContain('l15');
+    expect(lines).toContain('  l16');
+    expect(lines).toContain('  l20');
+    expect(lines).not.toContain('  l15');
     // 帧高恒 ≤ 预算（动态帧 < 一屏的不变量）
     expect(lines.length).toBeLessThanOrEqual(6);
   });
@@ -95,7 +95,7 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     const lines = frameLines(out);
     expect(out).toContain('已隐藏 19 行早期输出');
     expect(lines).toContain('· n10');
-    expect(lines).toContain('a5');
+    expect(lines).toContain('  a5');
     expect(lines).not.toContain('· n09');
     expect(lines.length).toBeLessThanOrEqual(8);
   });
@@ -120,8 +120,8 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     await settle();
     const out = lastFrame() ?? '';
     expect(out).not.toContain('已隐藏');
-    expect(frameLines(out)).toContain('x1');
-    expect(frameLines(out)).toContain('x30');
+    expect(frameLines(out)).toContain('● x1');
+    expect(frameLines(out)).toContain('  x30');
   });
 
   it('预算收紧（模拟 resize）：窗口收缩，隐藏行数指示随之变大', async () => {
@@ -162,8 +162,8 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     expect(out).toContain('50 行输出');
     expect(lines).not.toContain('  r50');
     // 尾部锚定：工具尾部可见，流式开头被裁
-    expect(lines).toContain('s15');
-    expect(lines).not.toContain('s01');
+    expect(lines).toContain('  s15');
+    expect(lines).not.toContain('  s01');
     expect(lines.length).toBeLessThanOrEqual(8);
   });
 

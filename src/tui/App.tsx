@@ -42,7 +42,7 @@ import { createProvider } from '../provider/factory.js';
 import { resolveCompactionBinding } from '../provider/compaction.js';
 import { isAbortError } from '../provider/retry.js';
 import type { ChatProvider } from '../provider/types.js';
-import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload } from './reload.js';
+import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from './reload.js';
 import type { ToolContext } from '../tools/types.js';
 import type { TodoItem } from '../tools/types.js';
 import { clearDynamicTools } from '../tools/index.js';
@@ -452,6 +452,10 @@ export function App({
   // 同值镜像：回合收尾回调（settle）里的闭包可能捕获旧 state，交接记录必须读当前值。
   const subagentsRef = useRef<import('./AgentGroup.js').SubagentProgress[]>([]);
   subagentsRef.current = subagents;
+  // 子 agent 嵌套工具事件：sid → 父 spawn_agent tool 条目 id 映射。
+  const spawnAgentSidMapRef = useRef<Map<string, string>>(new Map());
+  // 待配对的 spawn_agent tool 条目 id 队列（FIFO）：tool_start 时入队，runner start 事件到达时出队配对。
+  const pendingSubagentToolIdsRef = useRef<string[]>([]);
   // 运行中的 workflow 工具调用 id 栈：onWorkflowStep 与 wf- 前缀子 agent 事件据此定位步骤面板。
   const activeWorkflowRef = useRef<string[]>([]);
   // 上下文占用 token（状态栏 context 进度条）：平时由 provider 真实 usage 事件驱动，
@@ -1307,6 +1311,8 @@ export function App({
                 item.description = desc;
               }
             }
+            // 记录待配对：runner 的 start 事件到达时出队，建立 sid → 父 tool 条目 id 映射
+            pendingSubagentToolIdsRef.current.push(ev.id);
           }
           // dynamic_workflow 工具：装配动态阶段面板（空序列，phase 事件逐个追加）。
           if (ev.name === 'dynamic_workflow') {
@@ -1518,6 +1524,8 @@ export function App({
         // 裸 id 直切：无别名绑定，/reload 的 provider 重建按新顶层配置决策
         currentModelAliasRef.current = null;
         ctx.capabilities = undefined; // 裸模型无别名 capabilities 绑定
+        ctx.imageMaxEdgePx = undefined;
+        ctx.imageBudgetBytes = undefined;
         setModel(arg);
         modelRef.current = arg;
         setModelLabel(arg);
@@ -1537,6 +1545,8 @@ export function App({
       currentModelAliasRef.current = arg;
       providerNameRef.current = resolved.provider;
       ctx.capabilities = resolved.capabilities; // read_media 等工具的能力门控跟随新模型
+      ctx.imageMaxEdgePx = resolved.imageMaxEdgePx;
+      ctx.imageBudgetBytes = resolved.imageBudgetBytes;
       setModel(resolved.model);
       modelRef.current = resolved.model;
       setModelLabel(configRef.current.models?.[arg]?.displayName ?? resolved.model);
@@ -1575,6 +1585,8 @@ export function App({
       // provider 按预设重建后不再代表别名绑定（渠道/模型都可能变），断开别名记录
       currentModelAliasRef.current = null;
       ctx.capabilities = undefined; // 预设切换无别名 capabilities 绑定
+      ctx.imageMaxEdgePx = undefined;
+      ctx.imageBudgetBytes = undefined;
       providerNameRef.current = name;
       setModel(nextModel);
       const modelNote =
@@ -1601,6 +1613,9 @@ export function App({
     if ('error' in result) return false;
     configRef.current = result.config;
     ctx.capabilities = resolveCapabilitiesOnReload(result.config, currentModelAliasRef.current);
+    const limits = resolveImageLimitsOnReload(result.config, currentModelAliasRef.current);
+    ctx.imageMaxEdgePx = limits.imageMaxEdgePx;
+    ctx.imageBudgetBytes = limits.imageBudgetBytes;
     ctx.searchConfig = result.config.search; // [search] 段热重载
     return true;
   }, [reloadConfig]);
@@ -2663,6 +2678,9 @@ export function App({
           // 但别名声明的能力是配置级——本轮才加上的能力（如 image_in）reload 后即时生效，
           // 且无论 provider 重建与否都要刷（capabilities 不在 providerSlice 内，unchanged 短路跳不过它）。
           ctx.capabilities = resolveCapabilitiesOnReload(next, currentModelAliasRef.current);
+          const nextLimits = resolveImageLimitsOnReload(next, currentModelAliasRef.current);
+          ctx.imageMaxEdgePx = nextLimits.imageMaxEdgePx;
+          ctx.imageBudgetBytes = nextLimits.imageBudgetBytes;
           ctx.searchConfig = next.search; // [search] 段热重载
           // 压缩摘要绑定热重载：[compaction] model 或它指向的别名/渠道改动后，下一次压缩即按新绑定走。
           // 缓存清空是必须的：别名名字没变但其 model/base_url/api_key 改了时，旧实例仍打旧端点。
@@ -2866,6 +2884,8 @@ export function App({
         apiKey: ctx.apiKey,
         baseUrl: ctx.baseUrl,
         capabilities: ctx.capabilities,
+        imageMaxEdgePx: ctx.imageMaxEdgePx,
+        imageBudgetBytes: ctx.imageBudgetBytes,
         config: configRef.current, // 让子 agent 可解析角色 model 别名、跨渠道构造 provider
         hooks,
         maxDepth: configRef.current.subagent.maxDepth,
@@ -2893,6 +2913,11 @@ export function App({
           setSubagents((prev) => {
             const updated = [...prev];
             if (ev.kind === 'start') {
+              // 与 pendingSubagentToolIdsRef 队列 FIFO 配对（tool_start 时入队，runner start 到达时出队）
+              const parentToolId = pendingSubagentToolIdsRef.current.shift();
+              if (parentToolId !== undefined) {
+                spawnAgentSidMapRef.current.set(sid, parentToolId);
+              }
               updated.push({
                 id: sid,
                 type: ev.subagentType,
@@ -2908,12 +2933,41 @@ export function App({
             const a = updated[idx]!;
             if (ev.kind === 'tool') {
               updated[idx] = { ...a, toolCount: a.toolCount + 1, activity: ev.name };
+              // 嵌套子工具事件挂到父 spawn_agent 条目
+              const parentToolId = spawnAgentSidMapRef.current.get(sid);
+              if (parentToolId !== undefined) {
+                const toolEv: import('./types.js').SubagentToolEvent = { name: ev.name, status: 'running' };
+                setItems((prevItems) =>
+                  prevItems.map((it) =>
+                    it.kind === 'tool' && it.id === parentToolId
+                      ? { ...it, subagentToolEvents: [...(it.subagentToolEvents ?? []), toolEv] }
+                      : it,
+                  ),
+                );
+              }
+            } else if (ev.kind === 'tool_end') {
+              updated[idx] = { ...a, toolCount: a.toolCount, activity: ev.name };
+              const parentToolId = spawnAgentSidMapRef.current.get(sid);
+              if (parentToolId !== undefined) {
+                const toolEv: import('./types.js').SubagentToolEvent = {
+                  name: ev.name,
+                  status: ev.isError ? 'error' : 'ok',
+                };
+                setItems((prevItems) =>
+                  prevItems.map((it) =>
+                    it.kind === 'tool' && it.id === parentToolId
+                      ? { ...it, subagentToolEvents: [...(it.subagentToolEvents ?? []), toolEv] }
+                      : it,
+                  ),
+                );
+              }
             } else if (ev.kind === 'error') {
               updated[idx] = { ...a, activity: t('app.agent.activityError', { message: ev.message }) };
             } else if (ev.kind === 'usage') {
               // runner 已逐轮累计，这里只赋值（不加法）
               updated[idx] = { ...a, tokens: ev.tokens };
             } else if (ev.kind === 'end') {
+              spawnAgentSidMapRef.current.delete(sid);
               updated[idx] = { ...a, status: ev.isError ? 'error' : 'done', endedAt: Date.now() };
             }
             return updated;
@@ -2937,8 +2991,6 @@ export function App({
             signal: controller.signal,
             depth: 0,
             runSubagent,
-            // 单轮 skill 激活计数器（递归防护，每次提交新建 → 单次 runAgent 内累计）
-            skillActivations: { count: 0 },
             todos: { items: todos.current },
             background: background.current,
             goal: goal.current,
@@ -3431,7 +3483,7 @@ export function App({
             // Static 恒折叠渲染：ink <Static> append-only，条目进 scrollback 时渲染结果即冻结，
             // 历史恒紧凑。完整工具输出不再走全局展开态，由 Ctrl+O 全屏查看器（ExpandViewer）
             // 在动态区位置单独铺开，不触碰 scrollback。
-            <MessageItem key={i} item={entry} expanded={false} termWidth={termWidth} />
+            <MessageItem key={i} item={entry} expanded={false} termWidth={termWidth} errorPreviewLines={configRef.current.tui?.errorPreviewLines} />
           )
         }
       </Static>
@@ -3446,6 +3498,7 @@ export function App({
           maxRows={stdout?.rows !== undefined ? Math.max(stdout.rows - STATUS_BAR_ROWS, 3) : undefined}
           onClose={() => setExpandViewerOpen(false)}
           termWidth={termWidth}
+          errorPreviewLines={configRef.current.tui?.errorPreviewLines}
         />
       ) : tasksViewerOpen ? (
         <TasksViewer
@@ -3454,7 +3507,13 @@ export function App({
           onClose={() => setTasksViewerOpen(false)}
         />
       ) : (
-        <MessageList items={liveItems} busy={busy} maxRows={liveMaxRows} termWidth={termWidth} />
+        <MessageList
+          items={liveItems}
+          busy={busy}
+          maxRows={liveMaxRows}
+          termWidth={termWidth}
+          errorPreviewLines={configRef.current.tui?.errorPreviewLines}
+        />
       )}
       {!overlayOpen && budget.thinkingRows > 0 ? <ThinkingPreview text={thinkingPreview} maxLines={budget.thinkingRows - 1} /> : null}
       {!overlayOpen ? <AgentGroup agents={subagents} busy={busy} /> : null}

@@ -103,8 +103,8 @@ describe('collectExpandable（按轮分组收集，App 侧空组不开查看器�
     expect(groups[0]!.userText).toBe('u2');
   });
 
-  it('短 thinking（≤5 行、折叠态已全文可见）不收', () => {
-    const items: DisplayItem[] = [{ kind: 'thinking', text: 't1\nt2\nt3' }];
+  it('短 thinking（≤2 行、折叠态已全文可见）不收', () => {
+    const items: DisplayItem[] = [{ kind: 'thinking', text: 't1\nt2' }];
     expect(collectExpandable(items)).toEqual([]);
   });
 
@@ -119,6 +119,36 @@ describe('collectExpandable（按轮分组收集，App 侧空组不开查看器�
     const groups = collectExpandable(items, 3);
     expect(groups.length).toBe(1);
     expect(groups[0]!.entries.map((g) => (g.kind === 'tool' ? g.id : 'thinking'))).toEqual(['t12', 't13', 't14']);
+  });
+
+  it('spawn_agent 带 subagentToolEvents 时纳入可展开集合（想看全过程走 Ctrl+O）', () => {
+    const items: DisplayItem[] = [
+      { kind: 'user', text: 'u1' },
+      tool({ id: 'sa1', name: 'spawn_agent', result: '', subagentToolEvents: [
+        { name: 'read_file', status: 'ok' },
+        { name: 'grep', status: 'error' },
+      ]}),
+      tool({ id: 't1', result: 'r1' }),
+    ];
+    const groups = collectExpandable(items);
+    expect(groups.length).toBe(1);
+    expect(groups[0]!.userText).toBe('u1');
+    const entries = groups[0]!.entries;
+    expect(entries.length).toBe(2);
+    expect((entries[0] as ToolItem).id).toBe('sa1');
+    expect((entries[0] as ToolItem).name).toBe('spawn_agent');
+    expect((entries[1] as ToolItem).id).toBe('t1');
+  });
+
+  it('spawn_agent 无 subagentToolEvents 时仍走原有 hasCollapsedBody 口径', () => {
+    const items: DisplayItem[] = [
+      { kind: 'user', text: 'u1' },
+      tool({ id: 'sa1', name: 'spawn_agent', result: 'some output' }),
+    ];
+    // spawn_agent 有普通输出时 hasCollapsedBody=true（成功非 diff），仍可展开
+    const groups = collectExpandable(items);
+    expect(groups.length).toBe(1);
+    expect((groups[0]!.entries[0] as ToolItem).id).toBe('sa1');
   });
 });
 

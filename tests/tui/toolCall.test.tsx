@@ -150,4 +150,126 @@ describe('ToolCall 折叠/展开', () => {
     expect(frame).toContain('read_file');
     unmount();
   });
+
+  it('错误输出按 errorPreviewLines 预览（默认 4）', () => {
+    const lines = Array.from({ length: 10 }, (_, i) => `err${i + 1}`).join('\n');
+    const { lastFrame } = render(
+      React.createElement(ToolCall, { item: toolItem({ status: 'error', result: lines }), expanded: false }),
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('err1');
+    expect(frame).toContain('err4');
+    expect(frame).not.toContain('err5');
+    expect(frame).toContain('还有 6 行');
+  });
+
+  it('errorPreviewLines=2 时只预览前 2 行', () => {
+    const lines = Array.from({ length: 10 }, (_, i) => `err${i + 1}`).join('\n');
+    const { lastFrame } = render(
+      React.createElement(ToolCall, { item: toolItem({ status: 'error', result: lines }), expanded: false, errorPreviewLines: 2 }),
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('err1');
+    expect(frame).toContain('err2');
+    expect(frame).not.toContain('err3');
+    expect(frame).toContain('还有 8 行');
+  });
+
+  // --- 缺口 2：spawn_agent 嵌套子工具调用渲染 ---
+  const makeSpawnAgentItem = (over: Partial<Extract<DisplayItem, { kind: 'tool' }>> = {}) =>
+    toolItem({
+      name: 'spawn_agent',
+      subagentType: 'explore',
+      description: '调查竞品排版',
+      ...over,
+    });
+
+  it('运行中超过 3 条子调用时只显示最近 3 条 + 计数行', () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({
+      name: `tool_${i + 1}`,
+      status: 'ok' as const,
+    }));
+    const { lastFrame } = render(
+      React.createElement(ToolCall, {
+        item: makeSpawnAgentItem({ status: 'running', subagentToolEvents: events }),
+        expanded: false,
+      }),
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('tool_3');
+    expect(frame).toContain('tool_4');
+    expect(frame).toContain('tool_5');
+    expect(frame).not.toContain('tool_1');
+    expect(frame).not.toContain('tool_2');
+    expect(frame).toContain('已完成 2 次工具调用');
+  });
+
+  it('成功时整组坍缩回一行统计', () => {
+    const events = [
+      { name: 'read_file', status: 'ok' as const },
+      { name: 'grep', status: 'ok' as const },
+      { name: 'bash', status: 'ok' as const },
+    ];
+    const { lastFrame, unmount } = render(
+      React.createElement(ToolCall, {
+        item: makeSpawnAgentItem({
+          status: 'ok',
+          startedAt: 1700000000000 - 47000,
+          subagentToolEvents: events,
+        }),
+        expanded: false,
+      }),
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('spawn_agent');
+    expect(frame).toContain('explore');
+    expect(frame).toContain('调查竞品排版');
+    expect(frame).toContain('3 次工具调用');
+    expect(frame).not.toContain('↳');
+    unmount();
+  });
+
+  it('失败时保留尾部子调用现场 + 错误输出预览', () => {
+    const events = [
+      { name: 'read_file', status: 'ok' as const },
+      { name: 'grep', status: 'error' as const },
+      { name: 'bash', status: 'error' as const },
+    ];
+    const { lastFrame, unmount } = render(
+      React.createElement(ToolCall, {
+        item: makeSpawnAgentItem({
+          status: 'error',
+          startedAt: 1700000000000 - 12000,
+          result: 'Error: command failed\nexit code 1\nmore details here\nline4',
+          subagentToolEvents: events,
+        }),
+        expanded: false,
+      }),
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('↳');
+    expect(frame).toContain('grep');
+    expect(frame).toContain('bash');
+    expect(frame).toContain('✗');
+    expect(frame).toContain('Error: command failed');
+    expect(frame).toContain('exit code 1');
+    unmount();
+  });
+
+  it('展开态显示完整子调用历史', () => {
+    const events = [
+      { name: 'read_file', status: 'ok' as const },
+      { name: 'grep', status: 'error' as const },
+    ];
+    const { lastFrame } = render(
+      React.createElement(ToolCall, {
+        item: makeSpawnAgentItem({ status: 'error', subagentToolEvents: events }),
+        expanded: true,
+      }),
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('read_file');
+    expect(frame).toContain('grep');
+    expect(frame).not.toContain('已完成');
+  });
 });

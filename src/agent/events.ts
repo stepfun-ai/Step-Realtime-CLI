@@ -52,7 +52,7 @@ export type AgentEvent =
    * totalTokens 已是全量估算、覆盖当前全部消息，游标设为全长使尾部为空、不重复叠加。
    * measuredLength=0 表示无已测量前缀（如 resume 尚未往返），UI 对全部消息做估算。
    * 省略时 UI 退化为「只显示 totalTokens、不叠加尾部」的旧行为。
-   * billedDelta：本轮请求的计费 token 增量（input − cache_read + output），仅真实 API 往返的
+   * billedDelta：本轮请求的计费 token 增量（input + output；input_tokens 本身已排除缓存命中部分）。
    * usage 携带；压缩后的纯估算事件不带（无增量可计）。供子 agent 运行器逐轮累计成本。
    */
   | { type: 'usage'; totalTokens: number; measuredLength?: number; billedDelta?: number }
@@ -77,6 +77,7 @@ export interface WorkflowStepEvent {
 export type SubagentProgressEvent =
   | { kind: 'start'; subagentType: string; description: string }
   | { kind: 'tool'; name: string }
+  | { kind: 'tool_end'; name: string; isError: boolean }
   | { kind: 'error'; message: string }
   /** 累计计费 token（runner 已逐轮累加，消费者只赋值不加法）。 */
   | { kind: 'usage'; tokens: number }
