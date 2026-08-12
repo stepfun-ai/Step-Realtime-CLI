@@ -4,7 +4,12 @@ import { t } from '../i18n.js';
 import { PROVIDER_PRESETS } from '../config/config.js';
 import { allocateAlias, appendProviderConfig, type AppendProviderInput } from '../config/tomlAppend.js';
 import { DEFAULT_CATALOG_URL, fetchCatalog, parseCatalog, type CatalogProvider } from '../provider/catalog.js';
-import { insertText, normalizePastedText, resolveEditAction, type PromptEditState } from './promptEdit.js';
+import { TextEditField, type TextEditValue } from './TextEditField.js';
+
+/** 空编辑值（清词/换步重置用）。 */
+const EMPTY_EDIT: TextEditValue = { text: '', cursor: 0 };
+/** 字符串转编辑值：光标归尾（文本步预填后便于直接在末尾追加）。 */
+const toEditValue = (s: string): TextEditValue => ({ text: s, cursor: Array.from(s).length });
 
 /** 向导结局：added = 写入成功；failed = 写入/校验失败（写入器已回滚）；cancel = 用户 Esc 取消。 */
 export type ProviderWizardResult =
@@ -86,8 +91,7 @@ export function ProviderWizard({
   const [step, setStep] = useState<Step>('path');
   const [sel, setSel] = useState(0);
   // 文本步的输入缓冲与光标（code point 索引）；换步时整体重置
-  const [buf, setBuf] = useState('');
-  const [cursor, setCursor] = useState(0);
+  const [buf, setBuf] = useState<TextEditValue>(EMPTY_EDIT);
   // 能力多选的勾选集（CAP_OPTIONS 下标）
   const [checked, setChecked] = useState<Set<number>>(new Set());
   // 目录导入路径的状态：供应商清单、拉取失败原因、选中的供应商
@@ -95,7 +99,7 @@ export function ProviderWizard({
   const [fetchError, setFetchError] = useState('');
   const [picked, setPicked] = useState<CatalogProvider | null>(null);
   // 供应商选择步的过滤词
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState<TextEditValue>(EMPTY_EDIT);
   // 行内校验错误（红字显示在当前步下方，不清输入现场）
   const [error, setError] = useState('');
   // 手动路径草稿（useState 即可：只在步进提交时改写，无高频更新）
@@ -105,8 +109,7 @@ export function ProviderWizard({
 
   /** 进入文本步：重置输入缓冲（可带预填值，光标落末尾）与行内错误。 */
   const gotoText = (s: Step, initial = ''): void => {
-    setBuf(initial);
-    setCursor(Array.from(initial).length);
+    setBuf(toEditValue(initial));
     setError('');
     setStep(s);
   };
@@ -127,7 +130,7 @@ export function ProviderWizard({
       .then((list) => {
         if (cancelled) return;
         setCatalog(list);
-        setQuery('');
+        setQuery(EMPTY_EDIT);
         setError('');
         setSel(0);
         setStep('pick');
@@ -205,7 +208,7 @@ export function ProviderWizard({
 
   /** 文本步提交：按步校验并推进；校验失败只置行内错误，不清输入现场。 */
   const submitText = (): void => {
-    const v = buf.trim();
+    const v = buf.text.trim();
     switch (step) {
       case 'id': {
         if (v === '') return setError(t('providerWizard.err.empty'));
@@ -294,7 +297,7 @@ export function ProviderWizard({
 
   // 供应商选择步的过滤清单（id + 名称小写子串；空格分词 AND，与 ModelPicker 同口径）
   const filteredCatalog = ((): CatalogProvider[] => {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = query.text.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return catalog;
     return catalog.filter((p) => terms.every((term) => `${p.id} ${p.name}`.toLowerCase().includes(term)));
   })();
@@ -305,8 +308,8 @@ export function ProviderWizard({
   useInput((input, key) => {
     // Esc：选择步过滤词非空时先清词（与 ModelPicker 同口径），其余情况取消整个向导
     if (key.escape) {
-      if (step === 'pick' && query !== '') {
-        setQuery('');
+      if (step === 'pick' && query.text !== '') {
+        setQuery(EMPTY_EDIT);
         setSel(0);
         return;
       }
@@ -348,11 +351,6 @@ export function ProviderWizard({
     if (step === 'pick') {
       if (key.upArrow) return setSel((i) => Math.max(i - 1, 0));
       if (key.downArrow) return setSel((i) => Math.min(i + 1, Math.max(filteredCatalog.length - 1, 0)));
-      if (key.backspace || key.delete) {
-        setQuery((q) => q.slice(0, -1));
-        setSel(0);
-        return;
-      }
       if (key.return) {
         const chosen = filteredCatalog[clampedSel];
         if (chosen === undefined) return;
@@ -364,28 +362,12 @@ export function ProviderWizard({
         gotoText('catalogKey');
         return;
       }
-      if (input !== '' && !key.ctrl && !key.meta) {
-        setQuery((q) => q + input);
-        setSel(0);
-      }
+      // 文本编辑（←→/Home/End/退格/Delete/可打印字符）归 TextEditField
       return;
     }
     if (TEXT_STEPS.has(step)) {
+      // Enter 提交在此（单行语义）；编辑键与可打印字符归 TextEditField
       if (key.return) return submitText();
-      // 编辑键（←→/Home/End/退格/删词）走 promptEdit，可打印字符插光标处
-      const editState: PromptEditState = { text: buf, cursor };
-      const action = resolveEditAction(input, key);
-      if (action) {
-        const next = action(editState);
-        setBuf(next.text);
-        setCursor(next.cursor);
-        return;
-      }
-      if (input !== '' && !key.ctrl && !key.meta) {
-        const next = insertText(editState, normalizePastedText(input));
-        setBuf(next.text);
-        setCursor(next.cursor);
-      }
     }
   });
 
@@ -481,7 +463,9 @@ export function ProviderWizard({
             </Text>
           )}
           <Text>{textQuestion}</Text>
-          <Text>{renderField(buf, cursor)}</Text>
+          <Text>
+            <TextEditField value={buf} onChange={setBuf} isActive={TEXT_STEPS.has(step)} />
+          </Text>
         </>
       )}
       {step === 'fetch' && <Text>{t('providerWizard.fetching', { url: source })}</Text>}
@@ -495,7 +479,15 @@ export function ProviderWizard({
         <>
           <Text>{t('providerWizard.pick', { count: catalog.length })}</Text>
           <Text>
-            {query === '' ? <Text dimColor>{t('providerWizard.pickPlaceholder')}</Text> : <Text color="yellow">{query}</Text>}
+            <TextEditField
+              value={query}
+              onChange={(v) => {
+                setQuery(v);
+                setSel(0);
+              }}
+              placeholder={t('providerWizard.pickPlaceholder')}
+              isActive={step === 'pick'}
+            />
           </Text>
           {filteredCatalog.length === 0 ? (
             <Text color="gray">{t('providerWizard.pickEmpty')}</Text>
@@ -528,22 +520,3 @@ export function ProviderWizard({
   );
 }
 
-/**
- * 单行文本 + 反色光标渲染（与 QuestionPrompt 的 Other 输入同款，不引入 ink-text-input）：
- * 光标处字符反色，光标在末尾时反色一个占位空格；空文本时反色一个空格作光标。
- */
-function renderField(value: string, cursor: number): React.ReactNode {
-  if (value === '') {
-    return <Text inverse>{' '}</Text>;
-  }
-  const chars = Array.from(value);
-  const at = Math.max(0, Math.min(cursor, chars.length));
-  const cursorChar = at < chars.length ? (chars[at] as string) : ' ';
-  return (
-    <>
-      {chars.slice(0, at).join('')}
-      <Text inverse>{cursorChar}</Text>
-      {at < chars.length ? chars.slice(at + 1).join('') : ''}
-    </>
-  );
-}

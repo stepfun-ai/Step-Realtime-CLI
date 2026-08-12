@@ -1,14 +1,9 @@
-import { Box, Text, useInput, usePaste } from 'ink';
-import { useState, useCallback } from 'react';
+import { Box, Text, useInput } from 'ink';
+import { useState } from 'react';
 import { t } from '../i18n.js';
 // @ts-ignore - TS6133: saveProviderKey 实际在下方 useInput 回调中使用，TS 无法穿透 useEffect 闭包追踪
 import { saveProviderKey, saveModelAlias, saveDefaultModel } from '../config/config.js';
-import {
-  insertText,
-  normalizePastedText,
-  resolveEditAction,
-  type PromptEditState,
-} from './promptEdit.js';
+import { TextEditField } from './TextEditField.js';
 
 // ──────────────────────────────────────────────
 // 类型定义
@@ -105,55 +100,6 @@ function EditableInput({
   hint: string;
   placeholder?: string;
 }): React.ReactElement {
-  // 单行字段（API key / base_url）语义：粘贴的长 key 在终端里常被折行，
-  // 换行符若进字段再写进 TOML 字符串即成非法控制字符、直接毁掉 config 解析。
-  // 故插入前把所有 \r/\n 一律剥掉（normalizePastedText 只把 \r\n 归一成 \n，不够）。
-  const toSingleLine = (raw: string): string => normalizePastedText(raw).replace(/[\r\n]+/g, '');
-
-  // bracketed paste：一次性整体插入，不走 useInput 字符分支
-  usePaste(
-    useCallback(
-      (raw: string) => {
-        const next = insertText({ text: value, cursor }, toSingleLine(raw));
-        onChange(next);
-      },
-      [value, cursor, onChange],
-    ),
-  );
-
-  useInput(
-    (input, key) => {
-      // Enter：透传给上层（由 useInput 在 EditableInput 之外统一处理）
-      if (key.return) {
-        return;
-      }
-      // Esc：透传给上层
-      if (key.escape) {
-        return;
-      }
-      const editState: PromptEditState = { text: value, cursor };
-      const action = resolveEditAction(input, key);
-      if (action) {
-        const next = action(editState);
-        if (next.text !== value || next.cursor !== cursor) {
-          onChange(next);
-        }
-        return;
-      }
-      // 可打印字符：无 ctrl/meta 修饰时在光标处插入
-      if (input !== '' && !key.ctrl && !key.meta) {
-        const next = insertText(editState, toSingleLine(input));
-        onChange(next);
-      }
-    },
-    { isActive: true },
-  );
-
-  const chars = Array.from(value);
-  const at = Math.max(0, Math.min(cursor, chars.length));
-  const cursorChar = at < chars.length ? chars[at]! : ' ';
-  const onNewline = cursorChar === '\n';
-
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
       <Text bold>{title}</Text>
@@ -161,10 +107,7 @@ function EditableInput({
       <Text> </Text>
       <Text>
         {'> '}
-        {chars.slice(0, at).join('')}
-        <Text inverse>{onNewline ? ' ' : cursorChar}</Text>
-        {onNewline ? '\n' : ''}
-        {at < chars.length ? chars.slice(at + 1).join('') : ''}
+        <TextEditField value={{ text: value, cursor }} onChange={onChange} />
       </Text>
       {placeholder !== undefined && value === '' ? (
         <Text dimColor>{placeholder}</Text>

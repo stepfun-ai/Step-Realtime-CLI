@@ -1,7 +1,13 @@
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useMemo, useState } from 'react';
 import { displayWidth, padEndByWidth } from './liveBudget.js';
+import { TextEditField, type TextEditValue } from './TextEditField.js';
 import { t } from '../i18n.js';
+
+/** 空编辑值（清词/初始化用）。 */
+const EMPTY_EDIT: TextEditValue = { text: '', cursor: 0 };
+/** 字符串转编辑值：光标归尾（恢复 tab 保存的搜索词时与 shell 行为一致）。 */
+const toEditValue = (s: string): TextEditValue => ({ text: s, cursor: Array.from(s).length });
 
 /** 模型选择器的单条候选项（由 App 从 [models.<别名>] 表装配）。 */
 export interface ModelPickerItem {
@@ -94,7 +100,7 @@ export function ModelPicker({
   const [activeTab, setActiveTab] = useState(() =>
     initialChannel !== undefined && channels.includes(initialChannel) ? initialChannel : ALL_TAB,
   );
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState<TextEditValue>(EMPTY_EDIT);
   const [sel, setSel] = useState(0);
   const [tabStates, setTabStates] = useState<Record<string, TabViewState>>({});
   const showTabs = channels.length > 1;
@@ -106,7 +112,7 @@ export function ModelPicker({
     [items, activeTab],
   );
   const filtered = useMemo(() => {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = query.text.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return channelItems;
     return channelItems.filter((m) => terms.every((term) => searchKey(m).includes(term)));
   }, [channelItems, query]);
@@ -127,38 +133,57 @@ export function ModelPicker({
     Math.max(Math.floor((stdout?.columns ?? 80) / 2), 8),
   );
 
-  // tab 条右端截断：可用宽 = 终端列数 - 边框/padding 占用 - 余量；放不下的 tab 整体省略，末尾加 …
+  // tab 条窗口：放不下时保证 activeTab 可见——从 active 向两侧贪心扩展（先右后左），
+  // 两端有隐藏 tab 时各预留 2 列给 ‹ / … 指示符。旧版是固定从头排到放不下为止，
+  // 选中靠后 tab 时高亮直接不可见（2026-08-11 用户现场：tab 切过去看不到自己选的是哪个）。
   const barMaxWidth = Math.max((stdout?.columns ?? 80) - 6, 8);
   const tabBar = useMemo(() => {
-    const segs: { id: string; label: string }[] = [];
-    let used = 0;
-    let truncated = false;
-    for (const id of tabs) {
-      const label = id === ALL_TAB ? t('modelPicker.tabAll') : id;
-      const width = label.length + (segs.length > 0 ? 2 : 0);
-      // 截断时还要给 … 留 2 列（空格 + 省略号）
-      if (used + width > barMaxWidth - 2) {
-        truncated = true;
-        break;
-      }
-      used += width;
-      segs.push({ id, label });
+    const labels = tabs.map((id) => (id === ALL_TAB ? t('modelPicker.tabAll') : id));
+    const segWidth = (from: number, to: number): number => {
+      let w = 0;
+      for (let i = from; i < to; i++) w += labels[i]!.length + (i > from ? 2 : 0);
+      return w;
+    };
+    if (segWidth(0, tabs.length) <= barMaxWidth) {
+      return {
+        segs: tabs.map((id, i) => ({ id, label: labels[i]! })),
+        hiddenLeft: false,
+        hiddenRight: false,
+      };
     }
-    return { segs, truncated };
-  }, [tabs, barMaxWidth]);
+    const activeIdx = Math.max(tabs.indexOf(activeTab), 0);
+    const fits = (from: number, to: number): boolean =>
+      segWidth(from, to) + (from > 0 ? 2 : 0) + (to < tabs.length ? 2 : 0) <= barMaxWidth;
+    let start = activeIdx;
+    let end = activeIdx + 1;
+    for (;;) {
+      let grew = false;
+      if (end < tabs.length && fits(start, end + 1)) {
+        end++;
+        grew = true;
+      }
+      if (start > 0 && fits(start - 1, end)) {
+        start--;
+        grew = true;
+      }
+      if (!grew) break;
+    }
+    const segs = tabs.slice(start, end).map((id, i) => ({ id, label: labels[start + i]! }));
+    return { segs, hiddenLeft: start > 0, hiddenRight: end < tabs.length };
+  }, [tabs, barMaxWidth, activeTab]);
 
   /** Tab / Shift+Tab 取模回卷切换：保存当前 tab 视图状态，恢复目标 tab 的。 */
   const switchTab = (dir: 1 | -1): void => {
     const idx = tabs.indexOf(activeTab);
     const next = tabs[(idx + dir + tabs.length) % tabs.length]!;
-    setTabStates((m) => ({ ...m, [activeTab]: { sel: clampedSel, query } }));
+    setTabStates((m) => ({ ...m, [activeTab]: { sel: clampedSel, query: query.text } }));
     const saved = tabStates[next];
     setSel(saved?.sel ?? 0);
-    setQuery(saved?.query ?? '');
+    setQuery(toEditValue(saved?.query ?? ''));
     setActiveTab(next);
   };
 
-  useInput((input, key) => {
+  useInput((_input, key) => {
     // Tab / Shift+Tab 切渠道 tab（仅多渠道时消费）
     if (key.tab && showTabs) {
       switchTab(key.shift ? -1 : 1);
@@ -166,8 +191,8 @@ export function ModelPicker({
     }
     if (key.escape) {
       // 有过滤词先清词，再按一次才取消（词是 per-tab 的）
-      if (query !== '') {
-        setQuery('');
+      if (query.text !== '') {
+        setQuery(EMPTY_EDIT);
         setSel(0);
         return;
       }
@@ -188,15 +213,7 @@ export function ModelPicker({
       setSel((i) => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
       return;
     }
-    if (key.backspace || key.delete) {
-      setQuery((q) => q.slice(0, -1));
-      setSel(0);
-      return;
-    }
-    if (input !== '' && !key.ctrl && !key.meta && !key.tab) {
-      setQuery((q) => q + input);
-      setSel(0);
-    }
+    // 文本编辑（←→/Home/End/退格/Delete/可打印字符）归 TextEditField
   });
 
   return (
@@ -207,14 +224,18 @@ export function ModelPicker({
       {hasHistory && <Text color="yellow">{t('modelPicker.cacheWarning')}</Text>}
       <Text>
         {t('modelPicker.searchPrefix')}
-        {query === '' ? (
-          <Text dimColor>{t('modelPicker.searchPlaceholder')}</Text>
-        ) : (
-          <Text color="yellow">{query}</Text>
-        )}
+        <TextEditField
+          value={query}
+          onChange={(v) => {
+            setQuery(v);
+            setSel(0);
+          }}
+          placeholder={t('modelPicker.searchPlaceholder')}
+        />
       </Text>
       {showTabs && (
         <Text>
+          {tabBar.hiddenLeft ? <Text color="gray">‹ </Text> : null}
           {tabBar.segs.map((seg, i) => (
             <Text key={seg.id}>
               {i > 0 ? '  ' : ''}
@@ -227,7 +248,7 @@ export function ModelPicker({
               )}
             </Text>
           ))}
-          {tabBar.truncated ? <Text color="gray"> …</Text> : null}
+          {tabBar.hiddenRight ? <Text color="gray"> …</Text> : null}
         </Text>
       )}
       {filtered.length === 0 ? (

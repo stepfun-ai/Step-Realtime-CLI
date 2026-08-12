@@ -460,6 +460,28 @@ describe('ModelPicker Tab 渠道筛选', () => {
     expect(line).toContain('…');
     expect(line).not.toContain('channel-name-007');
   });
+
+  it('tab 条撑爆时窗口跟随 active：切到末尾渠道，该 tab 可见且左端出现 ‹', async () => {
+    // 2026-08-11 用户现场：旧版固定从头排，选中靠后 tab 时高亮不可见
+    const items: ModelPickerItem[] = Array.from({ length: 8 }, (_, i) =>
+      item(`m${i}`, `Model ${i}`, `channel-name-${i.toString().padStart(3, '0')}`),
+    );
+    const { lastFrame, stdin } = renderPicker(items);
+    // all → 001 → … → 007：9 个 tab，8 次 Tab 切到末尾
+    for (let i = 0; i < 8; i++) {
+      stdin.write(TAB);
+      await delay();
+    }
+    // 此时「全部」已被窗口隐藏，用 ‹ 指示符定位 tab 条所在行
+    //（搜索框 placeholder 自带 …，不能用 … 定位，只认 ‹）
+    const line =
+      stripAnsi(lastFrame() ?? '')
+        .split('\n')
+        .find((l) => l.includes('‹')) ?? '';
+    expect(line).toContain('‹');
+    expect(line).toContain('channel-name-007');
+    expect(line).not.toContain('全部');
+  });
 });
 
 describe('ModelPicker initialChannel 预选', () => {

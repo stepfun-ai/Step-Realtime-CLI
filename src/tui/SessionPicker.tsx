@@ -3,6 +3,12 @@ import { useMemo, useState } from 'react';
 import type { SessionMeta } from '../session/store.js';
 import { t } from '../i18n.js';
 import { displayWidth } from './liveBudget.js';
+import { TextEditField, type TextEditValue } from './TextEditField.js';
+
+/** 空编辑值（清词用）。 */
+const EMPTY_EDIT: TextEditValue = { text: '', cursor: 0 };
+/** 字符串转编辑值：光标归尾（rename 预填草稿后便于直接在末尾改写）。 */
+const toEditValue = (s: string): TextEditValue => ({ text: s, cursor: Array.from(s).length });
 
 /**
  * 相对时间小工具：<60s 刚刚、<60min N 分钟前、<24h N 小时前、<30d N 天前，
@@ -153,25 +159,25 @@ export function SessionPicker({
   /** 标题 i18n 键（省略用 sessionPicker.title；/agents 下钻模式传 sessionPicker.agentsTitle）。 */
   titleKey?: string;
 }): React.ReactElement {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState<TextEditValue>(EMPTY_EDIT);
   const [sel, setSel] = useState(0);
   // 删除二次确认态：null = 无待确认；否则为待删会话 id。
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  // 重命名编辑态：null = 非编辑态；否则为待改名会话 id，renameDraft 为名字草稿。
+  // 重命名编辑态：null = 非编辑态；否则为待改名会话 id，renameDraft 为名字草稿（含光标）。
   const [renameId, setRenameId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
+  const [renameDraft, setRenameDraft] = useState<TextEditValue>(EMPTY_EDIT);
   // 无法删除当前会话时的一次性提示（下次任意键操作清除）。
   const [notice, setNotice] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = query.text.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return sessions;
     return sessions.filter((m) => terms.every((term) => searchKey(m).includes(term)));
   }, [sessions, query]);
 
   const filteredSubs = useMemo(() => {
     const subs = subagents ?? [];
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = query.text.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return subs;
     return subs.filter((m) => terms.every((term) => searchKey(m).includes(term)));
   }, [subagents, query]);
@@ -202,23 +208,17 @@ export function SessionPicker({
   const renameTarget = renameId !== null ? sessions.find((m) => m.id === renameId) : undefined;
 
   useInput((input, key) => {
-    // 重命名编辑态：可打印字符进名字草稿，Enter 保存、Esc 取消，其余导航/删除键不生效
+    // 重命名编辑态：Enter 保存、Esc 取消；文本编辑归 rename TextEditField，
+    // 导航/删除键不生效（此分支提前 return，下方导航逻辑够不到）
     if (renameId !== null) {
       if (key.escape) {
         setRenameId(null);
         return;
       }
       if (key.return) {
-        if (onRename !== undefined) onRename(renameId, renameDraft.trim());
+        if (onRename !== undefined) onRename(renameId, renameDraft.text.trim());
         setRenameId(null);
         return;
-      }
-      if (key.backspace) {
-        setRenameDraft((d) => d.slice(0, -1));
-        return;
-      }
-      if (input !== '' && !key.ctrl && !key.meta) {
-        setRenameDraft((d) => d + input);
       }
       return;
     }
@@ -259,36 +259,10 @@ export function SessionPicker({
       setSel((i) => Math.min(i + 1, n - 1));
       return;
     }
-    // Delete / Ctrl+D：对高亮会话发起删除确认（Backspace 仍删搜索词）；子 agent 会话区不提供删除
-    if ((key.delete && !key.backspace) || (key.ctrl && input === 'd')) {
-      if (onDelete === undefined || clampedSel >= filtered.length) return;
-      const target = filtered[clampedSel];
-      if (target === undefined) return;
-      if (target.id === currentId) {
-        setNotice(t('sessionPicker.cannotDeleteCurrent'));
-        return;
-      }
-      setConfirmId(target.id);
-      return;
-    }
-    // r：对高亮会话进入重命名编辑态（草稿预填当前自定义名，无则预填标题便于在其上改写）；
-    // 未提供 onRename 或高亮在子 agent 会话区时不拦截，r 按普通可打印字符落入搜索词
-    if (input === 'r' && !key.ctrl && !key.meta && onRename !== undefined && clampedSel < filtered.length) {
-      const target = filtered[clampedSel];
-      if (target === undefined) return;
-      setRenameId(target.id);
-      setRenameDraft(target.name ?? target.title ?? '');
-      return;
-    }
-    if (key.backspace) {
-      setQuery((q) => q.slice(0, -1));
-      setSel(0);
-      return;
-    }
-    if (input !== '' && !key.ctrl && !key.meta) {
-      setQuery((q) => q + input);
-      setSel(0);
-    }
+    // Delete / Ctrl+D 与 r 的拦截逻辑移入搜索 TextEditField 的 onInterceptKey——
+    // Ink 的 input 事件是广播，两个 useInput 同激活时同一按键会被处理两次，
+    // 这些键的归属必须在编辑器侧拦下，此处不再处理。
+    // 文本编辑（←→/Home/End/退格/Delete/可打印字符）同样归 TextEditField。
   });
 
   return (
@@ -298,11 +272,40 @@ export function SessionPicker({
       </Text>
       <Text wrap="truncate-start">
         {t('sessionPicker.searchPrefix')}
-        {query === '' ? (
-          <Text dimColor>{t('sessionPicker.searchPlaceholder')}</Text>
-        ) : (
-          <Text color="yellow">{query}</Text>
-        )}
+        <TextEditField
+          value={query}
+          onChange={(v) => {
+            setQuery(v);
+            setSel(0);
+          }}
+          placeholder={t('sessionPicker.searchPlaceholder')}
+          isActive={renameId === null && confirmId === null}
+          onInterceptKey={(input, key) => {
+            // Delete / Ctrl+D：对高亮会话发起删除确认（子 agent 会话区不提供删除）；
+            // 未提供 onDelete 或高亮在子会话区时不拦截，Delete 落入文本编辑（删光标后字符）
+            if ((key.delete && !key.backspace) || (key.ctrl && input === 'd')) {
+              if (onDelete === undefined || clampedSel >= filtered.length) return false;
+              const target = filtered[clampedSel];
+              if (target === undefined) return false;
+              if (target.id === currentId) {
+                setNotice(t('sessionPicker.cannotDeleteCurrent'));
+                return true;
+              }
+              setConfirmId(target.id);
+              return true;
+            }
+            // r：对高亮会话进入重命名编辑态（草稿预填当前自定义名，无则预填标题便于在其上改写）；
+            // 未提供 onRename 或高亮在子 agent 会话区时不拦截，r 按普通可打印字符落入搜索词
+            if (input === 'r' && key.ctrl !== true && key.meta !== true && onRename !== undefined && clampedSel < filtered.length) {
+              const target = filtered[clampedSel];
+              if (target === undefined) return false;
+              setRenameId(target.id);
+              setRenameDraft(toEditValue(target.name ?? target.title ?? ''));
+              return true;
+            }
+            return false;
+          }}
+        />
       </Text>
       {renameId !== null ? (
         <Box flexDirection="column">
@@ -310,7 +313,7 @@ export function SessionPicker({
             {t('sessionPicker.renamePrompt', {
               title: renameTarget !== undefined ? sessionDisplayName(renameTarget) : renameId,
             })}
-            <Text color="yellow">{renameDraft}</Text>
+            <TextEditField value={renameDraft} onChange={setRenameDraft} isActive={renameId !== null} />
           </Text>
           <Text color="gray">{t('sessionPicker.renameHint')}</Text>
         </Box>

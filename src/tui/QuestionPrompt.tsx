@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { t } from '../i18n.js';
 import { wrappedRows } from './liveBudget.js';
-import { insertText, normalizePastedText, resolveEditAction, type PromptEditState } from './promptEdit.js';
+import { TextEditField } from './TextEditField.js';
 
 /**
  * 估算提问框渲染行数（供 App 计算动态区高度预算，滚动跳顶修复）。
@@ -129,7 +129,7 @@ export function QuestionPrompt({
   // Other 编辑态的按键处理：↑↓/←→切题 退出编辑态，Enter 提交、Esc 取消整框，
   // 其余交给自研文本编辑（复用 promptEdit，同主输入框，彻底弃用 ink-text-input）。
   useInput(
-    (input, key) => {
+    (_input, key) => {
       if (key.escape) {
         onCancel();
         return;
@@ -147,30 +147,8 @@ export function QuestionPrompt({
         exitOtherTo((otherIdx + 1) % rowCount);
         return;
       }
-      // ←→ 有多题时退出编辑态并切题（草稿保留）；单题时留在编辑态交给文本编辑做光标移动
-      if (key.leftArrow && req.questions.length > 1) {
-        setOtherMode(false);
-        if (qIdx > 0) goto(qIdx - 1);
-        return;
-      }
-      if (key.rightArrow && req.questions.length > 1) {
-        setOtherMode(false);
-        if (qIdx + 1 < req.questions.length) goto(qIdx + 1);
-        return;
-      }
-      // 文本编辑：编辑键（含裸 ←→ 单题场景、Home/End、退格、删词）走 promptEdit
-      const editState: PromptEditState = { text: slot.otherText, cursor: slot.otherCursor };
-      const action = resolveEditAction(input, key);
-      if (action) {
-        const next = action(editState);
-        patchSlot(qIdx, { otherText: next.text, otherCursor: next.cursor });
-        return;
-      }
-      // 可打印字符：无 ctrl/meta 修饰时插入光标处（粘贴多字符整体插入，先归一 \r\n / \r → \n）
-      if (input !== '' && key.ctrl !== true && key.meta !== true) {
-        const next = insertText(editState, normalizePastedText(input));
-        patchSlot(qIdx, { otherText: next.text, otherCursor: next.cursor });
-      }
+      // 文本编辑（含裸 ←→ 单题场景、Home/End、退格、删词、可打印字符）归 TextEditField；
+      // ←→ 多题切题经 onInterceptKey 在编辑器侧拦截（Ink 事件广播，此处拦截会双重处理）
     },
     { isActive: otherMode },
   );
@@ -273,7 +251,27 @@ export function QuestionPrompt({
             {`[${otherIdx + 1}] `}
           </Text>
           <Box flexShrink={1}>
-            <Text>{renderOtherInput(slot.otherText, slot.otherCursor, t('question.otherPlaceholder'))}</Text>
+            <TextEditField
+              value={{ text: slot.otherText, cursor: slot.otherCursor }}
+              onChange={(v) => patchSlot(qIdx, { otherText: v.text, otherCursor: v.cursor })}
+              placeholder={t('question.otherPlaceholder')}
+              isActive={otherMode}
+              onInterceptKey={(_input, key) => {
+                // ←→ 多题时退出编辑态并切题（草稿保留）；单题时不拦截，归编辑器做光标移动
+                if (req.questions.length <= 1) return false;
+                if (key.leftArrow) {
+                  setOtherMode(false);
+                  if (qIdx > 0) goto(qIdx - 1);
+                  return true;
+                }
+                if (key.rightArrow) {
+                  setOtherMode(false);
+                  if (qIdx + 1 < req.questions.length) goto(qIdx + 1);
+                  return true;
+                }
+                return false;
+              }}
+            />
           </Box>
         </Box>
       ) : (
@@ -287,29 +285,3 @@ export function QuestionPrompt({
   );
 }
 
-/**
- * Other 单行文本 + 反色光标渲染（与 PromptInput.renderEditableText 同款，不引入 ink-text-input）：
- * 光标处字符反色，光标在末尾时反色一个占位空格；空文本时反色一个空格作光标、placeholder 整体 dim 完整显示。
- * 单行输入，不处理换行（Other 答案是短文本）；长文本的横向溢出由外层 Box flexShrink 折行兜底。
- */
-function renderOtherInput(value: string, cursor: number, placeholder: string): React.ReactNode {
-  if (value === '') {
-    // 同 PromptInput：不反色 placeholder 首字符，反色 CJK 全宽字符会让该字无法辨认
-    return (
-      <>
-        <Text inverse>{' '}</Text>
-        <Text dimColor>{placeholder}</Text>
-      </>
-    );
-  }
-  const chars = Array.from(value);
-  const at = Math.max(0, Math.min(cursor, chars.length));
-  const cursorChar = at < chars.length ? (chars[at] as string) : ' ';
-  return (
-    <>
-      {chars.slice(0, at).join('')}
-      <Text inverse>{cursorChar}</Text>
-      {at < chars.length ? chars.slice(at + 1).join('') : ''}
-    </>
-  );
-}

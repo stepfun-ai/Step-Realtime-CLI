@@ -1,6 +1,10 @@
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useMemo, useState } from 'react';
+import { TextEditField, type TextEditValue } from './TextEditField.js';
 import { t } from '../i18n.js';
+
+/** 空编辑值（清词用）。 */
+const EMPTY_EDIT: TextEditValue = { text: '', cursor: 0 };
 
 /** 技能选择器的单条候选项（由 App 从 skillsRef 装配）。 */
 export interface SkillPickerItem {
@@ -36,11 +40,11 @@ export function SkillPicker({
   onSelect: (name: string | null) => void;
 }): React.ReactElement {
   const { stdout } = useStdout();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState<TextEditValue>(EMPTY_EDIT);
   const [sel, setSel] = useState(0);
 
   const filtered = useMemo(() => {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = query.text.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return items;
     return items.filter((s) => terms.every((term) => searchKey(s).includes(term)));
   }, [items, query]);
@@ -60,10 +64,10 @@ export function SkillPicker({
     8,
   );
 
-  useInput((input, key) => {
+  useInput((_input, key) => {
     if (key.escape) {
-      if (query !== '') {
-        setQuery('');
+      if (query.text !== '') {
+        setQuery(EMPTY_EDIT);
         setSel(0);
         return;
       }
@@ -83,15 +87,7 @@ export function SkillPicker({
       setSel((i) => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
       return;
     }
-    if (key.backspace || key.delete) {
-      setQuery((q) => q.slice(0, -1));
-      setSel(0);
-      return;
-    }
-    if (input !== '' && !key.ctrl && !key.meta && !key.tab) {
-      setQuery((q) => q + input);
-      setSel(0);
-    }
+    // 文本编辑（←→/Home/End/退格/Delete/可打印字符）归 TextEditField
   });
 
   return (
@@ -101,11 +97,14 @@ export function SkillPicker({
       </Text>
       <Text>
         {t('skillPicker.searchPrefix')}
-        {query === '' ? (
-          <Text dimColor>{t('skillPicker.searchPlaceholder')}</Text>
-        ) : (
-          <Text color="yellow">{query}</Text>
-        )}
+        <TextEditField
+          value={query}
+          onChange={(v) => {
+            setQuery(v);
+            setSel(0);
+          }}
+          placeholder={t('skillPicker.searchPlaceholder')}
+        />
       </Text>
       {filtered.length === 0 ? (
         <Text color="gray">{t('skillPicker.empty')}</Text>
