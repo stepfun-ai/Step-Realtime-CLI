@@ -36,7 +36,7 @@ for line in proc.stdout:
 
 ## Versioning and compatibility
 
-`STREAM_JSON_PROTOCOL_VERSION` is currently **2** (since v2 the `session.resume_hint` meta envelope no longer carries a `role` field — `type` is the only discriminator).
+`STREAM_JSON_PROTOCOL_VERSION` is currently **3** (v3 adds the `result` and `session.not_found` events — additive, so v2 consumers are unaffected; v2 removed the `role` field from the `session.resume_hint` envelope).
 
 The bump rule splits cleanly in two:
 
@@ -62,12 +62,13 @@ Three families share one flat namespace, distinguished by `type` prefix.
 | `tool_start` | `id` `name` `input` | Tool execution begins |
 | `tool_end` | `id` `name` `result` `isError` | Tool execution ends |
 | `retry` | `attempt` `delayMs` `message` | Request retry |
-| `usage` | `totalTokens` `measuredLength` `billedDelta` | Context usage. `billedDelta` is this turn's billed increment (input − cache_read + output), present only on real API round trips |
+| `usage` | `totalTokens` `measuredLength` `billedDelta` | Context usage. `billedDelta` is this turn's billed increment (input + output, always non-negative), present only on real API round trips |
 | `notice` | `message` | Informational (compaction applied, overflow retry, …) |
 | `continuation` | `inject` | Autonomous continuation: this run ended, text will be injected into the next |
 | `aborted` | — | Interrupted |
 | `error` | `message` | Failure. **Its presence means exit code 1** |
 | `turn_done` | — | One turn completed |
+| `result` | `subtype` `text` `durationMs` `toolUses` `usage` `sessionId` | Final summary, emitted once at end of run (before `session.resume_hint`). `subtype` is `success` or `error`; `text` is the aggregated assistant output of the final turn |
 
 ### Sub-agent events (`subagent.*`)
 
@@ -99,6 +100,7 @@ On `subagent.end`:
 | type | Notes |
 |------|-------|
 | `session.resume_hint` | Emitted at end of run with `session_id` and `command`, for resuming this session |
+| `session.not_found` | Emitted when `-p` is combined with an explicit `--session <id>` that does not exist; carries the requested `session_id` and `sessions_dir`. **The process then exits with code 2** — resumption failure is never silently downgraded to a fresh session in non-interactive mode |
 
 ## Error handling
 
@@ -112,16 +114,24 @@ So the robust pattern is: **parse events from stdout, collect stderr separately,
 
 ## Compared to text mode
 
-| | `text` (default) | `stream-json` |
-|---|---|---|
-| stdout | Assistant output only, pipe-friendly | One JSON event per line |
-| Tool calls / notices / errors | stderr | stdout, as events |
-| Reasoning | Not emitted | `thinking_*` events |
-| Sub-agents | Brief stderr lines (tools and errors only) | All five events |
+| | `text` (default) | `stream-json` | `json` |
+|---|---|---|---|
+| stdout | Assistant output only, pipe-friendly | One JSON event per line | A single JSON object at end of run |
+| Tool calls / notices / errors | stderr | stdout, as events | Counted into the `result` object |
+| Reasoning | Not emitted | `thinking_*` events | Not emitted |
+| Sub-agents | Brief stderr lines (tools and errors only) | All five events | Not emitted |
 
-`text` targets humans and shell pipelines; `stream-json` targets programs.
+`text` targets humans and shell pipelines; `stream-json` targets programs that need real-time progress; `json` targets programs that only need the final result — its stdout object has the same shape as the `result` event, so `step -p "..." --output-format json | jq .text` works directly.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Run completed (individual tool errors may still have occurred — check `result.subtype` or the event stream) |
+| `1` | An `error` event was emitted, stdin was empty when a prompt was expected from it, or startup failed |
+| `2` | `-p` with an explicit `--session <id>` and the session does not exist (`session.not_found` event in stream-json mode) |
 
 ## Known limitations
 
 - **One-way.** You can only read the event stream; external programs cannot answer the agent's questions. Operations requiring confirmation are denied outright in non-interactive mode — use `--yolo` or `--auto` to allow them.
-- One prompt per run; no long-lived multi-turn session. For multi-turn, resume with `-r <session_id>`.
+- One prompt per process; there is no long-lived multi-turn session in a single process. For multi-turn conversations, pass the `session_id` from the previous run's `session.resume_hint` (or the `result` event) to the next run via `--session <id>` — the full message history is restored and the new prompt is appended to it.

@@ -13,8 +13,10 @@ import type { SubagentProgressEvent } from '../agent/events.js';
  * - 会话元信息：`session.*`
  */
 
-/** 当前 stream-json 协议版本。信封结构或事件语义发生不兼容变更时递增。v2：移除 resumeHintMeta 的 `role` 字段。 */
-export const STREAM_JSON_PROTOCOL_VERSION = 2;
+/** 当前 stream-json 协议版本。信封结构或事件语义发生不兼容变更时递增。
+ * v2：移除 resumeHintMeta 的 `role` 字段。
+ * v3：新增 `session.not_found` 与 `result` 事件。 */
+export const STREAM_JSON_PROTOCOL_VERSION = 3;
 
 /**
  * 子 agent 进度事件的 stream-json 形态。
@@ -26,6 +28,7 @@ export const STREAM_JSON_PROTOCOL_VERSION = 2;
 export type SubagentStreamEvent =
   | { type: 'subagent.start'; subagent_id?: string; subagent_type: string; description: string }
   | { type: 'subagent.tool'; subagent_id?: string; name: string }
+  | { type: 'subagent.tool_end'; subagent_id?: string; name: string; is_error: boolean }
   | { type: 'subagent.usage'; subagent_id?: string; tokens: number }
   | { type: 'subagent.error'; subagent_id?: string; message: string }
   | {
@@ -69,6 +72,8 @@ export function toSubagentStreamEvent(
       return { type: 'subagent.start', ...base, subagent_type: ev.subagentType, description: ev.description };
     case 'tool':
       return { type: 'subagent.tool', ...base, name: ev.name };
+    case 'tool_end':
+      return { type: 'subagent.tool_end', ...base, name: ev.name, is_error: ev.isError };
     case 'usage':
       return { type: 'subagent.usage', ...base, tokens: ev.tokens };
     case 'error':
@@ -141,4 +146,68 @@ export function subagentTextLine(ev: SubagentProgressEvent): string | null {
   if (ev.kind === 'tool') return `  [subagent] ${ev.name}\n`;
   if (ev.kind === 'error') return `  [subagent:error] ${ev.message}\n`;
   return null;
+}
+
+/**
+ * stream-json 的 `session.not_found` 事件：显式 `--session <id>` 未命中时发出。
+ */
+export function sessionNotFoundEvent(
+  id: string,
+  requestId: string,
+  sessionsDir: string,
+): {
+  type: 'session.not_found';
+  session_id: string;
+  request_id: string;
+  sessions_dir: string;
+} {
+  return {
+    type: 'session.not_found',
+    session_id: id,
+    request_id: requestId,
+    sessions_dir: sessionsDir,
+  };
+}
+
+/**
+ * stream-json 的 `result` 事件：整轮结束后的终态摘要。
+ */
+export type ResultEvent =
+  | {
+      type: 'result';
+      subtype: 'success';
+      text: string;
+      durationMs: number;
+      toolUses: number;
+      usage: { totalTokens: number; billedTotal: number };
+      sessionId: string;
+    }
+  | {
+      type: 'result';
+      subtype: 'error';
+      text: string;
+      durationMs: number;
+      toolUses: number;
+      usage: { totalTokens: number; billedTotal: number };
+      sessionId: string;
+    };
+
+export function resultEvent(ev: {
+  text: string;
+  durationMs: number;
+  toolUses: number;
+  totalTokens: number;
+  billedTotal: number;
+  sessionId: string;
+  subtype: 'success' | 'error';
+}): ResultEvent {
+  return {
+    type: 'result',
+    subtype: ev.subtype,
+    text: ev.text,
+    durationMs: ev.durationMs,
+    toolUses: ev.toolUses,
+    usage: { totalTokens: ev.totalTokens, billedTotal: ev.billedTotal },
+    sessionId: ev.sessionId,
+  };
 }

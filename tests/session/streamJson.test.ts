@@ -6,6 +6,8 @@ import {
   toSubagentStreamEvent,
   errorEventFromThrown,
   agentEventLine,
+  sessionNotFoundEvent,
+  resultEvent,
 } from '../../src/session/streamJson.js';
 import { resumeHintMeta } from '../../src/session/resumeHint.js';
 import type { SubagentProgressEvent } from '../../src/agent/events.js';
@@ -100,7 +102,7 @@ describe('stream-json 信封统一', () => {
   });
 
   it('协议版本号已定义', () => {
-    expect(STREAM_JSON_PROTOCOL_VERSION).toBe(2);
+    expect(STREAM_JSON_PROTOCOL_VERSION).toBe(3);
   });
 });
 
@@ -268,5 +270,70 @@ describe('error 事件的 cause 剥离（内部元数据不进对外流）', () 
     ]) {
       expect(agentEventLine(ev)).not.toContain('\n');
     }
+  });
+});
+
+describe('session.not_found 事件', () => {
+  it('结构包含 id、request_id 与 sessions_dir', () => {
+    const ev = sessionNotFoundEvent('sess-abc', 'req-123', '/home/user/.step-code/sessions');
+    expect(ev).toEqual({
+      type: 'session.not_found',
+      session_id: 'sess-abc',
+      request_id: 'req-123',
+      sessions_dir: '/home/user/.step-code/sessions',
+    });
+    expect(JSON.stringify(ev)).not.toContain('\n');
+  });
+});
+
+describe('result 终态摘要事件', () => {
+  it('success  subtype 结构完整', () => {
+    const ev = resultEvent({
+      text: '最终答复',
+      durationMs: 4213,
+      toolUses: 3,
+      totalTokens: 9071,
+      billedTotal: 5000,
+      sessionId: '20260811-abc',
+      subtype: 'success',
+    });
+    expect(ev).toEqual({
+      type: 'result',
+      subtype: 'success',
+      text: '最终答复',
+      durationMs: 4213,
+      toolUses: 3,
+      usage: { totalTokens: 9071, billedTotal: 5000 },
+      sessionId: '20260811-abc',
+    });
+    expect(JSON.stringify(ev)).not.toContain('\n');
+  });
+
+  it('error subtype 在有错误事件时使用', () => {
+    const ev = resultEvent({
+      text: '部分完成',
+      durationMs: 1000,
+      toolUses: 1,
+      totalTokens: 2000,
+      billedTotal: 1500,
+      sessionId: 's1',
+      subtype: 'error',
+    });
+    expect(ev.subtype).toBe('error');
+    expect(ev.type).toBe('result');
+  });
+
+  it('空文本与零 tool_uses 是有效值', () => {
+    const ev = resultEvent({
+      text: '',
+      durationMs: 0,
+      toolUses: 0,
+      totalTokens: 0,
+      billedTotal: 0,
+      sessionId: 's1',
+      subtype: 'success',
+    });
+    expect(ev.text).toBe('');
+    expect(ev.toolUses).toBe(0);
   });
 });

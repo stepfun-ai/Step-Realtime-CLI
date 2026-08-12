@@ -63,6 +63,8 @@ import {
   toSubagentStreamEvent,
   errorEventFromThrown,
   agentEventLine,
+  sessionNotFoundEvent,
+  resultEvent,
 } from './session/streamJson.js';
 import { runExportDebugZip } from './session/debugCli.js';
 import { App } from './tui/App.js';
@@ -87,7 +89,7 @@ program
   .option('-c, --continue', '恢复本工作目录下最近的一个会话')
   .option('--session <id>', '恢复指定 id 的会话')
   .option('-r, --resume [id]', '恢复会话：带 id 直接恢复；不带 id 打开交互选择器')
-  .option('--output-format <fmt>', '非交互输出格式：text（默认）或 stream-json', 'text')
+  .option('--output-format <fmt>', '非交互输出格式：text（默认）、stream-json 或 json', 'text')
   .option('--model <name>', '覆盖模型（config.model）')
   .option('--provider <name>', '覆盖服务商（stepfun|anthropic|openai|openai_responses），未同时指定 model/base_url 时按其预设补默认')
   .option('--no-skills', '禁用 skill 清单注入（调试用：排除 skill 路由对模型的干扰）')
@@ -482,6 +484,8 @@ const composeSystem = (): string => {
 const ctx: ToolContext = { cwd, apiKey: config.apiKey, baseUrl: config.baseUrl, skills: skillsRef.current, searchConfig: config.search };
 // 模型能力标记（loadConfig 展开别名后带入，未命中别名/裸模型为 undefined）：read_media 门控用
 ctx.capabilities = config.capabilities;
+ctx.imageMaxEdgePx = config.imageMaxEdgePx;
+ctx.imageBudgetBytes = config.imageBudgetBytes;
 // bash 前台超时自动转后台开关（[background].bash_auto_background_on_timeout，默认 true）
 ctx.bashAutoBackgroundOnTimeout = config.background?.bashAutoBackgroundOnTimeout ?? true;
 
@@ -604,6 +608,18 @@ if (opts.resume !== undefined) {
   }
 } else if (opts.session !== undefined) {
   const r = resumeSession(store, cwd, opts.session);
+  if (r === null && opts.print !== undefined) {
+    // -p 模式 + 显式 --session <id> 未命中：fail-fast（stderr 报错 + stream-json 发事件 + exit 2）
+    const sessionsDir = join(homedir(), '.step-code', 'sessions');
+    process.stderr.write(`错误：会话 ${opts.session} 未找到（sessions 目录：${sessionsDir}）。\n`);
+    if (opts.outputFormat === 'stream-json') {
+      const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      process.stdout.write(`${JSON.stringify(sessionNotFoundEvent(opts.session, requestId, sessionsDir))}\n`);
+    }
+    process.exitCode = 2;
+    await mcpManager.closeAll();
+    process.exit(2);
+  }
   resumeHit = r !== null;
   resolved = resolveResume(r);
 } else if (opts.continue === true) {
@@ -700,6 +716,8 @@ const reloadConfig = (): { config: StepCodeConfig } | { error: string } => {
   ctx.apiKey = next.apiKey;
   ctx.baseUrl = next.baseUrl;
   ctx.capabilities = next.capabilities;
+  ctx.imageMaxEdgePx = next.imageMaxEdgePx;
+  ctx.imageBudgetBytes = next.imageBudgetBytes;
   ctx.bashAutoBackgroundOnTimeout = next.background?.bashAutoBackgroundOnTimeout ?? true;
   const entries = [...(next.hooks ?? []), ...plugins.flatMap((p) => p.hooks)];
   hookEngineRef.current = entries.length > 0 ? new HookEngine(entries, { sessionId: session.id, cwd }) : undefined;
@@ -727,9 +745,12 @@ function nonInteractiveHooks(): LoopHooks {
   return composeLoopHooks(engine, base);
 }
 
-/** 非交互模式：跑一轮 agent。text 格式下 assistant 走 stdout、其余走 stderr；stream-json 下每个事件一行 JSON 到 stdout。 */
+/** 非交互模式：跑一轮 agent。text 格式下 assistant 走 stdout、其余走 stderr；
+ *  stream-json 下每个事件一行 JSON 到 stdout；json 下整轮跑完 stdout 出单个 JSON 对象。
+ */
 async function runPrint(prompt: string): Promise<void> {
   const streamJson = opts.outputFormat === 'stream-json';
+  const jsonOutput = opts.outputFormat === 'json';
 
   // 用户 hooks：notice 走 stderr（与 agent 循环 notice 同一出口）
   let hookContext = '';
@@ -767,10 +788,43 @@ async function runPrint(prompt: string): Promise<void> {
       }
     }
   }
+
+  // result 事件数据收集（多轮 continuation 时每轮重置，最终保留最后一轮的值）
+  let roundText = '';
+  let roundToolUses = 0;
+  let roundUsage: { totalTokens: number; billedTotal: number } | undefined;
+  let hadError = false;
+  const roundStart = Date.now();
+
   const emit = (ev: AgentEvent): void => {
+    if (jsonOutput) {
+      // json 模式：只收集，不输出到 stdout
+      if (ev.type === 'text') roundText += ev.text;
+      if (ev.type === 'tool_start') roundToolUses++;
+      if (ev.type === 'error') hadError = true;
+      if (ev.type === 'usage') {
+        roundUsage = {
+          totalTokens: ev.totalTokens,
+          billedTotal: ev.billedDelta ?? 0,
+        };
+      }
+      return;
+    }
     if (streamJson) {
       process.stdout.write(`${agentEventLine(ev)}\n`);
-      if (ev.type === 'error') process.exitCode = 1;
+      // result 摘要同样需要本分支的收集：只写 stdout 不收集会让 result 事件成空壳
+      if (ev.type === 'text') roundText += ev.text;
+      if (ev.type === 'tool_start') roundToolUses++;
+      if (ev.type === 'error') {
+        process.exitCode = 1;
+        hadError = true;
+      }
+      if (ev.type === 'usage') {
+        roundUsage = {
+          totalTokens: ev.totalTokens,
+          billedTotal: ev.billedDelta ?? 0,
+        };
+      }
       return;
     }
     switch (ev.type) {
@@ -850,8 +904,6 @@ async function runPrint(prompt: string): Promise<void> {
     depth: 0,
     todos: todosStore,
     background,
-    // 单次 runAgent 内 skill 激活计数器（递归防护，随本次运行新建）
-    skillActivations: { count: 0 },
     subagentMaxConcurrent: config.subagent.maxConcurrent,
     runSubagent: createSubagentRunner({
       provider,
@@ -859,6 +911,8 @@ async function runPrint(prompt: string): Promise<void> {
       apiKey: config.apiKey,
       baseUrl: config.baseUrl,
       capabilities: config.capabilities,
+      imageMaxEdgePx: config.imageMaxEdgePx,
+      imageBudgetBytes: config.imageBudgetBytes,
       config, // 非交互分支同样要解析子 agent 别名、跨渠道
       hooks,
       maxDepth: config.subagent.maxDepth,
@@ -947,6 +1001,10 @@ async function runPrint(prompt: string): Promise<void> {
     // 两者都由 emit 统一置 exitCode=1。异常吞在这里是有意的——落盘与 resume 提示必须继续执行。
     emit(errorEventFromThrown(e));
   }
+
+  // 持久化：三种输出模式共用，必须在任何 return 之前完成。
+  // 顺序是不变量（同 TUI persist）：先 appendFull 后 save，否则快照 messages 超前
+  // wireSeq 游标，resume 重放尾段时尾部消息重复。
   if (!streamJson) process.stdout.write('\n');
   // drain：把运行期间已终态的后台任务通知打到 stderr（未送达的注入通道降级；仍在运行的任务不等待）
   for (const note of settledNotes) {
@@ -954,15 +1012,45 @@ async function runPrint(prompt: string): Promise<void> {
   }
   session.todos = [...todosStore.items];
   try {
-    // 顺序是不变量（同 TUI persist）：先 appendFull 后 save，否则快照 messages 超前
-    // wireSeq 游标，resume 重放尾段时尾部消息重复。
     store.appendFull(cwd, session.id, session.messages);
     store.save(session);
   } catch {
     // 持久化失败不影响输出
   }
+
+  if (jsonOutput) {
+    // json 模式：整轮跑完 stdout 只出单个 JSON 对象（result 结构），中途零 stdout
+    const durationMs = Date.now() - roundStart;
+    const result = resultEvent({
+      text: roundText,
+      durationMs,
+      toolUses: roundToolUses,
+      totalTokens: roundUsage?.totalTokens ?? 0,
+      billedTotal: roundUsage?.billedTotal ?? 0,
+      sessionId: session.id,
+      subtype: hadError ? 'error' : 'success',
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (hadError) process.exitCode = 1;
+    // json 模式也打 resume 提示到 stderr（保持可恢复性）
+    process.stderr.write(`${resumeHintText(session.id)}\n`);
+    return;
+  }
+
   // 退出恢复提示：text 走 stderr 保持 stdout 干净；stream-json 发 meta 事件
   if (streamJson) {
+    // stream-json：整轮结束后、resume_hint 之前发 result 终态摘要事件
+    const durationMs = Date.now() - roundStart;
+    const result = resultEvent({
+      text: roundText,
+      durationMs,
+      toolUses: roundToolUses,
+      totalTokens: roundUsage?.totalTokens ?? 0,
+      billedTotal: roundUsage?.billedTotal ?? 0,
+      sessionId: session.id,
+      subtype: hadError ? 'error' : 'success',
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
     process.stdout.write(`${JSON.stringify(resumeHintMeta(session.id))}\n`);
   } else {
     process.stderr.write(`${resumeHintText(session.id)}\n`);
@@ -1010,13 +1098,29 @@ if (opts.reflect === true) {
   await mcpManager.closeAll();
 } else if (opts.print !== undefined) {
   configureLogger({ mode: 'headless' });
-  // -p 的 prompt 参数可选：直接跟字符串，或省略时从 stdin 读取（支持 echo '...' | step -p）
-  let prompt = opts.print as string;
-  if (prompt === '' || (opts.print as unknown) === true) {
-    // commander 把 -p（无值）解析成 true 或空字符串，从 stdin 读
+  // prompt 来源优先级：位置参数 > -p 紧跟值 > stdin。
+  // 位置参数存在时（如 `step "prompt" -p` 或 `step -p --output-format stream-json "prompt"`），
+  // commander 的 `allowExcessArguments` 会把多余的 token 留在 program.args，优先取用。
+  // 旧的 `-p <prompt>` 紧跟形式不变。
+  let prompt = (opts.print as unknown) === true ? '' : (opts.print as string);
+  const positionalPrompt = program.args[0];
+  if (positionalPrompt !== undefined && !['export-debug-zip', 'doctor', 'sessions', 'subagents'].includes(positionalPrompt)) {
+    prompt = positionalPrompt;
+  }
+  if (prompt === '') {
+    // 从 stdin 读取：可见化来源 + 空内容报错
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk);
-    prompt = Buffer.concat(chunks).toString('utf8').trim();
+    const raw = Buffer.concat(chunks).toString('utf8');
+    const trimmed = raw.trim();
+    process.stderr.write(`已从 stdin 读取 prompt（${raw.length} 字符）\n`);
+    if (trimmed === '') {
+      process.stderr.write('错误：stdin 为空，未获取到 prompt。请直接传参或通过管道提供非空内容。\n');
+      process.exitCode = 1;
+      await mcpManager.closeAll();
+      process.exit(1);
+    }
+    prompt = trimmed;
   }
   await runPrint(prompt);
   await mcpManager.closeAll();
