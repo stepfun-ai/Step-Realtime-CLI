@@ -80,8 +80,17 @@ function renderInline(tokens: Token[] | undefined, transient: boolean): React.Re
         }
         break;
       }
-      case 'text':
-        out.push(<Text key={k()}>{(t as Tokens.Text).text}</Text>);
+      case 'text': {
+        // 列表项等场景下 marked 给的是块级 text 容器（带 .tokens 子 inline）：
+        // 必须递归解析，否则 **粗体**、链接等标记以星号原文裸露（2026-08-12 实录）。
+        const inner = (t as Tokens.Text).tokens;
+        if (inner !== undefined) out.push(...renderInline(inner, transient));
+        else out.push(<Text key={k()}>{softenBreaks((t as Tokens.Text).text)}</Text>);
+        break;
+      }
+      case 'paragraph':
+        // 松列表的条目内容是 paragraph 块，剥壳取 inline
+        out.push(...renderInline((t as Tokens.Paragraph).tokens, transient));
         break;
       case 'escape':
         out.push(<Text key={k()}>{(t as Tokens.Escape).text}</Text>);
@@ -144,8 +153,15 @@ function extractCellSegments(tokens: Token[] | undefined, transient: boolean): S
         }
         break;
       }
-      case 'text':
-        out.push({ text: (t as Tokens.Text).text });
+      case 'text': {
+        // 与 renderInline 同步：块级 text 容器递归子 tokens（列表项粗体/链接宽度按解析后计）
+        const inner = (t as Tokens.Text).tokens;
+        if (inner !== undefined) out.push(...extractCellSegments(inner, transient));
+        else out.push({ text: softenBreaks((t as Tokens.Text).text) });
+        break;
+      }
+      case 'paragraph':
+        out.push(...extractCellSegments((t as Tokens.Paragraph).tokens, transient));
         break;
       case 'escape':
         out.push({ text: (t as Tokens.Escape).text });
@@ -300,6 +316,31 @@ function isCjkChar(ch: string): boolean {
 }
 
 /**
+ * 段落内单个换行软化：CommonMark 里单换行是 soft break（渲染为空格），不是硬换行。
+ * LLM 训练养成了按 ~70 列自行折行的习惯，常在英文词后塞 \n（实测实录：
+ * `Seed\n团队`、`thepaper.\ncn`、`web_fetch\n获取`），原样透传会在句中硬断、
+ * 甚至断碎裸域名——与终端可用宽度无关。
+ * 规则：任一侧是 CJK（含全角标点）直接删除换行（中文排版不加空格），
+ * 两侧都是拉丁字符替换为单个空格；一侧已是空白则直接删除，避免双空格。
+ * 段落 token 内不会出现 \n\n（marked 已在空行处切段），故只需处理单个 \n。
+ * 适用范围：仅 Markdown 段落/标题/列表项的内联路径。工具输出、thinking 块、
+ * 引用块（blockquote 走 `.text` 原样渲染）不经过这里，其硬换行语义不受影响。
+ */
+function softenBreaks(text: string): string {
+  if (!text.includes('\n')) return text;
+  return text.replace(/\n/g, (_m, offset: number, full: string) => {
+    const prev = full[offset - 1] ?? '';
+    const next = full[offset + 1] ?? '';
+    if (prev === '' || next === '' || /\s/.test(prev) || /\s/.test(next)) return '';
+    if (isCjkChar(prev) || isCjkChar(next)) return '';
+    // 词内标点 + 小写/数字续接：断在 token 内部（域名/路径/标识符），直接删除。
+    // 句点排除大写续接（end.\nNext 是新句子，走空格）
+    if (/[.\-/_:@]/.test(prev) && /[a-z0-9]/.test(next)) return '';
+    return ' ';
+  });
+}
+
+/**
  * 把一个非空白片段切成「可断单元」：CJK 逐字成单元，连续拉丁串保持整体。
  * 中文不按空格分词，不切就会整段挤到下一行、留下大片空白。
  */
@@ -449,20 +490,30 @@ function renderBlock(t: Token, transient: boolean, width?: number): React.ReactN
           {l.items.map((item, i) => {
             const marker = l.ordered ? `${(l.start as number) + i}. ` : '• ';
             const task = item.task ? (item.checked ? '[x] ' : '[ ] ') : '';
-            // marker 与正文分成「行向 Box + flexShrink 正文盒」两个节点：
+            // marker 与正文分成「行向 Box + 定宽正文盒」两个节点：
             // 正文在自己的 Yoga 盒子里折行，续行获得悬挂缩进（对齐正文而非 marker）。
-            // 原先 marker 与正文同一 Text，续行顶格，视觉上像「突然换行」。
-            // 与 user `› ` / assistant `● ` 前缀同一套防 Ink squash 模式。
+            // 注意不能用 flexShrink 代替显式宽度：Ink 实测会按父行整宽折行后再套
+            // 收缩盒，续行 = 整宽 + 缩进，超出终端被硬折行、溢出字符顶到第 0 列
+            // （2026-08-12 实录：「2025」「中AI」「Pexo」顶格碎片）。探针见
+            // tests/tui/markdownWrapWidth.test.tsx。
             // 改行结构必须同步改 measureBlock 的 list 分支（行数测量契约）。
+            const contentWidth =
+              width === undefined ? undefined : Math.max(1, width - displayWidth(marker + task));
             return (
               <Box key={k()} flexDirection="row">
                 <Text>
                   {marker}
                   {task}
                 </Text>
-                <Box flexShrink={1}>
-                  <Text>{renderInline(item.tokens, transient)}</Text>
-                </Box>
+                {contentWidth === undefined ? (
+                  <Box flexShrink={1}>
+                    <Text>{renderInline(item.tokens, transient)}</Text>
+                  </Box>
+                ) : (
+                  <Box width={contentWidth}>
+                    <Text>{renderInline(item.tokens, transient)}</Text>
+                  </Box>
+                )}
               </Box>
             );
           })}

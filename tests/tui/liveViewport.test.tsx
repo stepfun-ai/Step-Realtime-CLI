@@ -67,7 +67,8 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
   });
 
   it('单 item 超长：行级截尾（不是整 item 丢弃）+ 隐藏行数指示', async () => {
-    const text = Array.from({ length: 20 }, (_, i) => `l${String(i + 1).padStart(2, '0')}`).join('\n');
+    // 列表语法构造多行（单 \n 在段落内是 soft break，2026-08-12 起软化合并，不能再造多行）
+    const text = Array.from({ length: 20 }, (_, i) => `- l${String(i + 1).padStart(2, '0')}`).join('\n');
     // 自然高度 = marginTop 1 + 正文 20 = 21；maxRows 6 → 指示 1 行 + 可见 4 行
     const { lastFrame } = render(<MessageList items={[assistant(text)]} maxRows={6} />);
     await settle();
@@ -75,9 +76,9 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     const lines = frameLines(out);
     // 隐藏 21 − 5 = 16 行（空白 margin + l01..l15），可见 l16..l20
     expect(out).toContain('已隐藏 16 行早期输出');
-    expect(lines).toContain('  l16');
-    expect(lines).toContain('  l20');
-    expect(lines).not.toContain('  l15');
+    expect(out).toContain('l16');
+    expect(out).toContain('l20');
+    expect(out).not.toContain('l15');
     // 帧高恒 ≤ 预算（动态帧 < 一屏的不变量）
     expect(lines.length).toBeLessThanOrEqual(6);
   });
@@ -85,7 +86,7 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
   it('多 item 超预算：从尾部累计裁剪，顶部 item 先被隐藏', async () => {
     const items = [
       ...Array.from({ length: 10 }, (_, i) => note(`n${String(i + 1).padStart(2, '0')}`)),
-      assistant(['a1', 'a2', 'a3', 'a4', 'a5'].join('\n')),
+      assistant(['- a1', '- a2', '- a3', '- a4', '- a5'].join('\n')),
     ];
     // 自然高度 = 10 个 note × 2（margin 1 + 正文 1）+ assistant 6（margin 1 + 5 行）= 26
     // maxRows 8 → 指示 1 行 + 可见 7 行（assistant 6 行 + n10 正文 1 行）
@@ -95,7 +96,7 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     const lines = frameLines(out);
     expect(out).toContain('已隐藏 19 行早期输出');
     expect(lines).toContain('· n10');
-    expect(lines).toContain('  a5');
+    expect(out).toContain('a5');
     expect(lines).not.toContain('· n09');
     expect(lines.length).toBeLessThanOrEqual(8);
   });
@@ -115,17 +116,17 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
   });
 
   it('不传 maxRows：长内容原样渲染，无窗口化（回归保护）', async () => {
-    const text = Array.from({ length: 30 }, (_, i) => `x${i + 1}`).join('\n');
+    const text = Array.from({ length: 30 }, (_, i) => `- x${i + 1}`).join('\n');
     const { lastFrame } = render(<MessageList items={[assistant(text)]} />);
     await settle();
     const out = lastFrame() ?? '';
     expect(out).not.toContain('已隐藏');
-    expect(frameLines(out)).toContain('● x1');
-    expect(frameLines(out)).toContain('  x30');
+    expect(out).toContain('x1');
+    expect(out).toContain('x30');
   });
 
   it('预算收紧（模拟 resize）：窗口收缩，隐藏行数指示随之变大', async () => {
-    const text = Array.from({ length: 20 }, (_, i) => `l${String(i + 1).padStart(2, '0')}`).join('\n');
+    const text = Array.from({ length: 20 }, (_, i) => `- l${String(i + 1).padStart(2, '0')}`).join('\n');
     const { lastFrame, rerender } = render(
       <MessageList items={[assistant(text)]} maxRows={15} />,
     );
@@ -141,14 +142,14 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
 
   it('英文 locale：隐藏指示走 i18n 英文文案', async () => {
     setLocale('en');
-    const text = Array.from({ length: 20 }, (_, i) => `l${i + 1}`).join('\n');
+    const text = Array.from({ length: 20 }, (_, i) => `- l${i + 1}`).join('\n');
     const { lastFrame } = render(<MessageList items={[assistant(text)]} maxRows={6} />);
     await settle();
     expect(lastFrame() ?? '').toContain('↑ 16 earlier lines hidden');
   });
 
   it('集成：长流式 assistant + 折叠长工具输出，动态帧高恒 ≤ 预算', async () => {
-    const streamText = Array.from({ length: 15 }, (_, i) => `s${String(i + 1).padStart(2, '0')}`).join('\n');
+    const streamText = Array.from({ length: 15 }, (_, i) => `- s${String(i + 1).padStart(2, '0')}`).join('\n');
     const result = Array.from({ length: 50 }, (_, i) => `r${String(i + 1).padStart(2, '0')}`).join('\n');
     const items = [assistant(streamText), toolOk('t1', result)];
     // 动态区工具恒折叠（完整输出走 Ctrl+O 全屏查看器）：tool 块 = margin 1 + 头 1 + 折叠提示 1 = 3 行
@@ -162,8 +163,8 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     expect(out).toContain('50 行输出');
     expect(lines).not.toContain('  r50');
     // 尾部锚定：工具尾部可见，流式开头被裁
-    expect(lines).toContain('  s15');
-    expect(lines).not.toContain('  s01');
+    expect(out).toContain('s15');
+    expect(out).not.toContain('s01');
     expect(lines.length).toBeLessThanOrEqual(8);
   });
 
@@ -171,13 +172,13 @@ describe('MessageList 尾部锚定窗口（maxRows）', () => {
     // 线上事故：流式期间 token 更新合并进测量触发的嵌套渲染，级联自持触顶 React 嵌套上限，
     // 整进程抛 Maximum update depth exceeded 闪退。逐拍推送 + 帧高恒超预算是最接近的现场。
     const { rerender, lastFrame } = render(
-      <MessageList items={[assistant('s00')]} busy={true} maxRows={6} />,
+      <MessageList items={[assistant('- s00')]} busy={true} maxRows={6} />,
     );
-    const lines = ['s00'];
+    const lines = ['- s00'];
     let threw: unknown;
     try {
       for (let i = 1; i <= 40; i++) {
-        lines.push(`s${String(i).padStart(2, '0')}`);
+        lines.push(`- s${String(i).padStart(2, '0')}`);
         rerender(
           <MessageList items={[assistant(lines.join('\n'))]} busy={true} maxRows={6} />,
         );

@@ -164,17 +164,23 @@ export function MessageItem({
 }): React.ReactElement {
   switch (item.kind) {
     case 'user':
-      // 正文必须包一层 Box 防 Ink squash：两个 Text 兄弟会被合并成一个文本块统一折行，
-      // '› ' 尾空格落在断行点时被吞、续行只剩 1 空格（实测：长行/多行输入排版错位）。
-      // 包 Box 后正文在自己的 Yoga 盒子里折行，续行稳定保持 2 列悬挂缩进。
+      // 正文盒必须显式定宽（= 整宽 - '› ' 前缀），不能用 flexShrink：
+      // Ink 实测会按父行整宽折行后再套收缩盒，续行 = 整宽 + 缩进，超出终端被
+      // 硬折行、溢出字符顶到第 0 列（2026-08-12 探针实测，见 markdownWrapWidth.test.tsx）。
       return (
         <Box marginTop={1} backgroundColor="#262626" width={termWidth}>
           <Text color="blue" bold>
             {'› '}
           </Text>
-          <Box flexShrink={1}>
-            <Text color="yellow">{item.text}</Text>
-          </Box>
+          {termWidth === undefined ? (
+            <Box flexShrink={1}>
+              <Text color="yellow">{item.text}</Text>
+            </Box>
+          ) : (
+            <Box width={Math.max(1, termWidth - 2)}>
+              <Text color="yellow">{item.text}</Text>
+            </Box>
+          )}
         </Box>
       );
     case 'assistant':
@@ -182,9 +188,15 @@ export function MessageItem({
       return (
         <Box marginTop={1} flexDirection="row">
           <Text color="gray">{'● '}</Text>
-          <Box flexShrink={1}>
-            <Markdown text={item.text} transient={transient} width={assistantWidth} />
-          </Box>
+          {assistantWidth === undefined ? (
+            <Box flexShrink={1}>
+              <Markdown text={item.text} transient={transient} width={assistantWidth} />
+            </Box>
+          ) : (
+            <Box width={assistantWidth}>
+              <Markdown text={item.text} transient={transient} width={assistantWidth} />
+            </Box>
+          )}
         </Box>
       );
     case 'thinking': {
