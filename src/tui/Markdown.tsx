@@ -3,6 +3,7 @@ import { marked, type Token, type Tokens } from 'marked';
 import { highlight } from 'cli-highlight';
 import type React from 'react';
 import { displayWidth, wrappedRows } from './liveBudget.js';
+import { link as hyperlink, supportsHyperlinks } from './hyperlink.js';
 
 /**
  * markdown 终端渲染（marked lexer + cli-highlight + chalk/Ink 样式）。
@@ -62,12 +63,21 @@ function renderInline(tokens: Token[] | undefined, transient: boolean): React.Re
       case 'link': {
         const link = t as Tokens.Link;
         const selfLink = isSelfLink(link);
-        out.push(
-          <Text key={k()} color="blue" underline>
-            {renderInline(link.tokens, transient)}
-            {selfLink ? null : <Text color="gray">({link.href})</Text>}
-          </Text>,
-        );
+        const linkText = renderInline(link.tokens, transient);
+        if (supportsHyperlinks() && !selfLink) {
+          out.push(
+            <Text key={k()} color="blue" underline>
+              {hyperlink(renderInlineText(link.tokens), link.href)}
+            </Text>,
+          );
+        } else {
+          out.push(
+            <Text key={k()} color="blue" underline>
+              {linkText}
+              {selfLink ? null : <Text color="gray">({link.href})</Text>}
+            </Text>,
+          );
+        }
         break;
       }
       case 'text':
@@ -124,19 +134,13 @@ function extractCellSegments(tokens: Token[] | undefined, transient: boolean): S
       case 'link': {
         const link = t as Tokens.Link;
         const inner = extractCellSegments(link.tokens, transient);
-        if (!isSelfLink(link)) {
-          for (const seg of inner) {
-            seg.color = seg.color ?? 'blue';
-            seg.underline = true;
-          }
-          out.push(...inner);
+        for (const seg of inner) {
+          seg.color = seg.color ?? 'blue';
+          seg.underline = true;
+        }
+        out.push(...inner);
+        if (!isSelfLink(link) && !supportsHyperlinks()) {
           out.push({ text: `(${link.href})`, color: 'gray' });
-        } else {
-          for (const seg of inner) {
-            seg.color = seg.color ?? 'blue';
-            seg.underline = true;
-          }
-          out.push(...inner);
         }
         break;
       }
@@ -318,10 +322,18 @@ function splitBreakUnits(part: string): string[] {
 }
 
 /**
- * Greedy wrap：拉丁文优先在空格处断行，CJK 允许逐字换行。
- * 超长单元（>maxWidth）会被拆到字符级。
+ * URL-like 单元识别：带 scheme、`www.` 或 `localhost` 开头的连续非空白串。
+ * 用于折行保护——见 wrapStyledSegments 的超长分支。
  */
-function wrapStyledSegments(segments: StyledSegment[], maxWidth: number): StyledSegment[][] {
+const URL_LIKE_RE = /^(https?:\/\/|www\.|localhost(?::\d+)?(?:\/|$))\S+$/;
+
+/**
+ * Greedy wrap：拉丁文优先在空格处断行，CJK 允许逐字换行。
+ * 超长单元（>maxWidth）会被拆到字符级；但 URL-like 单元例外——
+ * 拆断的 URL 不可读也不可被终端识别为链接，宁可独占一行超宽溢出，
+ * 交给终端硬折行（逻辑行保持完整），不做字符级拆分。
+ */
+export function wrapStyledSegments(segments: StyledSegment[], maxWidth: number): StyledSegment[][] {
   if (maxWidth <= 0) return [[]];
   const lines: StyledSegment[][] = [[]];
   let lineWidth = 0;
@@ -353,6 +365,11 @@ function wrapStyledSegments(segments: StyledSegment[], maxWidth: number): Styled
         if (w <= maxWidth) {
           if (lineWidth + w > maxWidth && lineWidth > 0) breakLine();
           append(seg, unit);
+        } else if (URL_LIKE_RE.test(unit)) {
+          // 超宽 URL：独占一行整体溢出，不做字符级拆分（拆断的 URL 不可读不可点）
+          if (lineWidth > 0) breakLine();
+          append(seg, unit);
+          breakLine();
         } else {
           // 超长拉丁单词：拆到字符级
           for (const ch of Array.from(unit)) {
@@ -432,12 +449,21 @@ function renderBlock(t: Token, transient: boolean, width?: number): React.ReactN
           {l.items.map((item, i) => {
             const marker = l.ordered ? `${(l.start as number) + i}. ` : '• ';
             const task = item.task ? (item.checked ? '[x] ' : '[ ] ') : '';
+            // marker 与正文分成「行向 Box + flexShrink 正文盒」两个节点：
+            // 正文在自己的 Yoga 盒子里折行，续行获得悬挂缩进（对齐正文而非 marker）。
+            // 原先 marker 与正文同一 Text，续行顶格，视觉上像「突然换行」。
+            // 与 user `› ` / assistant `● ` 前缀同一套防 Ink squash 模式。
+            // 改行结构必须同步改 measureBlock 的 list 分支（行数测量契约）。
             return (
-              <Text key={k()}>
-                {marker}
-                {task}
-                {renderInline(item.tokens, transient)}
-              </Text>
+              <Box key={k()} flexDirection="row">
+                <Text>
+                  {marker}
+                  {task}
+                </Text>
+                <Box flexShrink={1}>
+                  <Text>{renderInline(item.tokens, transient)}</Text>
+                </Box>
+              </Box>
             );
           })}
         </Box>
@@ -632,8 +658,11 @@ function measureBlock(t: Token, width?: number): number {
       return l.items.reduce((n, item, i) => {
         const marker = l.ordered ? `${(l.start as number) + i}. ` : '• ';
         const task = item.task ? (item.checked ? '[x] ' : '[ ] ') : '';
-        // 列表项整行（含 marker）参与折行，与 renderBlock 的单个 <Text> 结构一致
-        return n + wrappedRows(marker + task + renderInlineText(item.tokens), width);
+        // 悬挂缩进渲染：正文折行宽度 = 总宽 - marker 宽度（与 renderBlock 的
+        // 行向 Box + flexShrink 结构一致）；空内容条目也占 1 行
+        const prefixW = displayWidth(marker + task);
+        const contentWidth = width === undefined ? undefined : Math.max(1, width - prefixW);
+        return n + Math.max(1, wrappedRows(renderInlineText(item.tokens), contentWidth));
       }, 0);
     }
     case 'blockquote':
@@ -665,11 +694,20 @@ function measureTable(tbl: Tokens.Table, width?: number): number {
   if (!hasWidth) return 2 + tbl.rows.length;
 
   // 模式三：宽度自适应。外框 4 行（顶框/表头分隔/底框 3 行 + 表头自身另算）
-  // 每个逻辑行的高度 = 该行各单元格折行后的最大行数
+  // 每个逻辑行的高度 = 该行各单元格折行后的最大行数。
+  // 注意超宽 URL 行：wrapStyledSegments 输出的是 1 条逻辑行，但 Ink 会在列宽处硬折行，
+  // 实际占 ceil(行宽/列宽) 个视觉行——测量必须按视觉行数，否则违反「只准高估」契约。
   const { allocated } = widthResult!;
+  const visualRows = (line: StyledSegment[], colWidth: number): number => {
+    const lw = line.reduce((x, s) => x + displayWidth(s.text), 0);
+    return Math.max(1, Math.ceil(lw / colWidth));
+  };
   const rowHeight = (cells: Tokens.TableCell[]): number => {
     const lines = allocated.map((w, ci) =>
-      wrapStyledSegments(extractCellSegments(cells[ci]?.tokens, false), w).length,
+      wrapStyledSegments(extractCellSegments(cells[ci]?.tokens, false), w).reduce(
+        (n, line) => n + visualRows(line, w),
+        0,
+      ),
     );
     return Math.max(...lines, 1);
   };

@@ -239,9 +239,10 @@ describe('user 条目配色', () => {
     const out = lastFrame() ?? '';
     // 正文黄色（ANSI 33m），直接包在正文外
     expect(out).toContain('\x1b[33m用户问题');
-    // 前缀仍是蓝色（34m）加粗（1m），作为视觉锚点不变
+    // 前缀仍是蓝色（34m）加粗（1m），作为视觉锚点不变；
+    // 背景色块（2026-08-12 起，codex 式用户消息背景）会在两者之间插入背景色 ANSI 码，放行
     expect(out).toContain('› ');
-    expect(out).toMatch(/\x1b\[(?:1m\x1b\[34m|34m\x1b\[1m)›/);
+    expect(out).toMatch(/\x1b\[(?:1m|34m)(?:\x1b\[\d+(?:;\d+)*m)*\x1b\[(?:34m|1m)›/);
     // 去掉 ANSI 后内容本身完整
     expect(stripAnsi(out)).toContain('› 用户问题');
   });
@@ -341,22 +342,22 @@ describe('Static 挂载后的帧输出', () => {
 });
 
 describe('thinking 条目渲染', () => {
-  it('≤5 行全部展示，不折叠', () => {
-    const text = ['第一行', '第二行', '第三行', '第四行', '第五行'].join('\n');
+  it('≤2 行全部展示，不折叠', () => {
+    const text = ['第一行', '第二行'].join('\n');
     const { lastFrame } = render(<MessageList items={[thinking(text)]} />);
     const out = stripAnsi(lastFrame() ?? '');
-    for (const l of ['第一行', '第二行', '第三行', '第四行', '第五行']) {
+    for (const l of ['第一行', '第二行']) {
       expect(out).toContain(l);
     }
     expect(out).not.toContain('共');
   });
 
-  it('>5 行折叠：只显示前 5 行 + 「…（共 N 行）」', () => {
+  it('>2 行折叠：只显示前 2 行 + 「…（共 N 行）」', () => {
     const text = Array.from({ length: 8 }, (_, i) => `第${i + 1}行`).join('\n');
     const { lastFrame } = render(<MessageList items={[thinking(text)]} />);
     const out = stripAnsi(lastFrame() ?? '');
-    expect(out).toContain('第5行');
-    expect(out).not.toContain('第6行');
+    expect(out).toContain('第2行');
+    expect(out).not.toContain('第3行');
     expect(out).toContain('…（共 8 行 · Ctrl+O 查看）');
   });
 });
