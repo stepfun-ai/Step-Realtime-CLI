@@ -256,3 +256,45 @@ describe('messagesToOpenAi · tool_result 裸对象 content（cc-switch #6170 �
     expect(out[0]!.content).toBe('');
   });
 });
+
+describe('messagesToOpenAi · user 消息图片块（2026-08-12 实录：贴图被静默吃掉）', () => {
+  const imgBlock = {
+    type: 'image' as const,
+    source: { type: 'base64' as const, media_type: 'image/png', data: 'aGVsbG8=' },
+  };
+
+  it('user [image, text] → content 升级为 parts 数组（text + image_url）', () => {
+    const out = messagesToOpenAi('', [
+      { role: 'user', content: [imgBlock, { type: 'text', text: '看看这个图' }] },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.role).toBe('user');
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: '看看这个图' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' } },
+    ]);
+  });
+
+  it('user 纯文本数组（无图片）→ 保持 string 路径不回归', () => {
+    const out = messagesToOpenAi('', [
+      { role: 'user', content: [{ type: 'text', text: '你好' }] },
+    ]);
+    expect(out[0]!.content).toBe('你好');
+  });
+
+  it('混合消息：tool_result 在前成 tool 消息，图片+文本在后成 parts user 消息', () => {
+    const out = messagesToOpenAi('', [
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'c1', content: '结果' },
+          imgBlock,
+          { type: 'text', text: '接着看' },
+        ],
+      },
+    ]);
+    expect(out[0]).toEqual({ role: 'tool', tool_call_id: 'c1', content: '结果' });
+    expect(out[1]!.role).toBe('user');
+    expect(Array.isArray(out[1]!.content)).toBe(true);
+  });
+});

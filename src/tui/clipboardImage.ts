@@ -15,18 +15,50 @@ export interface ClipboardImage {
 const READ_TIMEOUT_MS = 10_000;
 const PROBE_TIMEOUT_MS = 1_500;
 
-// ── Windows：PowerShell 读位图，输出 base64 ──────────────────
+// ── Windows：一次 PowerShell 调用，多路径尝试 ──────────────────
+// 顺序：WinForms GetImage（CF_DIB/BITMAP）→ "PNG" 格式（浏览器/QQ 常放）
+// → FileDrop 里的图片文件（微信聊天图「复制」等入口只给文件不给位图）
+// → 都失败时输出剪贴板实际格式清单，让 UI 能给出诊断而非一句「没有图片」。
 const WIN_PS = [
   'Add-Type -AssemblyName System.Windows.Forms,System.Drawing;',
+  '$d=[System.Windows.Forms.Clipboard]::GetDataObject();',
+  'if($d -eq $null){"FMT:<empty>";exit}',
   '$img=[System.Windows.Forms.Clipboard]::GetImage();',
-  'if($img){',
-  '$ms=New-Object System.IO.MemoryStream;',
+  'if($img){$ms=New-Object System.IO.MemoryStream;',
   '$img.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);',
-  '[Convert]::ToBase64String($ms.ToArray())',
-  '}',
+  '"IMG:"+[Convert]::ToBase64String($ms.ToArray());exit}',
+  'if($d.GetDataPresent("PNG")){$s=$d.GetData("PNG");',
+  '$ms=New-Object System.IO.MemoryStream;$s.CopyTo($ms);',
+  '"IMG:"+[Convert]::ToBase64String($ms.ToArray());exit}',
+  '$files=$d.GetData("FileDrop");',
+  'if($files){foreach($f in $files){',
+  'if($f -match "\\.(?i:png|jpe?g|gif|bmp|webp)$"){',
+  '"IMG:"+[Convert]::ToBase64String([System.IO.File]::ReadAllBytes($f));exit}}}',
+  '"FMT:"+($d.GetFormats() -join ",")',
 ].join('');
 
-function readWindows(): Promise<Buffer | null> {
+/** Windows 读取结果：图片字节 / 剪贴板格式清单（诊断用）/ null（进程级失败）。 */
+export type WinRead = { kind: 'img'; bytes: Buffer } | { kind: 'fmt'; formats: string } | null;
+
+/** 解析 Windows PowerShell 输出（纯函数，导出供单测直测）。 */
+export function parseWinOutput(raw: string): WinRead {
+  const out = raw.trim();
+  if (out.startsWith('IMG:')) {
+    const b64 = out.slice(4).replace(/\s+/g, '');
+    if (b64.length === 0) return null;
+    try {
+      return { kind: 'img', bytes: Buffer.from(b64, 'base64') };
+    } catch {
+      return null;
+    }
+  }
+  if (out.startsWith('FMT:')) {
+    return { kind: 'fmt', formats: out.slice(4).trim() };
+  }
+  return null;
+}
+
+function readWindows(): Promise<WinRead> {
   return new Promise((resolve) => {
     let child;
     try {
@@ -49,16 +81,11 @@ function readWindows(): Promise<Buffer | null> {
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      const b64 = out.replace(/\s+/g, '');
-      if (code !== 0 || b64.length === 0) {
+      if (code !== 0 || out.trim().length === 0) {
         resolve(null);
         return;
       }
-      try {
-        resolve(Buffer.from(b64, 'base64'));
-      } catch {
-        resolve(null);
-      }
+      resolve(parseWinOutput(out));
     });
   });
 }
@@ -247,38 +274,55 @@ export function clipboardToolHint(): string | null {
 }
 
 /**
- * 从系统剪贴板异步读取图片。返回 base64 + MIME + 宽高；无图片、格式不支持、
- * 或缺少平台工具时返回 null（缺工具的提示通过 clipboardToolHint 获取）。
+ * 剪贴板读取结果。image 为 null 时，formats 给出剪贴板实际格式清单（诊断用，
+ * 仅 Windows 路径能提供）；formats 也为 null 表示连格式枚举都失败（进程级失败）。
+ */
+export interface ClipboardReadResult {
+  image: ClipboardImage | null;
+  formats: string | null;
+}
+
+/**
+ * 从系统剪贴板异步读取图片。无图片、格式不支持、或缺少平台工具时 image 为 null
+ * （缺工具的提示通过 clipboardToolHint 获取；Windows 失败时 formats 带格式清单）。
  * 异步执行以免阻塞 Ink 渲染循环。
  *
  * 平台支持：
- * - Windows：PowerShell（系统自带）
+ * - Windows：PowerShell（系统自带），依次尝试 WinForms GetImage（CF_DIB/BITMAP）、
+ *   "PNG" 格式、FileDrop 里的图片文件；全部失败返回剪贴板格式清单供诊断
  * - macOS：osascript（系统自带）导出剪贴板 PNG
  * - Linux Wayland：wl-paste（需 wl-clipboard）
  * - Linux X11：xclip（需 xclip）
  * 宽高统一由纯 JS 解析图片头得到，不依赖外部命令或原生模块。
  */
-export async function readClipboardImage(): Promise<ClipboardImage | null> {
+export async function readClipboardImage(): Promise<ClipboardReadResult> {
   let bytes: Buffer | null = null;
+  let formats: string | null = null;
   if (process.platform === 'win32') {
-    bytes = await readWindows();
+    const r = await readWindows();
+    if (r === null) return { image: null, formats: null };
+    if (r.kind === 'fmt') return { image: null, formats: r.formats };
+    bytes = r.bytes;
   } else if (process.platform === 'darwin') {
     bytes = await readMacOs();
   } else if (process.platform === 'linux') {
     bytes = isWayland() ? await readLinuxWlPaste() : await readLinuxXclip();
   } else {
-    return null;
+    return { image: null, formats: null };
   }
 
-  if (bytes === null || bytes.length === 0) return null;
+  if (bytes === null || bytes.length === 0) return { image: null, formats };
 
   const meta = parseImageMeta(bytes);
-  if (meta === null) return null; // 不是受支持的图片格式
+  if (meta === null) return { image: null, formats }; // 不是受支持的图片格式
 
   return {
-    mediaType: meta.mime,
-    base64: bytes.toString('base64'),
-    width: meta.width,
-    height: meta.height,
+    image: {
+      mediaType: meta.mime,
+      base64: bytes.toString('base64'),
+      width: meta.width,
+      height: meta.height,
+    },
+    formats: null,
   };
 }

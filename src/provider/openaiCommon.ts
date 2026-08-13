@@ -151,13 +151,29 @@ export function messagesToOpenAi(
       const toolResults = blocks.filter(
         (b): b is Anthropic.ToolResultBlockParam => b.type === 'tool_result',
       );
-      const nonToolText = blocksToText(
-        blocks.filter((b) => b.type !== 'tool_result') as Anthropic.ContentBlockParam[],
-      );
+      const nonTool = blocks.filter((b) => b.type !== 'tool_result');
+      const nonToolText = blocksToText(nonTool as Anthropic.ContentBlockParam[]);
+      // user 消息里的图片块不能再丢：2026-08-12 实录，Alt+V 贴图经 openai 协议通道
+      // 发出时图片被静默吃掉（blocksToText 只拼文本），模型端看不到任何痕迹。
+      // 有图片时 content 升级为 parts 数组（OpenAI 视觉标准形态），无图片保持原 string 路径。
+      const imageParts: OpenAiContentPart[] = [];
+      for (const b of nonTool) {
+        if (b.type === 'image' && b.source.type === 'base64') {
+          imageParts.push({
+            type: 'image_url',
+            image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` },
+          });
+        }
+      }
       for (const tr of toolResults) {
         out.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: toolResultContent(tr) });
       }
-      if (nonToolText.length > 0 || toolResults.length === 0) {
+      if (imageParts.length > 0) {
+        const parts: OpenAiContentPart[] = [];
+        if (nonToolText.length > 0) parts.push({ type: 'text', text: nonToolText });
+        parts.push(...imageParts);
+        out.push({ role: 'user', content: parts });
+      } else if (nonToolText.length > 0 || toolResults.length === 0) {
         out.push({ role: 'user', content: nonToolText });
       }
       continue;

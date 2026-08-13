@@ -479,3 +479,29 @@ describe('stop_reason 由 status + incomplete_details 推导（空响应根因�
     expect(msg.stop_reason).toBe('tool_use');
   });
 });
+
+describe('messagesToResponsesInput · user 消息图片块', () => {
+  it('user [image, text] → input_text + input_image parts', async () => {
+    const { messagesToResponsesInput } = await import('../../src/provider/openaiResponses.js');
+    const out = messagesToResponsesInput('', [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' },
+          },
+          { type: 'text', text: '看看这个图' },
+        ],
+      },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'input_text', text: '看看这个图' },
+        { type: 'input_image', image_url: 'data:image/png;base64,aGVsbG8=' },
+      ],
+    });
+  });
+});

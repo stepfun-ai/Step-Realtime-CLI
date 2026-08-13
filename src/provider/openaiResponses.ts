@@ -27,10 +27,18 @@ export interface OpenAiResponsesProviderOptions {
   thinking?: ThinkingParam;
 }
 
-/** Responses API 的一条对话 input 项（role + 纯文本内容）。 */
+/** Responses API 的多模态 content part（user 消息含图片时升级为数组形态）。 */
+interface ResponsesContentPart {
+  type: 'input_text' | 'input_image';
+  text?: string;
+  /** input_image 用 data URI；Responses 的字段名是 image_url 的字符串直挂，不是对象。 */
+  image_url?: string;
+}
+
+/** Responses API 的一条对话 input 项（role + 内容；含图片时为 parts 数组）。 */
 interface ResponsesMessageItem {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ResponsesContentPart[];
 }
 
 /** Responses API 的一次工具调用 input 项（回灌 assistant 的 tool_use 用）。 */
@@ -123,7 +131,19 @@ export function messagesToResponsesInput(
       const toolResults = blocks.filter(
         (b): b is Anthropic.ToolResultBlockParam => b.type === 'tool_result',
       );
-      const nonToolText = blocksToText(blocks.filter((b) => b.type !== 'tool_result'));
+      const nonTool = blocks.filter((b) => b.type !== 'tool_result');
+      const nonToolText = blocksToText(nonTool);
+      // user 图片块不能丢（与 messagesToOpenAi 同修，2026-08-12 实录：openai 系通道
+      // user 消息图片被静默吃掉）。有图片时 content 升级为 input_text/input_image 数组。
+      const imageParts: ResponsesContentPart[] = [];
+      for (const b of nonTool) {
+        if (b.type === 'image' && b.source.type === 'base64') {
+          imageParts.push({
+            type: 'input_image',
+            image_url: `data:${b.source.media_type};base64,${b.source.data}`,
+          });
+        }
+      }
       // function_call_output 在前、文本 user 在后：与 messagesToOpenAi 同一顺序约定——
       // 整形层会把合成/迟到的 tool_result 与插话文本合进同一条 user 消息，
       // 输出项先发出能保证工具配对在 input 序列上保持「调用紧邻结果」的形态。
@@ -134,8 +154,13 @@ export function messagesToResponsesInput(
           output: toolResultText(tr),
         });
       }
-      // 无工具结果时即使正文为空也要留一条 user 项，保持对话轮次完整
-      if (nonToolText.length > 0 || toolResults.length === 0) {
+      if (imageParts.length > 0) {
+        const parts: ResponsesContentPart[] = [];
+        if (nonToolText.length > 0) parts.push({ type: 'input_text', text: nonToolText });
+        parts.push(...imageParts);
+        out.push({ role: 'user', content: parts });
+      } else if (nonToolText.length > 0 || toolResults.length === 0) {
+        // 无工具结果时即使正文为空也要留一条 user 项，保持对话轮次完整
         out.push({ role: 'user', content: nonToolText });
       }
       continue;

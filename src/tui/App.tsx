@@ -923,11 +923,19 @@ export function App({
 
   const attachClipboardImage = useCallback(() => {
     pushItem({ kind: 'note', text: t('app.image.reading') });
-    void readClipboardImage().then((img) => {
+    void readClipboardImage().then(({ image: img, formats }) => {
       if (img === null) {
-        // 区分「缺平台工具」与「剪贴板没图片」，给不同提示
+        // 三级诊断：缺平台工具 → 剪贴板格式清单（Windows 多路径读取失败后的自证）
+        // → 通用「没有图片」。格式清单让下次失败可直接定位，不用猜。
         const hint = clipboardToolHint();
-        pushItem({ kind: 'note', text: hint ?? t('app.image.none') });
+        if (hint !== null) {
+          pushItem({ kind: 'note', text: hint });
+        } else if (formats !== null && formats !== '' && formats !== '<empty>') {
+          const shown = formats.length > 200 ? `${formats.slice(0, 200)}…` : formats;
+          pushItem({ kind: 'note', text: t('app.image.noneFormats', { formats: shown }) });
+        } else {
+          pushItem({ kind: 'note', text: t('app.image.none') });
+        }
         return;
       }
       const att = imageStore.current.add(img.base64, img.mediaType, img.width, img.height);
