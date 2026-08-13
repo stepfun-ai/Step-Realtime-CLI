@@ -218,6 +218,7 @@ describe('nextReprojectionLevel 错误驱动档位', () => {
       'You can only include 10 image links. Please reduce the number accordingly.', // Gemini/Vertex
       'At most 1 image(s) may be provided in one request.', // vLLM 推理端
       'Image base64 size (8.4 MB) exceeds API limit (5.0 MB).', // OpenAI 兼容网关 issue 实录
+      "messages.content.type 参数非法，取值范围 ['text']", // 智谱 BigModel 实测（端点只收 text part）
     ];
     for (const msg of dialects) {
       const err = new Anthropic.APIError(400, undefined, msg, undefined);

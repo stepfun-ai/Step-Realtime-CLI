@@ -163,6 +163,9 @@ export function applyReprojectionLevel(
  * - Gemini/Vertex（多厂商代理层 issue 实录）：`You can only include 10 image links`
  * - OpenAI 兼容网关（公开 issue 实录）：`Image base64 size ... exceeds API limit`
  * - vLLM 系推理端：`At most N image(s) may be provided in one request`
+ * - 智谱 BigModel（2026-08-13 实测，glm-x-preview-k）：`messages.content.type 参数非法，
+ *   取值范围 ['text']`——端点只接受 text 一种 content part，带 image_url 即 400。
+ *   我们发出的非 text part 只有图片，所以这句等价于「不收图片」。
  *
  * 判定原则：只在文案**明确指向媒体**时算可重投影。裸 400（参数错误等）不匹配任何
  * 关键词时不降级——把普通 400 也降级会掩盖真正的调用 bug。413（载荷过大）不加
@@ -178,6 +181,8 @@ const MEDIA_ERROR_PATTERNS: readonly RegExp[] = [
   /image base64 size.*exceeds/i,
   /image.*(limit|maximum)/i,
   /payload (too )?large/i,
+  // 端点只收 text part（智谱等）：我们发出的非 text part 只有图片，命中即媒体问题
+  /content\.type.{0,30}(参数非法|取值范围|invalid|not supported|must be)/i,
 ];
 
 /** 从错误上提取可匹配的文本（message + error.type，覆盖 SDK 包装与裸 Error）。 */
