@@ -3,6 +3,7 @@ import { DEFAULT_THINKING_LEVELS } from '../../config/config.js';
 import { isAbortError } from '../../provider/retry.js';
 import type { ChatProvider } from '../../provider/types.js';
 import { isStepref, STEPREF_PREFIX } from '../../session/attachments.js';
+import { logError } from '../../utils/logger.js';
 import { mapBlocksDeep, stored, type MessageOrigin, type StoredMessage } from '../message.js';
 
 const CLEARED_PLACEHOLDER = '[旧工具结果已清理以节省上下文]';
@@ -43,10 +44,23 @@ export const OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
 
 /**
  * 摘要复述检测正则：匹配 serializeContent() 对 tool_use/tool_result/image/audio/video
- * 的内部标记。正常摘要不会产出这些标记——它们只在 prompt 的历史渲染里出现，
- * 模型若把它们写回摘要，说明在复述被压缩段而不是写交接笔记，判失败并重试。
+ * 的内部标记。注意必须带 /g 且用 match 计数——判定看密度不看有无（见下）。
  */
-const RECITATION_MARKERS = /\[调用工具 |\[工具结果\]|\[image |\[audio |\[video /;
+const RECITATION_MARKERS = /\[调用工具 |\[工具结果\]|\[image |\[audio |\[video /g;
+
+/**
+ * 复述判定：标记**密度** ≥ 1 处/千字符 才判复述。
+ *
+ * 为什么不是「出现即拒」：2026-08-12 实测，一条 9.4 万字符的高保真交接笔记因零星提到
+ * 几个 [image …] 标记被旧闸门（命中即拒）误判——交接笔记引用图片 hash 定位是合理且
+ * 有用的（后续可按 hash 找回原图），而真正的复述（整段照抄序列化历史）标记密度极高
+ * （工具密集段每几十到几百字符一个）。密度阈值把两者分开：
+ * 56 字符垃圾摘要含 1 个标记 → 密度 17.8/千字符 → 拒；9.4 万字符笔记含 20 个 → 0.21 → 放。
+ */
+function isRecitation(summary: string): boolean {
+  const count = summary.match(RECITATION_MARKERS)?.length ?? 0;
+  return count * 1000 >= summary.length && count > 0;
+}
 
 /**
  * 媒体块降级标记：摘要请求因图片/音频/视频太大触发 413 / context overflow 时，
@@ -262,11 +276,6 @@ export function microCompact(
 function isToolResultMsg(m: StoredMessage): boolean {
   const msg = m.message;
   return msg.role === 'user' && Array.isArray(msg.content) && msg.content.some((b) => b.type === 'tool_result');
-}
-
-/** 摘要复述检测：命中 serializeContent 内部标记 → 模型在复述被压缩段而非写交接笔记。 */
-function isRecitation(summary: string): boolean {
-  return RECITATION_MARKERS.test(summary);
 }
 
 /**
@@ -703,11 +712,13 @@ export async function fullCompact(
   let olderForSummary: StoredMessage[] = older;
   let mediaStripAttempted = false;
   let overflowShrinkCount = 0;
+  // 复述拦截后的反复述提示：复述是输出行为问题，丢消息不治本，追加提示原样重试
+  let antiRecitationHint = '';
   for (let attempt = 1; attempt <= COMPACTION_MAX_RETRIES; attempt++) {
     // 每轮开工前检查：中断可能发生在上一轮请求之后、本轮之前（如收缩历史期间）
     if (aborted()) return messages;
     const summaryPrompt =
-      `${SUMMARY_INSTRUCTION}\n\n--- 以下是即将被清空的对话历史 ---\n\n` +
+      `${SUMMARY_INSTRUCTION}${antiRecitationHint}\n\n--- 以下是即将被清空的对话历史 ---\n\n` +
       olderForSummary.map((m) => `${m.message.role}: ${serializeContent(m.message.content)}`).join('\n');
 
     let candidate: string;
@@ -735,6 +746,8 @@ export async function fullCompact(
       // 用户中断：语义是「放弃压缩」，不是「这次失败换个规模再试」。
       // 必须在所有降级分支之前判定并直接返回，否则按一次 Esc 仍要走完剩余重试。
       if (aborted() || isAbortError(err)) return messages;
+      const e = err as Error & { status?: number };
+      logError(`[compaction] 摘要请求失败（第 ${attempt}/${COMPACTION_MAX_RETRIES} 次）：status=${e.status ?? '-'} ${String(e.message).slice(0, 300)}`);
       const isOverflow = isContextOverflowOrTooLarge(err);
       // overflow / 413：先剥离媒体块再试一次（媒体常是 413 主因，且 marker 仍保留定位信息）
       if (isOverflow && !mediaStripAttempted) {
@@ -769,13 +782,25 @@ export async function fullCompact(
       validateSummary(candidate, olderTokens);
       summary = candidate;
       break;
-    } catch {
+    } catch (gateErr) {
+      const reason = (gateErr as Error).message;
+      logError(`[compaction] 摘要质量闸门拦截（第 ${attempt}/${COMPACTION_MAX_RETRIES} 次，候选 ${candidate.length} 字符）：${reason}`);
+      if (reason.includes('recitation')) {
+        // 复述是输出行为问题，丢消息不治本：追加反复述提示、历史原样重试
+        antiRecitationHint =
+          '\n\n注意：上一次产出的摘要原样复述了历史里的序列化标记（[调用工具 …]、[工具结果]、[image …] 等），被判不合格。' +
+          '那些标记只是历史渲染成文本时的占位形式，不要写进摘要；确需提及时用自己的话转述（如「读取了某张截图」）。';
+        continue;
+      }
       if (olderForSummary.length <= 1) return messages;
       olderForSummary = dropOldestMessageAndLeadingToolResults(olderForSummary);
     }
   }
   // 尝试耗尽仍无合格摘要 → 放弃压缩，历史完整保留
-  if (summary === undefined) return messages;
+  if (summary === undefined) {
+    logError(`[compaction] ${COMPACTION_MAX_RETRIES} 次尝试均未产出合格摘要，放弃本次压缩（历史原样保留）`);
+    return messages;
+  }
 
   // TODO 本体存独立 store（不占 messages），压缩不丢；把当前清单拼进摘要尾部，让压缩后模型立刻看到进度
   const todoBlock = todos !== undefined ? renderTodoList(todos) : '';

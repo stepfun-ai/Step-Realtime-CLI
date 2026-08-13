@@ -260,3 +260,31 @@ describe('fullCompact overflow / 媒体块自救', () => {
     expect(out).toBe(msgs);
   });
 });
+
+describe('复述判定的密度口径（2026-08-12 误判实录）', () => {
+  it('长交接笔记零星引用标记不算复述（如引用图片 hash 定位）', () => {
+    const body = '交接笔记正文，记录已确认的事实与下一步动作。'.repeat(1000); // ≈ 2.1 万字符
+    const withMarkers = `${body}[image image/png ab12cd34] 的截图已确认。${body}[调用工具 bash] 那次验证通过。`;
+    expect(() => validateSummary(withMarkers, 500_000)).not.toThrow();
+  });
+
+  it('短摘要带一个标记仍是复述（密度高）', () => {
+    expect(() => validateSummary('[工具结果] 文件内容…', 100)).toThrow('recitation');
+  });
+
+  it('复述被拒后：重试不丢历史，且 prompt 带反复述提示', async () => {
+    const { provider, streamCalls, streamParams } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock(`${goodSummary('够长但在复述')}[工具结果]`)] },
+      { textChunks: [], finalContent: [textBlock(goodSummary('重试后的干净摘要'))] },
+    ]);
+    const msgs = historyWithFacts();
+    const out = await fullCompact(provider, msgs, 2);
+    expect(streamCalls()).toBe(2);
+    expect(summaryOf(out).message.content).toContain('重试后的干净摘要');
+    // 第二次请求的 prompt 里带反复述提示，且历史没有被丢消息（仍是全量序列化）
+    const second = streamParams()[1]!;
+    const promptText = String(second.messages[0]!.content);
+    expect(promptText).toContain('序列化标记');
+    expect(promptText).toContain('注意 key 在 keys.json'); // 最早的用户原话还在输入里
+  });
+});

@@ -2424,18 +2424,22 @@ export function App({
                 history.current = compacted;
                 // 压缩应用事件落盘：重放到此事件时内存历史整体替换为压缩后的存活序列（与循环内压缩同一口径）
                 appendWireEvent({ type: 'context.apply_compaction', ts: new Date().toISOString(), messages: [...compacted] });
+                // 压缩是 undo 水位线：被吞掉的轮对应的快照已无意义，清栈（幸存 recent 轮的撤销退化为只回退 history）
+                clearUndoSnapshots(undoStackRef.current);
+                const after = estimateTokens(history.current);
+                // 状态栏 context 用量立即回落（否则要等下一条消息的 usage 事件才刷新，看起来像没压）。
+                // after 是压缩后全量估算，覆盖当前所有消息：基准设为 after、游标设为全长，
+                // 尾部为空、不再叠加估算（基准必须一起更新，否则后续重算会用回压缩前的旧真实 usage）。
+                baseTokensRef.current = after;
+                measuredLenRef.current = history.current.length;
+                refreshContextUsage();
+                pushItem({ kind: 'note', text: t('app.compact.done', { before, after }) });
+                persist();
+              } else {
+                // 同引用返回 = 未压缩（摘要请求失败或质量闸门拦截，重试耗尽）。
+                // 不能打「已压缩：X → X」——2026-08-12 实录：用户看到相同数字才以为压缩成功。
+                pushItem({ kind: 'note', text: t('app.compact.nochange') });
               }
-              // 压缩是 undo 水位线：被吞掉的轮对应的快照已无意义，清栈（幸存 recent 轮的撤销退化为只回退 history）
-              clearUndoSnapshots(undoStackRef.current);
-              const after = estimateTokens(history.current);
-              // 状态栏 context 用量立即回落（否则要等下一条消息的 usage 事件才刷新，看起来像没压）。
-              // after 是压缩后全量估算，覆盖当前所有消息：基准设为 after、游标设为全长，
-              // 尾部为空、不再叠加估算（基准必须一起更新，否则后续重算会用回压缩前的旧真实 usage）。
-              baseTokensRef.current = after;
-              measuredLenRef.current = history.current.length;
-              refreshContextUsage();
-              pushItem({ kind: 'note', text: t('app.compact.done', { before, after }) });
-              persist();
             } catch (e) {
               // 中断走 note 而非 error：用户主动取消不是故障，红色报错会造成「压缩坏了」的错觉
               if (controller.signal.aborted || isAbortError(e)) {
