@@ -58,6 +58,10 @@ export interface StatusState {
   hints: string;
   backgroundCount: number;
   queueLen: number;
+  /** goal 徽标：active 的自主目标显示「goal:已用轮次」，无 goal 时 undefined。 */
+  goalTurns?: number;
+  /** team 团队模式是否激活（激活时显示 team 徽标）。 */
+  teamActive?: boolean;
 }
 
 export class StatusLine implements Component {
@@ -88,6 +92,10 @@ export class StatusLine implements Component {
     badges.push(s.busy ? c.warn('busy') : c.dim('ready'));
     if (s.backgroundCount > 0) badges.push(c.toolName(`bg:${s.backgroundCount}`));
     if (s.queueLen > 0) badges.push(c.accent(`queue:${s.queueLen}`));
+    // goal 与 team 是「当前处于某种自主/协作状态」的提示，必须常驻可见：
+    // 用户看不到 goal 徽标就不知道下一轮会自动续跑
+    if (s.goalTurns !== undefined) badges.push(c.accent(`goal:${s.goalTurns}`));
+    if (s.teamActive === true) badges.push(c.accent('team'));
     const left = badges.join(c.dim('  '));
     // 路径是唯一可被压缩的部分：先算徽章占宽，剩下的给路径
     const room = width - visibleWidth(left) - 2;

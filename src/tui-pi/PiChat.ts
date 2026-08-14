@@ -23,6 +23,10 @@ import { createSubagentRunner } from '../agent/subagent/runner.js';
 import type { SubagentStore } from '../agent/subagent/store.js';
 import type { AgentDefinition } from '../agent/subagent/types.js';
 import { BackgroundManager } from '../agent/background/manager.js';
+import { assembleGoalInject, decideGoalTurn } from '../agent/goal/drive.js';
+import { GoalMode, type GoalChangeEvent } from '../agent/goal/mode.js';
+import { initTeam } from '../agent/team/mode.js';
+import { TeamMode } from '../agent/team/mode.js';
 import { estimateTokens, fullCompact } from '../agent/compaction/compact.js';
 import { MEMORY_ONBOARDING_INJECTION } from '../agent/memory.js';
 import { subagentListing } from '../agent/systemPrompt.js';
@@ -51,10 +55,12 @@ import type { ToolContext } from '../tools/types.js';
 import type { DisplayItem } from '../tui/types.js';
 import { busyRoute, helpText, parseSlash } from '../tui/commands.js';
 import { historyToDisplayItems } from '../tui/historyReplay.js';
+import { planTurnEnd } from '../tui/turnEnd.js';
+import { formatDuration } from '../tui/duration.js';
 import { formatUsageReport } from '../tui/usagePanel.js';
 import { parseThinkArgs, THINK_CHOICES, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../tui/thinkCommand.js';
 import { scanFileIndex } from '../tui/fileIndex.js';
-import { formatMemoryList, formatTaskList, NOT_WIRED, notWiredText } from './commandText.js';
+import { formatGoalPanel, formatMemoryList, formatTaskList, formatTeamStatus, NOT_WIRED, notWiredText } from './commandText.js';
 import { ChatAutocompleteProvider } from './completion.js';
 import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
 import { StreamBuffer } from '../tui/streamBuffer.js';
@@ -115,6 +121,20 @@ export class PiChat {
   private background = new BackgroundManager();
   private readonly todos: { items: import('../tools/types.js').TodoStore['items'] } = { items: [] };
   private readonly sessionApprovals = new Set<string>();
+  /** 自主目标（会话级）：跨轮持有，active 时回合收尾自动续跑。 */
+  private readonly goal = new GoalMode();
+  /** 团队模式（会话级）：档案目录快照随会话落盘。 */
+  private readonly team = new TeamMode();
+  /**
+   * goal 运行期间用户的普通留言。
+   *
+   * 不进发送队列：队列里的消息会作为独立一轮发出，而 goal 正在自主推进，
+   * 插一轮会打断它。这些留言拼进下一个自主轮的注入文本，让模型在继续目标的
+   * 同时看到用户的话。
+   */
+  private steers: string[] = [];
+  /** 本轮 run 给出的续接文本（goal 续跑或 Stop hook 兜底），回合收尾时派发。 */
+  private continuation: string | null = null;
   private readonly subagentCounter = { spawned: 0 };
 
   private busy = false;
@@ -193,6 +213,19 @@ export class PiChat {
     this.editor.onEscapeKey = () => this.onEscape();
     this.editor.onCtrlC = () => this.onCtrlC();
 
+    // goal 快照恢复：active 会被降级为 paused（防重启后无人看着就自动续跑）
+    this.goal.restore(deps.session.goal);
+    this.goal.setOnChange((ev) => this.onGoalChange(ev));
+    // team 恢复是异步的（要校验档案目录还在）：档案被删则静默降级为未激活
+    void this.team.restore(deps.session.team).then(() => {
+      this.status.setState({ teamActive: this.team.active });
+      this.tui.requestRender();
+    });
+    this.team.setOnChange((active) => {
+      this.status.setState({ teamActive: active });
+      this.tui.requestRender();
+    });
+
     this.streamBuffer = new StreamBuffer((ev) => this.applyEvent(ev));
 
     this.tui.addChild(this.transcript);
@@ -206,6 +239,13 @@ export class PiChat {
   /** 启动 TUI，返回的 Promise 在退出时 resolve。 */
   start(): Promise<PiChatExit> {
     this.replayHistory();
+    // 恢复会话时 active goal 被降级为 paused（防重启后无人看着就自动续跑）。
+    // 这是静默发生的，不明说用户会以为目标还在推进。
+    const resumed = this.goal.get();
+    if (resumed !== null && (resumed.status === 'active' || resumed.status === 'paused')) {
+      this.push({ kind: 'note', text: `本会话有目标「${resumed.objective}」，已暂停，用 /goal resume 继续` });
+      this.status.setState({ goalTurns: undefined });
+    }
     if (this.deps.configStartupNotice !== undefined) {
       this.push({ kind: 'note', text: this.deps.configStartupNotice });
     }
@@ -266,6 +306,9 @@ export class PiChat {
     this.session.model = this.currentAlias ?? this.model;
     this.session.thinkOverride = this.thinkOverride;
     this.session.planMode = this.planMode;
+    // goal 与 team 快照随会话落盘（无值时清掉旧字段，否则 resume 会复活已结束的目标）
+    this.session.goal = this.goal.snapshot() ?? undefined;
+    this.session.team = this.team.snapshot() ?? undefined;
     try {
       this.deps.store.appendFull(this.session.cwd, this.session.id, this.history);
       this.deps.store.save(this.session);
@@ -365,6 +408,13 @@ export class PiChat {
       return;
     }
     if (this.busy) {
+      // goal 自主推进期间的普通留言走 steer，不进队列：队列消息会作为独立一轮发出，
+      // 那样会打断目标推进。steer 拼进下一个自主轮的注入文本，模型继续目标的同时看到留言。
+      if (this.goal.get()?.status === 'active') {
+        this.steers.push(text);
+        this.push({ kind: 'note', text: '已记下，会在目标的下一轮里一起看到' });
+        return;
+      }
       // busy 时提交进队列，回合收尾自动续发（对齐 Ink 版发送队列语义）
       this.queue.push(text);
       this.syncStatus();
@@ -497,6 +547,14 @@ export class PiChat {
         await this.runExportDebugZip();
         return;
 
+      case 'goal':
+        this.runGoal(args);
+        return;
+
+      case 'team':
+        await this.runTeam(args);
+        return;
+
       default:
         this.push({
           kind: 'note',
@@ -514,6 +572,129 @@ export class PiChat {
       '快捷键：Enter 发送 · Shift+Enter 换行 · Esc 中断/取回队列 · Ctrl+C 退出',
       `pi 版尚未接线：${notWired}`,
     ].join('\n');
+  }
+
+  // ---------------------------------------------------------------- goal 与 team
+
+  /**
+   * goal 生命周期事件的落地：消息流打标记、徽标更新、事件落盘、快照持久化。
+   *
+   * 数字（轮数、用时）取自快照而不是重新计算：完成事件里 goal 已被清除，
+   * 此时回查 GoalMode 拿到的是 null。
+   */
+  private onGoalChange(ev: GoalChangeEvent): void {
+    const g = ev.goal;
+    if (ev.type === 'completed') {
+      this.status.setState({ goalTurns: undefined });
+      this.push({
+        kind: 'note',
+        text:
+          `目标完成${g.terminalReason !== undefined ? `（${g.terminalReason}）` : ''}` +
+          ` · 共 ${g.turnsUsed} 轮 · ${formatDuration(Math.max(0, Date.now() - g.createdAt))}`,
+      });
+      this.appendWire({ type: 'goal.update', ts: new Date().toISOString(), goal: undefined });
+      this.persist();
+      return;
+    }
+    // 徽标只在 active 时显示：paused/blocked 的目标不会自动续跑，挂个数字会误导
+    this.status.setState({ goalTurns: g.status === 'active' ? g.turnsUsed : undefined });
+    if (ev.type === 'created') {
+      this.push({ kind: 'note', text: `已设定目标：${g.objective}` });
+    } else {
+      const suffix = g.terminalReason !== undefined ? `（${g.terminalReason}）` : '';
+      this.push({ kind: 'note', text: `目标状态：${g.status}${suffix}` });
+    }
+    this.appendWire({ type: 'goal.update', ts: new Date().toISOString(), goal: { ...g } });
+    this.persist();
+  }
+
+  /** /goal：无参看状态，pause / resume / cancel 改状态。创建目标由模型调 create_goal 工具。 */
+  private runGoal(args: string): void {
+    const sub = args.toLowerCase();
+    const g = this.goal.get();
+    if (sub === '' || sub === 'status') {
+      if (g === null) this.push({ kind: 'note', text: '当前没有自主目标（说清要达成什么，我会用 create_goal 设定）' });
+      else this.push({ kind: 'note', text: formatGoalPanel(g, Date.now()) });
+      return;
+    }
+    if (sub === 'pause' || sub === 'resume' || sub === 'cancel') {
+      if (g === null) {
+        this.push({ kind: 'note', text: '当前没有自主目标' });
+        return;
+      }
+      try {
+        if (sub === 'pause') this.goal.update('paused');
+        else if (sub === 'resume') this.goal.update('active');
+        else this.goal.update('complete', '用户取消');
+      } catch (e) {
+        this.push({ kind: 'error', text: (e as Error).message });
+      }
+      return;
+    }
+    this.push({ kind: 'note', text: '用法：/goal（看状态） · /goal pause · /goal resume · /goal cancel' });
+  }
+
+  /** /team：init / status / exit / teardown。目录与 git 操作是异步的，逐个 await 后回报。 */
+  private async runTeam(args: string): Promise<void> {
+    const parts = args.split(/\s+/).filter((x) => x !== '');
+    const sub = (parts[0] ?? '').toLowerCase();
+    const flag = (name: string): string | undefined => {
+      const i = parts.indexOf(name);
+      return i >= 0 ? parts[i + 1] : undefined;
+    };
+    try {
+      if (sub === 'init') {
+        const { store, created, base } = await initTeam(this.deps.ctx.cwd, flag('--dir'), flag('--repo'), flag('--base'));
+        this.team.activate(store);
+        this.persist();
+        this.push({
+          kind: 'note',
+          text:
+            `${created ? '团队模式已初始化' : '团队模式已就绪（沿用已有档案）'}\n` +
+            `基准分支 ${base} · 档案目录 ${store.dir} · 仓库 ${store.repoRoot}`,
+        });
+        return;
+      }
+      if (sub === 'status') {
+        if (!this.team.active) {
+          this.push({ kind: 'note', text: '团队模式未激活（用 /team init 初始化）' });
+          return;
+        }
+        const store = this.team.getStore();
+        const state = await store.load();
+        this.push({ kind: 'note', text: formatTeamStatus(state.base, store.dir, state.missions) });
+        return;
+      }
+      if (sub === 'exit') {
+        // 先落关闭标记（防 resume 复活），标记失败不阻塞：exit 是硬退出通道
+        try {
+          await this.team.getStore().markClosed();
+        } catch {
+          // 未激活或档案损坏：照常退出
+        }
+        this.team.deactivate();
+        this.persist();
+        this.push({ kind: 'note', text: '已退出团队模式（档案目录保留）' });
+        return;
+      }
+      if (sub === 'teardown') {
+        if (!this.team.active) {
+          this.push({ kind: 'note', text: '团队模式未激活' });
+          return;
+        }
+        const { removed, kept } = await this.team.getStore().teardown(parts.includes('force'));
+        this.team.deactivate();
+        this.persist();
+        this.push({
+          kind: 'note',
+          text: `已清理 ${removed.length} 个工作间${kept.length > 0 ? `\n保留（有未提交改动）：${kept.join('、')}` : ''}`,
+        });
+        return;
+      }
+      this.push({ kind: 'note', text: '用法：/team init [--dir 路径] [--repo 路径] [--base 分支] · /team status · /team exit · /team teardown [force]' });
+    } catch (e) {
+      this.push({ kind: 'error', text: (e as Error).message });
+    }
   }
 
   // ---------------------------------------------------------------- 状态类命令
@@ -672,6 +853,12 @@ export class PiChat {
     this.planMode = false;
     this.prePlanMode = null;
     this.thinkOverride = undefined;
+    // 新会话不继承 goal 与 team（两者都是会话级状态，随会话落盘）
+    this.goal.restore(null);
+    this.team.deactivate();
+    this.steers = [];
+    this.continuation = null;
+    this.status.setState({ goalTurns: undefined, teamActive: false });
     // context 用量归零：history 已清空，但基准仍是上一会话的值，不重置会继续显示旧占用
     this.baseTokens = 0;
     this.status.setState({ usedTokens: 0 });
@@ -692,8 +879,12 @@ export class PiChat {
     this.history.push(...copied);
     forked.messages = this.history;
     forked.todos = [...this.todos.items];
-    // fork 保留 thinkOverride 与 plan（是同一现场的延续），但不继承审批白名单（新会话重新问）
+    // fork 保留 thinkOverride 与 plan（是同一现场的延续），但不继承审批白名单（新会话重新问）、
+    // 也不继承 goal 与 team（自主目标与团队协调属于源会话的运行现场）
     this.sessionApprovals.clear();
+    this.goal.restore(null);
+    this.team.deactivate();
+    this.status.setState({ goalTurns: undefined, teamActive: false });
     this.session = forked;
     this.rebindBackground();
     this.persist();
@@ -792,7 +983,7 @@ export class PiChat {
       if (this.controller === controller) this.controller = null;
       this.syncStatus();
       this.tui.requestRender();
-      await this.drainQueue();
+      await this.finishTurn();
     }
   }
 
@@ -821,13 +1012,36 @@ export class PiChat {
     }
   }
 
-  /** 排空发送队列：斜杠命令按命令执行，其余作为消息发送。 */
-  private async drainQueue(): Promise<void> {
-    const next = this.queue.shift();
-    if (next === undefined) return;
+  /**
+   * 回合收尾的统一出口：决定下一步是发队首消息、走 goal 续接，还是就此空闲。
+   *
+   * 决策交给 `planTurnEnd`（纯函数，两版共用），它钉住的是「队列优先于续接」——
+   * 反过来会让 goal 这类高频续接把用户排队的消息饿死。这一层只落副作用。
+   */
+  private async finishTurn(): Promise<void> {
+    const goalActive = this.goal.get()?.status === 'active';
+    const plan = planTurnEnd({
+      continuation: this.continuation,
+      goalActive,
+      queue: this.queue,
+      hasPendingPrompt: this.promptActive,
+    });
+    this.queue = plan.queueRemainder;
     this.syncStatus();
-    if (next.startsWith('/')) await this.handleSlash(next);
-    else await this.runTurn(next);
+    if (plan.action === 'idle') return;
+    if (plan.action === 'submit-queue') {
+      const text = plan.text ?? '';
+      // 队列里可能混着排队的斜杠命令（busyRoute 判为 queue 的那些）
+      if (text.startsWith('/')) await this.handleSlash(text);
+      else await this.runTurn(text);
+      return;
+    }
+    // submit-continuation：goal 仍 active 时把 steer 留言拼进注入文本；
+    // goal 已结束（assemble 返回 null）退化为原始续接文本，对应 Stop hook 的续行兜底。
+    const raw = this.continuation ?? '';
+    this.continuation = null;
+    const text = goalActive ? assembleGoalInject(this.goal, raw, this.steers.splice(0)) : null;
+    await this.runTurn(text ?? raw, { silent: true });
   }
 
   // ---------------------------------------------------------------- 模型与会话切换
@@ -894,6 +1108,17 @@ export class PiChat {
     this.mode = data.mode ?? this.mode;
     this.planMode = data.planMode ?? false;
     this.thinkOverride = data.thinkOverride;
+    // goal 与 team 跟着目标会话恢复。active goal 会被 restore 降级为 paused：
+    // 切过来的瞬间不该自动跑起来，要用户确认后 /goal resume。
+    this.goal.restore(data.goal);
+    void this.team.restore(data.team).then(() => {
+      this.status.setState({ teamActive: this.team.active });
+      this.tui.requestRender();
+    });
+    this.steers = [];
+    this.continuation = null;
+    const resumedGoal = this.goal.get();
+    this.status.setState({ goalTurns: resumedGoal?.status === 'active' ? resumedGoal.turnsUsed : undefined });
     if (data.model !== '' && data.model !== this.currentAlias) {
       this.applyModel(data.model, { persistDefault: false });
     }
@@ -903,7 +1128,10 @@ export class PiChat {
         ...replay.items,
         {
           kind: 'note',
-          text: `已切换到会话 ${data.id}（${replay.totalTurns} 轮 / ${data.messages.length} 条消息）`,
+          text:
+            `已切换到会话 ${data.id}（${replay.totalTurns} 轮 / ${data.messages.length} 条消息）` +
+            (resumedGoal !== null ? `
+该会话有目标「${resumedGoal.objective}」，已暂停，用 /goal resume 继续` : ''),
         },
       ],
       replay.foldedTurns,
@@ -963,6 +1191,25 @@ export class PiChat {
 
   private buildHooks(): LoopHooks {
     const base: LoopHooks = {
+      /**
+       * goal 续跑的轮级驱动薄壳：裁决交给 decideGoalTurn，副作用（计轮、标 blocked）
+       * 在这一层落定。返回续接描述后由 runAgent 产 continuation 事件，回合收尾时派发下一轮。
+       */
+      shouldContinueAfterStop: () => {
+        const d = decideGoalTurn(this.goal);
+        if (d.kind === 'stop') return null;
+        if (d.kind === 'blocked') {
+          this.goal.update('blocked', d.budget === 'turns' ? '轮次预算用尽' : 'token 预算用尽');
+          this.push({
+            kind: 'note',
+            text: d.budget === 'turns' ? '目标已达轮次预算上限，停在这里等你决定' : '目标已达 token 预算上限，停在这里等你决定',
+          });
+          return null;
+        }
+        this.goal.incrementTurn();
+        this.status.setState({ goalTurns: this.goal.get()?.turnsUsed });
+        return { inject: d.inject };
+      },
       authorizeToolCall: async (req) => {
         // plan 模式守卫：写与执行一律拒（exit_plan_mode 例外，走下方确认）
         if (this.planMode) {
@@ -1056,9 +1303,16 @@ export class PiChat {
     );
   }
 
-  private async runTurn(text: string): Promise<void> {
-    this.push({ kind: 'user', text });
-    this.history.push(stored({ role: 'user', content: text }, { kind: 'user' }));
+  /**
+   * 跑一轮。
+   *
+   * silent=true 用于 goal 续接与 Stop hook 续行：这类文本是系统生成的注入，
+   * 不该在转录区显示成用户说的话（显示出来会让人以为自己发过这段），
+   * 但仍要作为 user 消息进历史，否则模型看不到续接指令。
+   */
+  private async runTurn(text: string, opts?: { silent?: boolean }): Promise<void> {
+    if (opts?.silent !== true) this.push({ kind: 'user', text });
+    this.history.push(stored({ role: 'user', content: text }, { kind: opts?.silent === true ? 'injection' : 'user' }));
 
     this.busy = true;
     this.activity.setBusy(true);
@@ -1114,6 +1368,8 @@ export class PiChat {
           runSubagent,
           todos: this.todos,
           background: this.background,
+          goal: this.goal,
+          team: this.team,
           askUser: (req) => this.askUserQuestion(req),
         },
         messages: this.history,
@@ -1149,7 +1405,7 @@ export class PiChat {
       // 队列续发：回合收尾后自动发下一条（对齐 Ink 版 drain 语义）。
       // 队列里可能混着排队的斜杠命令（busyRoute 判为 queue 的那些），
       // 统一走 drainQueue 分流，否则命令会被当成普通消息发给模型。
-      await this.drainQueue();
+      await this.finishTurn();
     }
   }
 
@@ -1226,6 +1482,8 @@ export class PiChat {
         this.status.setState({ usedTokens: this.baseTokens });
         break;
       case 'aborted':
+        // steer 残留倒进队列头部：中断后按队列机制续发，用户留言不凭空消失
+        if (this.steers.length > 0) this.queue.unshift(...this.steers.splice(0));
         this.transcript.push({
           kind: 'note',
           text: this.queue.length > 0 ? `已中断，队列中 ${this.queue.length} 条将继续发送` : '已中断',
@@ -1236,6 +1494,9 @@ export class PiChat {
         this.transcript.push({ kind: 'error', text: ev.message });
         break;
       case 'continuation':
+        // 续接文本先存下来，回合收尾时按「队列优先于续接」的顺序派发（见 drainQueue）
+        this.continuation = ev.inject;
+        break;
       case 'turn_done':
         break;
       default:

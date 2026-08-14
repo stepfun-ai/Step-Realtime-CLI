@@ -8,8 +8,9 @@
  * 只能通过起整棵 React 树才能验证；这里拆开后可以直接断言文本。
  */
 import type { BackgroundTask } from '../agent/background/manager.js';
+import type { GoalState } from '../agent/goal/mode.js';
 import { formatMemoryEntryLine, measureMemoryIndex, MEMORY_INDEX_BUDGET, scanMemory } from '../agent/memory.js';
-import { formatDuration } from '../tui/duration.js';
+import { formatCount, formatDuration } from '../tui/duration.js';
 
 /** `/tasks` 的文本清单（Ink 版是 TasksViewer 弹层，pi 版先给只读文本）。 */
 export function formatTaskList(tasks: readonly BackgroundTask[], now: number): string {
@@ -67,8 +68,6 @@ export function formatMemoryList(cwd: string, enabled: boolean, now: number): st
  * 提示要能区分「打错了」与「这版还没有」，否则用户会以为命令被删了。
  */
 export const NOT_WIRED: ReadonlySet<string> = new Set([
-  'goal',
-  'team',
   'loop',
   'history',
   'reflect',
@@ -82,4 +81,39 @@ export const NOT_WIRED: ReadonlySet<string> = new Set([
 /** 未接线命令的提示文本。 */
 export function notWiredText(name: string): string {
   return `/${name} 在 pi 版尚未接线（用不带 --pi 的 Ink 版执行）`;
+}
+
+/** `/goal` 无参时的状态面板文本（Ink 版是 GoalPanel 圆角框，pi 版给等价文本）。 */
+export function formatGoalPanel(g: GoalState, now: number): string {
+  const lines = [`目标：${g.objective}`];
+  if (g.completionCriterion !== undefined && g.completionCriterion !== '') {
+    lines.push(`完成标准：${g.completionCriterion}`);
+  }
+  const budget: string[] = [`已用 ${g.turnsUsed} 轮`];
+  if (g.turnBudget !== undefined) budget.push(`预算 ${g.turnBudget} 轮`);
+  budget.push(`${formatCount(g.tokensUsed)} tokens`);
+  if (g.tokenBudget !== undefined) budget.push(`预算 ${formatCount(g.tokenBudget)}`);
+  budget.push(formatDuration(Math.max(0, now - g.createdAt)));
+  lines.push(`状态：${g.status} · ${budget.join(' · ')}`);
+  if (g.terminalReason !== undefined && g.terminalReason !== '') lines.push(`原因：${g.terminalReason}`);
+  return lines.join('\n');
+}
+
+/** `/team status` 的任务清单文本。 */
+export function formatTeamStatus(
+  base: string,
+  dir: string,
+  missions: readonly { id: string; status: string; title: string; kind: string; scope: readonly string[]; deps: readonly string[] }[],
+): string {
+  const body =
+    missions.length === 0
+      ? '（还没有登记任务，用 team_plan 拆分）'
+      : missions
+          .map(
+            (m) =>
+              `  ${m.id} [${m.status}] ${m.title}（${m.kind}，${m.scope.length > 0 ? m.scope.join('、') : '无范围限制'}）` +
+              (m.deps.length > 0 ? ` ← 依赖 ${m.deps.join('、')}` : ''),
+          )
+          .join('\n');
+  return `团队模式：基准分支 ${base}\n档案目录：${dir}\n任务：\n${body}`;
 }
