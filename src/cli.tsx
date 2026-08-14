@@ -92,6 +92,8 @@ program
   .option('--output-format <fmt>', '非交互输出格式：text（默认）、stream-json 或 json', 'text')
   .option('--model <name>', '覆盖模型（config.model）')
   .option('--provider <name>', '覆盖服务商（stepfun|anthropic|openai|openai_responses），未同时指定 model/base_url 时按其预设补默认')
+  // pi-tui 实验仓专用：交互 TUI 走 src/tui-pi/ 的 pi-tui 前端而非 Ink。M5 拆除 Ink 后此开关一并移除。
+  .option('--pi', '实验：用 pi-tui 前端替代 Ink 渲染交互界面')
   .option('--no-skills', '禁用 skill 清单注入（调试用：排除 skill 路由对模型的干扰）')
   .option('--no-agents-md', '禁用 AGENTS.md 加载（调试用：排除项目约定对模型的干扰）')
   .parse();
@@ -108,6 +110,7 @@ const opts = program.opts<{
   outputFormat?: string;
   model?: string;
   provider?: string;
+  pi?: boolean;
   skills?: boolean;  // commander 的 --no-skills 会转成 skills: false
   agentsMd?: boolean;  // commander 的 --no-agents-md 会转成 agentsMd: false
 }>();
@@ -1124,6 +1127,34 @@ if (opts.reflect === true) {
   }
   await runPrint(prompt);
   await mcpManager.closeAll();
+} else if (opts.pi === true) {
+  // pi-tui 实验前端：与 Ink 分支并列，共用同一套装配好的依赖（provider/ctx/store/session 等）。
+  // 平行接线而非替换，是为了 M1-M4 期间随时能用同一个二进制对照两版渲染。
+  configureLogger({ mode: 'tui' });
+  const { PiChat } = await import('./tui-pi/PiChat.js');
+  const chat = new PiChat({
+    provider,
+    systemPrefix,
+    agentsMd,
+    skillsRef,
+    subagentRegistry,
+    reloadSkills,
+    ctx,
+    model: providerModel,
+    config,
+    initialMode,
+    store,
+    session,
+    maxContextSize: sessionMaxContextSize,
+    hookEngineRef,
+    subagentStore,
+    configStartupNotice: renderConfigDiagnostics(configWarnings, ignoredBadConfig),
+  });
+  const info = await chat.start();
+  await mcpManager.closeAll();
+  if (info.hasContent) {
+    process.stderr.write(`\n${resumeHintText(info.sessionId)}\n`);
+  }
 } else {
   // 交互 TUI：Ink 独占终端，日志只进文件 + 环形缓冲，绝不写 stderr/stdout。
   configureLogger({ mode: 'tui' });

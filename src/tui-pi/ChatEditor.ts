@@ -1,0 +1,39 @@
+/**
+ * ChatEditor：pi-tui Editor 的子类，把 Esc 与 Ctrl+C 的判定权交回控制器。
+ *
+ * 为什么要子类而不是全局 addInputListener（实测结论第一、三条）：
+ * 全局钩子确实先于焦点组件执行，但 Esc 的语义依赖状态（busy 中断 / 空闲取回队列 /
+ * 补全菜单关闭），写进全局钩子等于把状态机搬到输入层。Editor 内部对 escape 唯一的用途是
+ * 关闭自动补全菜单（键位 tui.select.cancel 默认绑定 escape 与 ctrl+c），所以在子类里先问
+ * 控制器、控制器不处理再交给父类，两边语义都不破坏。
+ *
+ * Ctrl+C 同理：父类对它的处理就是 `return`（交给父级），我们在这里接住。
+ */
+import { Editor, type EditorOptions, type EditorTheme, matchesKey, type TUI } from '@earendil-works/pi-tui';
+
+export class ChatEditor extends Editor {
+  /** 返回 true 表示控制器已消费这次 Esc，不再下传给编辑器。 */
+  onEscapeKey?: () => boolean;
+  /** 返回 true 表示控制器已消费这次 Ctrl+C。 */
+  onCtrlC?: () => boolean;
+  /**
+   * 自动补全菜单是否打开。Editor 的补全状态是私有字段，外部读不到；M4 接补全时由
+   * provider 侧回填这个标记，M1 阶段没有 provider，恒为 false。
+   */
+  autocompleteOpen = false;
+
+  constructor(tui: TUI, theme: EditorTheme, options?: EditorOptions) {
+    super(tui, theme, options);
+  }
+
+  override handleInput(data: string): void {
+    if (matchesKey(data, 'escape')) {
+      // 补全菜单开着时 Esc 归菜单（与 Ink 版「输入框是斜杠命令时 Esc 关菜单、不中断回合」同义）
+      if (!this.autocompleteOpen && this.onEscapeKey?.() === true) return;
+    }
+    if (matchesKey(data, 'ctrl+c')) {
+      if (this.onCtrlC?.() === true) return;
+    }
+    super.handleInput(data);
+  }
+}
