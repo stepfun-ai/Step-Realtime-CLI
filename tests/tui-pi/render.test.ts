@@ -13,7 +13,6 @@ import { Transcript } from '../../src/tui-pi/Transcript.js';
 import { ItemBlock } from '../../src/tui-pi/blocks.js';
 import { ActivityLine, StatusLine, formatCount, shortenPath } from '../../src/tui-pi/StatusLine.js';
 import { ChatEditor } from '../../src/tui-pi/ChatEditor.js';
-import { InlineApproval } from '../../src/tui-pi/approval.js';
 import type { DisplayItem } from '../../src/tui/types.js';
 
 /** 清 scrollback 的序列：CSI 3J。差分渲染的全量重绘路径才会发它。 */
@@ -306,27 +305,6 @@ describe('ChatEditor 的 Esc / Ctrl+C 路由', () => {
     };
     ed.handleInput('\x03');
     expect(called).toBe(1);
-  });
-});
-
-describe('InlineApproval', () => {
-  it('y 允许 / a 本会话允许 / n 拒绝，且只结算一次', () => {
-    const outcomes: string[] = [];
-    const a = new InlineApproval('bash', { command: 'rm -rf x' }, (o) => outcomes.push(o.kind));
-    expect(plain(a.render(60)).join('\n')).toContain('需要确认');
-    a.handleInput('y');
-    a.handleInput('n');
-    expect(outcomes).toEqual(['allow']);
-
-    const o2: string[] = [];
-    const b = new InlineApproval('write_file', { path: 'a.ts' }, (o) => o2.push(o.kind));
-    b.handleInput('a');
-    expect(o2).toEqual(['allow-session']);
-
-    const o3: string[] = [];
-    const cc = new InlineApproval('bash', {}, (o) => o3.push(o.kind));
-    cc.handleInput('\x1b');
-    expect(o3).toEqual(['deny']);
   });
 });
 

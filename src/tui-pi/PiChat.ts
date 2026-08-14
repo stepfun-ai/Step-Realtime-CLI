@@ -18,7 +18,7 @@ import type { LoopHooks } from '../agent/hooks.js';
 import { composeLoopHooks, type HookEngine } from '../agent/hooks/engine.js';
 import { runAgent } from '../agent/loop.js';
 import { stored, type StoredMessage } from '../agent/message.js';
-import { decide, type PermissionMode } from '../agent/permission/mode.js';
+import { decide, planModeDenyReason, type PermissionMode } from '../agent/permission/mode.js';
 import { createSubagentRunner } from '../agent/subagent/runner.js';
 import type { SubagentStore } from '../agent/subagent/store.js';
 import type { AgentDefinition } from '../agent/subagent/types.js';
@@ -33,7 +33,8 @@ import type { ToolContext } from '../tools/types.js';
 import type { DisplayItem } from '../tui/types.js';
 import { historyToDisplayItems } from '../tui/historyReplay.js';
 import { StreamBuffer } from '../tui/streamBuffer.js';
-import { InlineApproval, type ApprovalOutcome } from './approval.js';
+import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
+import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { ChatEditor } from './ChatEditor.js';
 import { ActivityLine, StatusLine } from './StatusLine.js';
 import { Transcript } from './Transcript.js';
@@ -87,6 +88,8 @@ export class PiChat {
   private busy = false;
   private mode: PermissionMode;
   private planMode = false;
+  /** 进 plan 模式前的权限模式，批准计划后恢复。 */
+  private prePlanMode: PermissionMode | null = null;
   private queue: string[] = [];
   private controller: AbortController | null = null;
   private streamBuffer: StreamBuffer;
@@ -96,6 +99,8 @@ export class PiChat {
   private exitPrimedTimer: ReturnType<typeof setTimeout> | undefined;
   private ticker: ReturnType<typeof setInterval> | undefined;
   private resolveExit: ((info: PiChatExit) => void) | undefined;
+  /** 弹层（审批/计划/提问）激活中：暂停 spinner，用户此时在读弹层，动画只是噪声与无谓重绘。 */
+  private promptActive = false;
 
   constructor(deps: PiChatDeps) {
     this.deps = deps;
@@ -147,7 +152,7 @@ export class PiChat {
     this.tui.start();
     // spinner 与 running 态计时：只在 busy 时真正推进（idle 时 render 返回空行，无写入）
     this.ticker = setInterval(() => {
-      if (!this.busy) return;
+      if (!this.busy || this.promptActive) return;
       this.activity.tick();
       this.tui.requestRender();
     }, 120);
@@ -299,6 +304,7 @@ export class PiChat {
             '  /help    显示本清单',
             '  /new     开新会话（清空当前上下文）',
             '  /clear   清屏（保留会话历史）',
+            '  /plan    开关计划模式（只读调查 → 提交计划 → 确认后执行）',
             '  /exit    退出',
             '',
             '快捷键：Enter 发送 · Esc 中断/取回队列 · Ctrl+C 退出 · Shift+Enter 换行',
@@ -312,6 +318,23 @@ export class PiChat {
         this.baseTokens = 0;
         this.status.setState({ usedTokens: 0 });
         this.tui.requestRender();
+        return;
+      }
+      case 'plan': {
+        if (this.planMode) {
+          this.planMode = false;
+          if (this.prePlanMode !== null) {
+            this.mode = this.prePlanMode;
+            this.prePlanMode = null;
+          }
+          this.push({ kind: 'note', text: '已退出计划模式' });
+        } else {
+          this.prePlanMode = this.mode;
+          this.planMode = true;
+          this.push({ kind: 'note', text: '已进入计划模式：只做只读调查，方案想清楚后用 exit_plan_mode 提交' });
+        }
+        this.syncStatus();
+        this.persist();
         return;
       }
       case 'clear':
@@ -329,6 +352,35 @@ export class PiChat {
   private buildHooks(): LoopHooks {
     const base: LoopHooks = {
       authorizeToolCall: async (req) => {
+        // plan 模式守卫：写与执行一律拒（exit_plan_mode 例外，走下方确认）
+        if (this.planMode) {
+          const deny = planModeDenyReason(req.name);
+          if (deny !== null) return { decision: 'deny', reason: deny };
+        }
+        // exit_plan_mode：展示计划请用户确认，批准后退出 plan 并恢复原权限模式
+        if (req.name === 'exit_plan_mode') {
+          const plan = typeof (req.input as { plan?: unknown } | null)?.plan === 'string' ? (req.input as { plan: string }).plan : '';
+          const { approved, feedback } = await this.askPlanApproval(plan);
+          if (approved) {
+            this.planMode = false;
+            if (this.prePlanMode !== null) {
+              this.mode = this.prePlanMode;
+              this.prePlanMode = null;
+            }
+            this.syncStatus();
+            this.persist();
+            this.push({ kind: 'note', text: '计划已批准，退出计划模式开始执行' });
+            return { decision: 'allow' };
+          }
+          return {
+            decision: 'deny',
+            reason:
+              feedback !== undefined
+                ? `用户拒绝了该计划，修订意见：${feedback}
+请据此修订后再次用 exit_plan_mode 提交。`
+                : '用户拒绝了该计划。请根据反馈修订计划后再次用 exit_plan_mode 提交，或向用户询问如何调整。',
+          };
+        }
         const d = decide(req.name, this.mode, this.sessionApprovals);
         if (d === 'allow') return { decision: 'allow' };
         const outcome = await this.askApproval(req.name, req.input);
@@ -350,20 +402,46 @@ export class PiChat {
     return engine === undefined ? base : composeLoopHooks(engine, base);
   }
 
-  /** 内联审批：把审批块挂进常驻 overlayHost，焦点交给它，等用户按键。 */
-  private askApproval(name: string, input: unknown): Promise<ApprovalOutcome> {
-    return new Promise<ApprovalOutcome>((resolve) => {
-      const block = new InlineApproval(name, input, (outcome) => {
+  /**
+   * 弹层挂载的统一路径：把块挂进常驻 overlayHost、焦点交给它，结算后恢复编辑器焦点。
+   * 三桥（工具审批 / 计划确认 / 向用户提问）共用，弹层互斥由「同一个 host 只放一个」保证——
+   * 这比 Ink 版靠 9 个 useInput 早退分支实现互斥要短得多。
+   */
+  private showPrompt<T>(make: (settle: (value: T) => void) => Component): Promise<T> {
+    return new Promise<T>((resolve) => {
+      const block = make((value) => {
+        this.promptActive = false;
+        this.activity.setTip('');
         this.overlayHost.clear();
         this.tui.setFocus(this.editor);
         this.tui.requestRender();
-        resolve(outcome);
+        resolve(value);
       });
+      this.promptActive = true;
+      this.activity.setTip('等待你确认');
       this.overlayHost.clear();
       this.overlayHost.addChild(block);
       this.tui.setFocus(block);
       this.tui.requestRender();
     });
+  }
+
+  private askApproval(name: string, input: unknown): Promise<ApprovalOutcome> {
+    return this.showPrompt<ApprovalOutcome>(
+      (settle) => new InlineApproval(name, input, () => this.tui.requestRender(), settle),
+    );
+  }
+
+  private askPlanApproval(plan: string): Promise<PlanOutcome> {
+    return this.showPrompt<PlanOutcome>(
+      (settle) => new PlanApproval(plan, () => this.tui.requestRender(), settle),
+    );
+  }
+
+  private askUserQuestion(req: AskUserRequest): Promise<QuestionAnswers> {
+    return this.showPrompt<QuestionAnswers>(
+      (settle) => new QuestionPrompt(req, () => this.tui.requestRender(), settle),
+    );
   }
 
   private async runTurn(text: string): Promise<void> {
@@ -424,6 +502,7 @@ export class PiChat {
           runSubagent,
           todos: this.todos,
           background: this.background,
+          askUser: (req) => this.askUserQuestion(req),
         },
         messages: this.history,
         signal: controller.signal,
