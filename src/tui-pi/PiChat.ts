@@ -26,7 +26,14 @@ import { BackgroundManager } from '../agent/background/manager.js';
 import { estimateTokens, fullCompact } from '../agent/compaction/compact.js';
 import { MEMORY_ONBOARDING_INJECTION } from '../agent/memory.js';
 import { subagentListing } from '../agent/systemPrompt.js';
-import { resolveModelEntry, saveDefaultModel, saveLanguage, saveMemoryEnabled, type StepCodeConfig } from '../config/config.js';
+import {
+  PROVIDER_PRESETS,
+  resolveModelEntry,
+  saveDefaultModel,
+  saveLanguage,
+  saveMemoryEnabled,
+  type StepCodeConfig,
+} from '../config/config.js';
 import { getLocale, setLocale } from '../i18n.js';
 import type { McpManager } from '../mcp/manager.js';
 import { formatMcpStatus } from '../mcp/status.js';
@@ -45,8 +52,10 @@ import type { DisplayItem } from '../tui/types.js';
 import { busyRoute, helpText, parseSlash } from '../tui/commands.js';
 import { historyToDisplayItems } from '../tui/historyReplay.js';
 import { formatUsageReport } from '../tui/usagePanel.js';
-import { parseThinkArgs, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../tui/thinkCommand.js';
+import { parseThinkArgs, THINK_CHOICES, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../tui/thinkCommand.js';
+import { scanFileIndex } from '../tui/fileIndex.js';
 import { formatMemoryList, formatTaskList, NOT_WIRED, notWiredText } from './commandText.js';
+import { ChatAutocompleteProvider } from './completion.js';
 import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
 import { StreamBuffer } from '../tui/streamBuffer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
@@ -96,6 +105,7 @@ export class PiChat {
   private readonly activity = new ActivityLine();
   private readonly status: StatusLine;
   private readonly editor: ChatEditor;
+  private readonly completion: ChatAutocompleteProvider;
   /** 审批等弹层的挂载点：常驻容器，内容按需增删（组件树形状不随消息变化）。 */
   private readonly overlayHost = new Container();
 
@@ -168,6 +178,15 @@ export class PiChat {
     });
 
     this.editor = new ChatEditor(this.tui, editorTheme);
+    // 补全：/命令 与 @文件。models/providers 取启动快照（运行期不变），
+    // thinkChoices 含 'off'（关闭思考也是合法档位），文件索引启动后异步回填。
+    this.completion = new ChatAutocompleteProvider({
+      models: deps.config.models ?? {},
+      thinkChoices: [...THINK_CHOICES, 'off'],
+      providers: [...Object.keys(PROVIDER_PRESETS), ...Object.keys(deps.config.providers ?? {})],
+      pluginIds: [],
+    });
+    this.editor.setAutocompleteProvider(this.completion);
     this.editor.onSubmit = (text) => {
       void this.onSubmit(text);
     };
@@ -191,6 +210,11 @@ export class PiChat {
       this.push({ kind: 'note', text: this.deps.configStartupNotice });
     }
     this.tui.start();
+    // @ 文件补全的索引：后台扫 cwd，不阻塞首帧。扫完前 @ 补全为空（优雅降级），
+    // 失败也降级为空索引，不影响命令补全。
+    void scanFileIndex(this.deps.ctx.cwd)
+      .then((files) => this.completion.setFiles(files))
+      .catch(() => this.completion.setFiles([]));
     // spinner 与 running 态计时：只在 busy 时真正推进（idle 时 render 返回空行，无写入）
     this.ticker = setInterval(() => {
       if (!this.busy || this.promptActive) return;
