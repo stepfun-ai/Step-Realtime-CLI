@@ -4,6 +4,14 @@
 </p>
 
 > [!IMPORTANT]
+> **step-code-pi 是 pi 探索专用副本（私有本地实验仓）。**
+> 本仓从 `step-code` 复制而来（2026-08-13，基线 commit `12af693`），git remote 已摘除，不对外发布。
+> 唯一目的：把 UI 层从 Ink 整体替换为 [pi-tui](https://github.com/earendil-works/pi)
+> （差分渲染、非 React），验证其能否承载全部 TUI 需求。迁移设计归档在内部设计仓。
+> 除 `src/tui-pi/`、`src/cli.tsx`、`package.json` 外的代码与主仓保持同源，
+> 改动以实验结论为限，不回流代码、只回流结论。
+
+> [!IMPORTANT]
 > **Unofficial — a community-driven exploration.** Step Code is a CLI explored independently by community contributors.
 
 # Step Code

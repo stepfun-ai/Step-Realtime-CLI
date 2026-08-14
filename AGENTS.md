@@ -1,6 +1,10 @@
 # Step Code
 
-> 终端编码 agent CLI · 由阶跃星辰 Step 系列模型驱动 · Ink TUI
+> 终端编码 agent CLI · 由阶跃星辰 Step 系列模型驱动 · **pi-tui 实验仓（TUI 层从 Ink 迁往 pi-tui）**
+>
+> **本仓定位**：`step-code-pi` 是 pi 探索专用副本（基线 `12af693`，remote 已摘），唯一任务是
+> 验证 pi-tui 能否替代 Ink。迁移设计与阶段计划归档在内部设计仓。本文件其余内容从主仓带来，
+> 描述的是 Ink 版架构；在本仓做 TUI 相关改动时以 `src/tui-pi/` 的实际代码与设计档案为准。
 >
 > **定位**：Step Code 是一个运行在终端里的 coding agent，由阶跃星辰 Step 系列模型驱动、UI 层用 Ink。为本项目做开发的 AI 代理，在动手前应先读本文件。
 
