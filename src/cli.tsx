@@ -1148,6 +1148,7 @@ if (opts.reflect === true) {
     maxContextSize: sessionMaxContextSize,
     hookEngineRef,
     subagentStore,
+    mcp: mcpManager,
     configStartupNotice: renderConfigDiagnostics(configWarnings, ignoredBadConfig),
   });
   const info = await chat.start();

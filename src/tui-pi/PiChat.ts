@@ -23,17 +23,30 @@ import { createSubagentRunner } from '../agent/subagent/runner.js';
 import type { SubagentStore } from '../agent/subagent/store.js';
 import type { AgentDefinition } from '../agent/subagent/types.js';
 import { BackgroundManager } from '../agent/background/manager.js';
+import { estimateTokens, fullCompact } from '../agent/compaction/compact.js';
+import { MEMORY_ONBOARDING_INJECTION } from '../agent/memory.js';
 import { subagentListing } from '../agent/systemPrompt.js';
-import { resolveModelEntry, saveDefaultModel, type StepCodeConfig } from '../config/config.js';
+import { resolveModelEntry, saveDefaultModel, saveLanguage, saveMemoryEnabled, type StepCodeConfig } from '../config/config.js';
+import { getLocale, setLocale } from '../i18n.js';
+import type { McpManager } from '../mcp/manager.js';
+import { formatMcpStatus } from '../mcp/status.js';
 import { createProvider } from '../provider/factory.js';
 import type { ChatProvider } from '../provider/types.js';
 import { resolveCompactionBinding } from '../provider/compaction.js';
+import { exportDebugBundle } from '../session/debugBundle.js';
 import type { SessionData, SessionStore } from '../session/store.js';
+import { aggregateModelUsage } from '../session/usageReport.js';
+import type { WireEvent } from '../agent/wirelog.js';
 import { skillListing, type SkillRegistry } from '../skill/registry.js';
+import { restoreFile } from '../tools/checkpoint.js';
+import { resolvePath } from '../tools/fsutil.js';
 import type { ToolContext } from '../tools/types.js';
 import type { DisplayItem } from '../tui/types.js';
+import { busyRoute, helpText, parseSlash } from '../tui/commands.js';
 import { historyToDisplayItems } from '../tui/historyReplay.js';
+import { formatUsageReport } from '../tui/usagePanel.js';
 import { parseThinkArgs, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../tui/thinkCommand.js';
+import { formatMemoryList, formatTaskList, NOT_WIRED, notWiredText } from './commandText.js';
 import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
 import { StreamBuffer } from '../tui/streamBuffer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
@@ -60,6 +73,8 @@ export interface PiChatDeps {
   maxContextSize: number;
   hookEngineRef: { current: HookEngine | undefined };
   subagentStore: SubagentStore;
+  /** MCP 管理器：/mcp 只读状态面板用。未注入时按无配置处理。 */
+  mcp?: McpManager;
   configStartupNotice?: string;
 }
 
@@ -70,6 +85,9 @@ export interface PiChatExit {
 }
 
 const HINTS = 'Enter 发送 · Esc 中断 · Ctrl+C 退出 · /help 命令';
+
+/** /compact 保留的最近消息条数（与 fullCompact 的 keepRecent 默认值一致，两处必须同值）。 */
+const COMPACT_KEEP_RECENT = 6;
 
 export class PiChat {
   private readonly deps: PiChatDeps;
@@ -83,7 +101,8 @@ export class PiChat {
 
   private readonly history: StoredMessage[] = [];
   private session: SessionData;
-  private readonly background = new BackgroundManager();
+  /** 运行期可变：/new 与 /fork 换绑到新会话的任务目录。 */
+  private background = new BackgroundManager();
   private readonly todos: { items: import('../tools/types.js').TodoStore['items'] } = { items: [] };
   private readonly sessionApprovals = new Set<string>();
   private readonly subagentCounter = { spawned: 0 };
@@ -231,6 +250,22 @@ export class PiChat {
     }
   }
 
+  /**
+   * 追加一条 wire 事件到当前会话的事件日志。
+   *
+   * 这条日志不是「另一份历史备份」：`/usage` 的 token 统计、`/export-debug-zip` 的
+   * 调试包、会话重放都只读它，而 `appendFull` 落的快照里没有 usage 与状态变更。
+   * 所以凡是改动会话前提的动作（权限模式、plan、思考深度、压缩应用）都要落一条，
+   * 否则那些命令拿到的是空数据（M4 之前 pi 版就是这个状态）。
+   */
+  private appendWire(event: WireEvent): void {
+    try {
+      this.deps.store.appendWire(this.session.cwd, this.session.id, [event]);
+    } catch {
+      // 持久化失败不打断会话
+    }
+  }
+
   // ---------------------------------------------------------------- 输入路由
 
   /**
@@ -315,98 +350,460 @@ export class PiChat {
     await this.runTurn(text);
   }
 
-  private async handleSlash(cmd: string): Promise<void> {
-    const name = cmd.slice(1).split(/\s+/)[0] ?? '';
+  /**
+   * 斜杠命令入口：解析 → busy 分流 → 执行。
+   *
+   * 命令名与别名表直接复用 Ink 版的 `SLASH_COMMANDS`（`src/tui/commands.ts` 是纯逻辑，
+   * 不 import react），两版共用一张表，命令集与别名不会漂移。`busyRoute` 决定回合
+   * 进行中是即时执行还是排队到回合边界，判据是该命令是否改动当前 turn 依赖的状态。
+   */
+  private async handleSlash(raw: string): Promise<void> {
+    const parsed = parseSlash(raw);
+    if (parsed === null) return; // 调用方已判过前缀，这里只是类型收窄
+    const { name, args } = parsed;
+    if (name === '') {
+      const typed = raw.trim().split(/\s+/)[0] ?? '';
+      this.push({ kind: 'note', text: `未知命令：${typed}（/help 看清单）` });
+      return;
+    }
+    if (this.busy && busyRoute(name, args) === 'queue') {
+      this.queue.push(raw.trim());
+      this.syncStatus();
+      this.push({
+        kind: 'note',
+        text: `/${name} 会改动本回合的前提，已排队（${this.queue.length} 条），回合结束后执行`,
+      });
+      return;
+    }
+    await this.runCommand(name, args);
+  }
+
+  /** 执行一条已解析的命令。busy 分流已在 handleSlash 完成，这里不再判 busy（除耗时命令自身的互斥）。 */
+  private async runCommand(name: string, args: string): Promise<void> {
     switch (name) {
       case 'exit':
-      case 'quit':
         this.exit();
         return;
+
       case 'help':
-        this.push({
-          kind: 'note',
-          text: [
-            '可用命令：',
-            '  /help    显示本清单',
-            '  /new     开新会话（清空当前上下文）',
-            '  /clear   清屏（保留会话历史）',
-            '  /plan    开关计划模式（只读调查 → 提交计划 → 确认后执行）',
-            '  /model   切换模型（无参开选择器）',
-            '  /resume  恢复历史会话（无参开选择器）',
-            '  /think   思考深度（无参开选择器）',
-            '  /exit    退出',
-            '',
-            '快捷键：Enter 发送 · Esc 中断/取回队列 · Ctrl+C 退出 · Shift+Enter 换行',
-            '（其余命令在 M4 接线）',
-          ].join('\n'),
-        });
+        this.push({ kind: 'note', text: this.helpBody() });
         return;
-      case 'new': {
-        this.history.length = 0;
-        this.transcript.reset([{ kind: 'note', text: '已开始新的上下文' }]);
-        this.baseTokens = 0;
-        this.status.setState({ usedTokens: 0 });
-        this.tui.requestRender();
-        return;
-      }
-      case 'model': {
-        const arg = cmd.slice(1).split(/\s+/).slice(1).join(' ').trim();
-        if (arg === '') await this.pickModel();
-        else this.applyModel(arg);
-        return;
-      }
-      case 'resume': {
-        const arg = cmd.slice(1).split(/\s+/).slice(1).join(' ').trim();
-        if (arg === '') await this.pickSession();
-        else this.resumeSession(arg);
-        return;
-      }
-      case 'think': {
-        const arg = cmd.slice(1).split(/\s+/).slice(1).join(' ').trim();
-        if (arg === '') {
-          await this.pickThink();
-          return;
-        }
-        const parsed = parseThinkArgs(arg);
-        if (parsed.kind === 'invalid') {
-          this.push({ kind: 'note', text: `未知的思考档位：${parsed.name}（可用 low / medium / high / off）` });
-          return;
-        }
-        if (parsed.kind === 'show') {
-          this.push({ kind: 'note', text: `当前思考深度：${this.thinkOverride ?? '跟随配置默认'}` });
-          return;
-        }
-        this.thinkOverride = parsed.override;
-        this.syncStatus();
-        this.persist();
-        this.push({ kind: 'note', text: `思考深度：${parsed.override}` });
-        return;
-      }
-      case 'plan': {
-        if (this.planMode) {
-          this.planMode = false;
-          if (this.prePlanMode !== null) {
-            this.mode = this.prePlanMode;
-            this.prePlanMode = null;
-          }
-          this.push({ kind: 'note', text: '已退出计划模式' });
-        } else {
-          this.prePlanMode = this.mode;
-          this.planMode = true;
-          this.push({ kind: 'note', text: '已进入计划模式：只做只读调查，方案想清楚后用 exit_plan_mode 提交' });
-        }
-        this.syncStatus();
-        this.persist();
-        return;
-      }
+
       case 'clear':
+        // 清屏但保留会话历史：转录区清空 + 强制整屏重绘（这是唯一主动接受全量重绘的地方）
         this.transcript.reset([]);
         this.tui.invalidate();
         this.tui.renderNow(true);
         return;
+
+      case 'new':
+        this.newSession();
+        return;
+
+      case 'fork':
+        this.forkSession();
+        return;
+
+      case 'model':
+        if (args === '') await this.pickModel();
+        else this.applyModel(args);
+        return;
+
+      case 'resume':
+        if (args === '') await this.pickSession();
+        else this.resumeSession(args);
+        return;
+
+      case 'think':
+        await this.runThink(args);
+        return;
+
+      case 'plan':
+        this.togglePlanMode();
+        return;
+
+      case 'permission':
+        if (args === 'manual' || args === 'auto' || args === 'yolo') this.changeMode(args);
+        else this.push({ kind: 'note', text: `当前权限模式：${this.mode}（可用 manual / auto / yolo）` });
+        return;
+
+      case 'yolo':
+        this.changeMode('yolo');
+        return;
+
+      case 'auto':
+        this.changeMode('auto');
+        return;
+
+      case 'lang':
+        this.setLang(args.toLowerCase());
+        return;
+
+      case 'mcp':
+        this.push({
+          kind: 'note',
+          text:
+            this.deps.mcp !== undefined
+              ? formatMcpStatus(this.deps.mcp)
+              : '没有配置 MCP 服务器（~/.step-code/mcp.json）',
+        });
+        return;
+
+      case 'usage':
+        this.showUsage(args === '--all');
+        return;
+
+      case 'tasks':
+        this.push({ kind: 'note', text: formatTaskList(this.background.list(), Date.now()) });
+        return;
+
+      case 'memory':
+        this.runMemory(args.toLowerCase());
+        return;
+
+      case 'restore':
+        this.runRestore(args);
+        return;
+
+      case 'compact':
+        await this.runCompact();
+        return;
+
+      case 'export-debug-zip':
+        await this.runExportDebugZip();
+        return;
+
       default:
-        this.push({ kind: 'note', text: `暂未接线的命令：${cmd}（M4 接线全量命令集）` });
+        this.push({
+          kind: 'note',
+          text: NOT_WIRED.has(name) ? notWiredText(name) : `/${name} 尚未实现`,
+        });
     }
+  }
+
+  /** /help 正文：共用注册表生成命令清单，末尾补 pi 版特有的键位与未接线说明。 */
+  private helpBody(): string {
+    const notWired = [...NOT_WIRED].map((n) => '/' + n).join(' ');
+    return [
+      helpText(),
+      '',
+      '快捷键：Enter 发送 · Shift+Enter 换行 · Esc 中断/取回队列 · Ctrl+C 退出',
+      `pi 版尚未接线：${notWired}`,
+    ].join('\n');
+  }
+
+  // ---------------------------------------------------------------- 状态类命令
+
+  /** 权限模式切换：内存态 + 状态栏 + 落盘，并落一条 wire 事件（重放时要能还原当时的模式）。 */
+  private changeMode(mode: PermissionMode): void {
+    this.mode = mode;
+    // plan 模式下改权限模式：plan 的只读约束优先，这里只改底模式，退出 plan 后生效
+    this.syncStatus();
+    this.persist();
+    this.appendWire({ type: 'permission.set_mode', ts: new Date().toISOString(), mode });
+    this.push({ kind: 'note', text: `权限模式：${mode}` });
+  }
+
+  private togglePlanMode(): void {
+    if (this.planMode) {
+      this.planMode = false;
+      if (this.prePlanMode !== null) {
+        this.mode = this.prePlanMode;
+        this.prePlanMode = null;
+      }
+      this.push({ kind: 'note', text: '已退出计划模式' });
+    } else {
+      this.prePlanMode = this.mode;
+      this.planMode = true;
+      this.push({ kind: 'note', text: '已进入计划模式：只做只读调查，方案想清楚后用 exit_plan_mode 提交' });
+    }
+    this.syncStatus();
+    this.persist();
+    this.appendWire({ type: 'plan_mode.set', ts: new Date().toISOString(), enabled: this.planMode });
+  }
+
+  private async runThink(args: string): Promise<void> {
+    if (args === '') {
+      await this.pickThink();
+      return;
+    }
+    const parsed = parseThinkArgs(args);
+    if (parsed.kind === 'invalid') {
+      this.push({ kind: 'note', text: `未知的思考档位：${parsed.name}（可用 low / medium / high / off）` });
+      return;
+    }
+    if (parsed.kind === 'show') {
+      this.push({ kind: 'note', text: `当前思考深度：${this.thinkOverride ?? '跟随配置默认'}` });
+      return;
+    }
+    this.applyThink(parsed.override);
+  }
+
+  /** 语言切换：进程内 locale + 配置落盘。pi 版无整树重渲，改完主动重绘一次即可。 */
+  private setLang(arg: string): void {
+    if (arg === '') {
+      this.push({ kind: 'note', text: `当前语言：${getLocale()}（可用 zh / en）` });
+      return;
+    }
+    if (arg !== 'zh' && arg !== 'en') {
+      this.push({ kind: 'note', text: '用法：/lang zh 或 /lang en' });
+      return;
+    }
+    setLocale(arg);
+    try {
+      saveLanguage(arg);
+    } catch {
+      // 持久化失败只影响下次启动的默认语言，本次切换仍生效
+    }
+    // 状态栏与提示条的文案在下一帧重取
+    this.syncStatus();
+    this.tui.requestRender();
+    this.push({ kind: 'note', text: `语言已切换：${arg}` });
+  }
+
+  /**
+   * token 用量统计。数据源是已落盘的 model.usage wire 事件，不碰会话状态。
+   * --all 的范围只到当前 cwd：跨目录会把别的项目的会话读进来。
+   */
+  private showUsage(wantAll: boolean): void {
+    try {
+      if (wantAll) {
+        // 用 listWireSessionIds 而非 list：后者按 .json 快照列举，会漏掉有事件日志但没走到 save 的会话
+        const ids = this.deps.store.listWireSessionIds(this.deps.ctx.cwd);
+        const events = ids.flatMap((id) => this.deps.store.loadWire(this.deps.ctx.cwd, id));
+        this.push({
+          kind: 'note',
+          text: formatUsageReport(aggregateModelUsage(events), `本目录全部会话（${ids.length} 个）`),
+        });
+      } else {
+        const events = this.deps.store.loadWire(this.session.cwd, this.session.id);
+        this.push({ kind: 'note', text: formatUsageReport(aggregateModelUsage(events), `会话 ${this.session.id}`) });
+      }
+    } catch (e) {
+      this.push({ kind: 'error', text: `读取用量失败：${(e as Error).message}` });
+    }
+  }
+
+  private runMemory(arg: string): void {
+    const enabled = this.deps.config.memory?.enabled === true;
+    if (arg === 'on' || arg === 'off') {
+      const next = arg === 'on';
+      if (enabled === next) {
+        this.push({ kind: 'note', text: next ? '记忆功能已经是开启状态' : '记忆功能已经是关闭状态' });
+        return;
+      }
+      this.deps.config.memory = { enabled: next };
+      try {
+        saveMemoryEnabled(next);
+      } catch {
+        // 持久化失败只影响下次启动，本次切换已在内存生效
+      }
+      if (next) {
+        // 中途开启的回看引导：注入消息流，agent 下一轮补沉淀本次会话的遗留观察
+        this.history.push(stored({ role: 'user', content: MEMORY_ONBOARDING_INJECTION }, { kind: 'injection' }));
+      }
+      this.persist();
+      this.push({ kind: 'note', text: next ? '记忆功能已开启' : '记忆功能已关闭' });
+      return;
+    }
+    if (arg !== '') {
+      this.push({ kind: 'note', text: '用法：/memory（列清单） · /memory on · /memory off' });
+      return;
+    }
+    this.push({ kind: 'note', text: formatMemoryList(this.deps.ctx.cwd, enabled, Date.now()) });
+  }
+
+  /**
+   * 文件级 checkpoint 回滚：edit_file/write_file 写前已备份原内容，这里按 cwd 找最近备份写回。
+   * 与对话级回退是两件事（这个只动文件，不动对话历史）。
+   */
+  private runRestore(arg: string): void {
+    if (arg === '') {
+      this.push({ kind: 'note', text: '用法：/restore <文件路径>（回滚到本次会话修改前的内容）' });
+      return;
+    }
+    const abs = resolvePath(this.deps.ctx.cwd, arg);
+    const res = restoreFile(this.deps.ctx.cwd, abs);
+    if (res.ok) this.push({ kind: 'note', text: `已回滚：${arg}` });
+    else this.push({ kind: 'error', text: `回滚失败：${res.reason}` });
+  }
+
+  // ---------------------------------------------------------------- 会话生命周期命令
+
+  /**
+   * 开新会话：清历史与派生状态，换绑后台任务目录。
+   *
+   * 「换绑」不是可选的收尾：BackgroundManager 的落盘目录按会话 id 定，不换绑就把新
+   * 会话的任务写进旧会话目录。旧管理器在途任务属于旧会话，不迁移。
+   */
+  private newSession(): void {
+    this.persist();
+    this.history.length = 0;
+    this.todos.items = [];
+    this.subagentCounter.spawned = 0;
+    this.sessionApprovals.clear();
+    // 新会话 model 存别名（同 persist 口径），避免真实 id 被启动时的别名反查误判
+    this.session = this.deps.store.create(this.deps.ctx.cwd, this.currentAlias ?? this.model);
+    this.rebindBackground();
+    this.planMode = false;
+    this.prePlanMode = null;
+    this.thinkOverride = undefined;
+    // context 用量归零：history 已清空，但基准仍是上一会话的值，不重置会继续显示旧占用
+    this.baseTokens = 0;
+    this.status.setState({ usedTokens: 0 });
+    this.transcript.reset([{ kind: 'note', text: `已开始新会话 ${this.session.id}` }]);
+    this.syncStatus();
+    this.tui.requestRender();
+  }
+
+  /** 从当前最新点整会话复制：新 id + forkedFrom 记谱系，源会话不动。 */
+  private forkSession(): void {
+    this.persist();
+    const src = this.session;
+    const forked = this.deps.store.create(this.deps.ctx.cwd, this.currentAlias ?? this.model);
+    forked.forkedFrom = src.id;
+    // 断开引用：新会话的消息用独立拷贝，否则两个会话共享同一数组，后续追加会串台
+    const copied = this.history.map((m) => ({ ...m }));
+    this.history.length = 0;
+    this.history.push(...copied);
+    forked.messages = this.history;
+    forked.todos = [...this.todos.items];
+    // fork 保留 thinkOverride 与 plan（是同一现场的延续），但不继承审批白名单（新会话重新问）
+    this.sessionApprovals.clear();
+    this.session = forked;
+    this.rebindBackground();
+    this.persist();
+    this.push({
+      kind: 'note',
+      text: `已分叉：${src.id} → ${forked.id}（${this.history.length} 条消息）`,
+    });
+    this.syncStatus();
+  }
+
+  /** 后台任务管理器换绑当前会话（任务落盘目录随会话 id 走）。 */
+  private rebindBackground(): void {
+    this.background = new BackgroundManager(10, {
+      taskTimeoutS: this.deps.config.background?.bashTaskTimeoutS ?? 600,
+      tasksDir: this.deps.store.tasksDirFor(this.session.cwd, this.session.id),
+      onSettleEvent: (task) => this.appendWire({ type: 'background.task_settle', ts: new Date().toISOString(), task }),
+    });
+  }
+
+  // ---------------------------------------------------------------- 耗时命令
+
+  /**
+   * 上下文压缩。要等一次完整摘要请求（长历史可达数十秒），因此挂上 controller 让 Esc
+   * 能中断——复用回合中断的同一通道，Esc 的三态优先级自动适用。
+   */
+  private async runCompact(): Promise<void> {
+    if (this.busy) return;
+    // 短历史直接挡在门外：fullCompact 对 length - keepRecent <= 1 的输入原样返回同引用，
+    // 与「摘要请求失败」走同一出口。Ink 版据此打「多次尝试均未产出可用摘要」，
+    // 但这种情况下一次请求都没发过——文案指向了不存在的失败。这里先判长度，给准确原因。
+    if (this.history.length - COMPACT_KEEP_RECENT <= 1) {
+      this.push({
+        kind: 'note',
+        text: `历史只有 ${this.history.length} 条消息，最近 ${COMPACT_KEEP_RECENT} 条要原样保留，没有可压缩的部分`,
+      });
+      return;
+    }
+    const before = estimateTokens(this.history);
+    this.busy = true;
+    const controller = new AbortController();
+    this.controller = controller;
+    this.activity.setBusy(true);
+    this.activity.setTip('压缩上下文');
+    this.syncStatus();
+    this.push({ kind: 'note', text: '正在压缩上下文…' });
+    try {
+      const compaction = resolveCompactionBinding(this.deps.config);
+      const compacted = await fullCompact(
+        compaction.provider ?? this.provider,
+        this.history,
+        COMPACT_KEEP_RECENT,
+        this.todos.items,
+        compaction.model,
+        {
+          maxTokens: this.deps.config.compaction.userMessageMaxTokens,
+          headTokens: this.deps.config.compaction.userMessageHeadTokens,
+        },
+        controller.signal,
+      );
+      if (controller.signal.aborted) {
+        this.push({ kind: 'note', text: '压缩已中断，历史未改动' });
+      } else if (compacted !== this.history) {
+        this.history.length = 0;
+        this.history.push(...compacted);
+        this.appendWire({ type: 'context.apply_compaction', ts: new Date().toISOString(), messages: [...compacted] });
+        const after = estimateTokens(this.history);
+        // 状态栏 context 用量立即回落：after 是压缩后全量估算，基准必须一起更新，
+        // 否则后续重算会用回压缩前的真实 usage，看起来像没压。
+        this.baseTokens = after;
+        this.status.setState({ usedTokens: after });
+        this.persist();
+        // after >= before 的情况真实存在：摘要本身要占 token，短对话下它可能比被替换的
+        // 原文更长。Ink 版无条件打「已压缩：X → Y」，用户看到 Y 比 X 大只会以为程序算错了。
+        // 这里分开说，并给出真正能腾空间的动作。
+        if (after < before) {
+          this.push({ kind: 'note', text: `已压缩：${before} → ${after} tokens（省 ${before - after}）` });
+        } else {
+          this.push({
+            kind: 'note',
+            text: `已压缩，但摘要比原历史更长（${before} → ${after} tokens）。短对话压缩通常没收益，要彻底腾出窗口用 /new`,
+          });
+        }
+      } else {
+        // 同引用返回 = 未压缩（摘要请求失败或质量闸门拦截）。不能打「已压缩：X → X」，
+        // 相同数字会被读成压缩成功。
+        this.push({ kind: 'note', text: '这次没有压缩（摘要请求失败或未通过质量闸门），历史未改动' });
+      }
+    } catch (e) {
+      // 中断走 note 而非 error：用户主动取消不是故障
+      if (controller.signal.aborted) this.push({ kind: 'note', text: '压缩已中断，历史未改动' });
+      else this.push({ kind: 'error', text: `压缩失败：${(e as Error).message}` });
+    } finally {
+      this.busy = false;
+      this.activity.setBusy(false);
+      this.activity.setTip('');
+      if (this.controller === controller) this.controller = null;
+      this.syncStatus();
+      this.tui.requestRender();
+      await this.drainQueue();
+    }
+  }
+
+  private async runExportDebugZip(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    this.syncStatus();
+    this.push({ kind: 'note', text: '正在打包调试信息…' });
+    try {
+      const { zipPath, files } = await exportDebugBundle({
+        store: this.deps.store,
+        cwd: this.session.cwd,
+        sessionId: this.session.id,
+        model: this.model,
+      });
+      this.push({
+        kind: 'note',
+        text: `已导出：${zipPath}\n含：${files.join('、')}\n发出前请自查内容（已做基础脱敏，但仍可能含路径与代码片段）`,
+      });
+    } catch (e) {
+      this.push({ kind: 'error', text: `导出失败：${(e as Error).message}` });
+    } finally {
+      this.busy = false;
+      this.syncStatus();
+      this.tui.requestRender();
+    }
+  }
+
+  /** 排空发送队列：斜杠命令按命令执行，其余作为消息发送。 */
+  private async drainQueue(): Promise<void> {
+    const next = this.queue.shift();
+    if (next === undefined) return;
+    this.syncStatus();
+    if (next.startsWith('/')) await this.handleSlash(next);
+    else await this.runTurn(next);
   }
 
   // ---------------------------------------------------------------- 模型与会话切换
@@ -523,12 +920,18 @@ export class PiChat {
       hint: '↑↓ 选择 · Enter 确认 · Esc 取消',
     });
     if (picked === null) return;
-    this.thinkOverride = picked === '__default__' ? undefined : picked;
+    this.applyThink(picked === '__default__' ? undefined : picked);
+  }
+
+  /** 应用会话级思考深度覆盖。undefined = 回落配置默认。 */
+  private applyThink(override: ThinkOverride | undefined): void {
+    this.thinkOverride = override;
     this.syncStatus();
     this.persist();
+    this.appendWire({ type: 'think.set', ts: new Date().toISOString(), override });
     this.push({
       kind: 'note',
-      text: this.thinkOverride === undefined ? '思考深度改为跟随配置默认' : `思考深度：${this.thinkOverride}`,
+      text: override === undefined ? '思考深度改为跟随配置默认' : `思考深度：${override}`,
     });
   }
 
@@ -703,6 +1106,7 @@ export class PiChat {
         compactionProvider: compaction.provider,
         todos: this.todos.items,
         injectBackgroundNotifications: true,
+        onWireEvent: (event) => this.appendWire(event),
       })) {
         this.streamBuffer.ingest(ev);
       }
@@ -718,12 +1122,10 @@ export class PiChat {
       this.syncStatus();
       this.persist();
       this.tui.requestRender();
-      // 队列续发：回合收尾后自动发下一条（对齐 Ink 版 drain 语义）
-      const next = this.queue.shift();
-      if (next !== undefined) {
-        this.syncStatus();
-        await this.runTurn(next);
-      }
+      // 队列续发：回合收尾后自动发下一条（对齐 Ink 版 drain 语义）。
+      // 队列里可能混着排队的斜杠命令（busyRoute 判为 queue 的那些），
+      // 统一走 drainQueue 分流，否则命令会被当成普通消息发给模型。
+      await this.drainQueue();
     }
   }
 
