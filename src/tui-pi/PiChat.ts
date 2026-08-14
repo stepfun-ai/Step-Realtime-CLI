@@ -24,7 +24,8 @@ import type { SubagentStore } from '../agent/subagent/store.js';
 import type { AgentDefinition } from '../agent/subagent/types.js';
 import { BackgroundManager } from '../agent/background/manager.js';
 import { subagentListing } from '../agent/systemPrompt.js';
-import type { StepCodeConfig } from '../config/config.js';
+import { resolveModelEntry, saveDefaultModel, type StepCodeConfig } from '../config/config.js';
+import { createProvider } from '../provider/factory.js';
 import type { ChatProvider } from '../provider/types.js';
 import { resolveCompactionBinding } from '../provider/compaction.js';
 import type { SessionData, SessionStore } from '../session/store.js';
@@ -32,6 +33,8 @@ import { skillListing, type SkillRegistry } from '../skill/registry.js';
 import type { ToolContext } from '../tools/types.js';
 import type { DisplayItem } from '../tui/types.js';
 import { historyToDisplayItems } from '../tui/historyReplay.js';
+import { parseThinkArgs, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../tui/thinkCommand.js';
+import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
 import { StreamBuffer } from '../tui/streamBuffer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
@@ -79,13 +82,22 @@ export class PiChat {
   private readonly overlayHost = new Container();
 
   private readonly history: StoredMessage[] = [];
-  private readonly session: SessionData;
+  private session: SessionData;
   private readonly background = new BackgroundManager();
   private readonly todos: { items: import('../tools/types.js').TodoStore['items'] } = { items: [] };
   private readonly sessionApprovals = new Set<string>();
   private readonly subagentCounter = { spawned: 0 };
 
   private busy = false;
+  /** 运行期可变（/model 切换会重建）：provider 与它绑定的模型 id、别名、上下文窗口。 */
+  private provider: ChatProvider;
+  private model: string;
+  private modelLabel: string;
+  private currentAlias: string | undefined;
+  private maxContextSize: number;
+  private thinkOverride: ThinkOverride | undefined;
+  /** 配置里当前的默认模型指针（写回时用来跳过无变化的写入）。 */
+  private defaultModelPointer: string | undefined;
   private mode: PermissionMode;
   private planMode = false;
   /** 进 plan 模式前的权限模式，批准计划后恢复。 */
@@ -105,6 +117,15 @@ export class PiChat {
   constructor(deps: PiChatDeps) {
     this.deps = deps;
     this.session = deps.session;
+    this.provider = deps.provider;
+    this.model = deps.model;
+    this.maxContextSize = deps.maxContextSize;
+    // 恢复会话时 session.model 存的是「别名 ?? 裸 id」，命中别名则按它重建（与 Ink 版 persist 口径一致）
+    const sessionAlias = deps.config.models?.[deps.session.model] !== undefined ? deps.session.model : undefined;
+    this.currentAlias = sessionAlias;
+    this.modelLabel = (sessionAlias !== undefined ? deps.config.models?.[sessionAlias]?.displayName : undefined) ?? deps.model;
+    this.thinkOverride = deps.session.thinkOverride;
+    this.defaultModelPointer = deps.config.modelAlias ?? deps.config.model;
     this.mode = deps.initialMode;
     this.planMode = deps.session.planMode ?? false;
     this.history = [...deps.session.messages];
@@ -116,7 +137,8 @@ export class PiChat {
     this.status = new StatusLine({
       mode: this.mode,
       planMode: this.planMode,
-      model: deps.model,
+      model: this.modelLabel,
+      thinking: this.thinkOverride,
       busy: false,
       cwd: deps.ctx.cwd,
       usedTokens: 0,
@@ -183,6 +205,9 @@ export class PiChat {
   private syncStatus(): void {
     this.status.setState({
       mode: this.mode,
+      model: this.modelLabel,
+      thinking: this.thinkOverride,
+      maxContextSize: this.maxContextSize,
       planMode: this.planMode,
       busy: this.busy,
       queueLen: this.queue.length,
@@ -195,7 +220,8 @@ export class PiChat {
     this.session.messages = this.history;
     this.session.todos = [...this.todos.items];
     this.session.mode = this.mode;
-    this.session.model = this.deps.model;
+    this.session.model = this.currentAlias ?? this.model;
+    this.session.thinkOverride = this.thinkOverride;
     this.session.planMode = this.planMode;
     try {
       this.deps.store.appendFull(this.session.cwd, this.session.id, this.history);
@@ -300,15 +326,18 @@ export class PiChat {
         this.push({
           kind: 'note',
           text: [
-            'M1 可用命令：',
+            '可用命令：',
             '  /help    显示本清单',
             '  /new     开新会话（清空当前上下文）',
             '  /clear   清屏（保留会话历史）',
             '  /plan    开关计划模式（只读调查 → 提交计划 → 确认后执行）',
+            '  /model   切换模型（无参开选择器）',
+            '  /resume  恢复历史会话（无参开选择器）',
+            '  /think   思考深度（无参开选择器）',
             '  /exit    退出',
             '',
             '快捷键：Enter 发送 · Esc 中断/取回队列 · Ctrl+C 退出 · Shift+Enter 换行',
-            '（完整命令集在 M4 接线）',
+            '（其余命令在 M4 接线）',
           ].join('\n'),
         });
         return;
@@ -318,6 +347,39 @@ export class PiChat {
         this.baseTokens = 0;
         this.status.setState({ usedTokens: 0 });
         this.tui.requestRender();
+        return;
+      }
+      case 'model': {
+        const arg = cmd.slice(1).split(/\s+/).slice(1).join(' ').trim();
+        if (arg === '') await this.pickModel();
+        else this.applyModel(arg);
+        return;
+      }
+      case 'resume': {
+        const arg = cmd.slice(1).split(/\s+/).slice(1).join(' ').trim();
+        if (arg === '') await this.pickSession();
+        else this.resumeSession(arg);
+        return;
+      }
+      case 'think': {
+        const arg = cmd.slice(1).split(/\s+/).slice(1).join(' ').trim();
+        if (arg === '') {
+          await this.pickThink();
+          return;
+        }
+        const parsed = parseThinkArgs(arg);
+        if (parsed.kind === 'invalid') {
+          this.push({ kind: 'note', text: `未知的思考档位：${parsed.name}（可用 low / medium / high / off）` });
+          return;
+        }
+        if (parsed.kind === 'show') {
+          this.push({ kind: 'note', text: `当前思考深度：${this.thinkOverride ?? '跟随配置默认'}` });
+          return;
+        }
+        this.thinkOverride = parsed.override;
+        this.syncStatus();
+        this.persist();
+        this.push({ kind: 'note', text: `思考深度：${parsed.override}` });
         return;
       }
       case 'plan': {
@@ -343,8 +405,131 @@ export class PiChat {
         this.tui.renderNow(true);
         return;
       default:
-        this.push({ kind: 'note', text: `M1 暂未接线的命令：${cmd}（完整命令集在 M4）` });
+        this.push({ kind: 'note', text: `暂未接线的命令：${cmd}（M4 接线全量命令集）` });
     }
+  }
+
+  // ---------------------------------------------------------------- 模型与会话切换
+
+  /**
+   * 按别名或裸 id 切换模型。别名命中则按合并配置重建 provider（别名承载渠道、窗口、
+   * 显示名、能力标记整组绑定）；未命中按裸 id 处理，只改模型参数不动 provider。
+   * persistDefault=false 用于 /resume：恢复旧会话是回到那个现场，不该悄悄改全局默认。
+   */
+  private applyModel(arg: string, opts?: { persistDefault?: boolean }): void {
+    const persistPointer = (): void => {
+      if (opts?.persistDefault === false) return;
+      try {
+        saveDefaultModel(arg, this.defaultModelPointer);
+        this.defaultModelPointer = arg;
+      } catch (e) {
+        this.push({ kind: 'note', text: `默认模型写回配置失败：${(e as Error).message}（本次切换已生效）` });
+      }
+    };
+    const resolved = resolveModelEntry(this.deps.config, arg);
+    if (resolved === null) {
+      this.currentAlias = undefined;
+      this.deps.ctx.capabilities = undefined;
+      this.deps.ctx.imageMaxEdgePx = undefined;
+      this.deps.ctx.imageBudgetBytes = undefined;
+      this.model = arg;
+      this.modelLabel = arg;
+      this.syncStatus();
+      this.persist();
+      persistPointer();
+      this.push({ kind: 'note', text: `已切换模型：${arg}` });
+      return;
+    }
+    try {
+      this.provider = createProvider(resolved);
+    } catch (e) {
+      this.push({ kind: 'error', text: `切换模型失败：${(e as Error).message}` });
+      return;
+    }
+    this.currentAlias = arg;
+    this.deps.ctx.capabilities = resolved.capabilities;
+    this.deps.ctx.imageMaxEdgePx = resolved.imageMaxEdgePx;
+    this.deps.ctx.imageBudgetBytes = resolved.imageBudgetBytes;
+    this.model = resolved.model;
+    this.modelLabel = this.deps.config.models?.[arg]?.displayName ?? resolved.model;
+    this.maxContextSize = resolved.maxContextSize;
+    this.syncStatus();
+    this.persist();
+    persistPointer();
+    this.push({ kind: 'note', text: `已切换到 ${arg}（${resolved.model}）` });
+  }
+
+  /** 恢复指定会话：重建历史与转录区，模型跟随该会话当初的选择。 */
+  private resumeSession(id: string): void {
+    const data = this.deps.store.load(this.deps.ctx.cwd, id);
+    if (data === null) {
+      this.push({ kind: 'note', text: `没找到会话 ${id}` });
+      return;
+    }
+    this.persist();
+    this.session = data;
+    this.history.length = 0;
+    this.history.push(...data.messages);
+    this.mode = data.mode ?? this.mode;
+    this.planMode = data.planMode ?? false;
+    this.thinkOverride = data.thinkOverride;
+    if (data.model !== '' && data.model !== this.currentAlias) {
+      this.applyModel(data.model, { persistDefault: false });
+    }
+    const replay = historyToDisplayItems(data.messages);
+    this.transcript.reset(
+      [
+        ...replay.items,
+        {
+          kind: 'note',
+          text: `已切换到会话 ${data.id}（${replay.totalTurns} 轮 / ${data.messages.length} 条消息）`,
+        },
+      ],
+      replay.foldedTurns,
+    );
+    this.syncStatus();
+    this.tui.invalidate();
+    this.tui.renderNow(true);
+  }
+
+  private async pickModel(): Promise<void> {
+    const items = modelItems(this.deps.config, this.currentAlias);
+    if (items.length === 0) {
+      this.push({ kind: 'note', text: '配置里没有 [models.*] 别名，先用 /model <模型 id> 直切' });
+      return;
+    }
+    const picked = await showPicker(this.tui, { title: '选择模型', items });
+    if (picked !== null) this.applyModel(picked);
+  }
+
+  private async pickSession(): Promise<void> {
+    const metas = this.deps.store.list(this.deps.ctx.cwd).filter((m) => m.parentId === undefined);
+    if (metas.length === 0) {
+      this.push({ kind: 'note', text: '本目录还没有历史会话' });
+      return;
+    }
+    const picked = await showPicker(this.tui, {
+      title: '恢复会话',
+      items: sessionItems(metas),
+      hint: '↑↓ 选择 · Enter 恢复 · 输入过滤 · Esc 取消',
+    });
+    if (picked !== null) this.resumeSession(picked);
+  }
+
+  private async pickThink(): Promise<void> {
+    const picked = await showPicker(this.tui, {
+      title: '思考深度',
+      items: thinkItems(this.thinkOverride),
+      hint: '↑↓ 选择 · Enter 确认 · Esc 取消',
+    });
+    if (picked === null) return;
+    this.thinkOverride = picked === '__default__' ? undefined : picked;
+    this.syncStatus();
+    this.persist();
+    this.push({
+      kind: 'note',
+      text: this.thinkOverride === undefined ? '思考深度改为跟随配置默认' : `思考深度：${this.thinkOverride}`,
+    });
   }
 
   // ---------------------------------------------------------------- 回合执行
@@ -458,7 +643,7 @@ export class PiChat {
     const hooks = this.buildHooks();
     const compaction = resolveCompactionBinding(this.deps.config);
     const runSubagent = createSubagentRunner({
-      provider: this.deps.provider,
+      provider: this.provider,
       cwd: this.deps.ctx.cwd,
       apiKey: this.deps.ctx.apiKey,
       baseUrl: this.deps.ctx.baseUrl,
@@ -468,7 +653,7 @@ export class PiChat {
       maxDepth: this.deps.config.subagent.maxDepth,
       maxStepsDefault: this.deps.config.subagent.maxSteps,
       compaction: {
-        maxContextSize: this.deps.maxContextSize,
+        maxContextSize: this.maxContextSize,
         triggerRatio: this.deps.config.compaction.triggerRatio,
         reservedTokens: this.deps.config.compaction.reservedTokens,
       },
@@ -492,7 +677,7 @@ export class PiChat {
 
     try {
       for await (const ev of runAgent({
-        provider: this.deps.provider,
+        provider: this.provider,
         system,
         ctx: {
           ...this.deps.ctx,
@@ -507,9 +692,10 @@ export class PiChat {
         messages: this.history,
         signal: controller.signal,
         hooks,
-        model: this.deps.model,
+        model: this.model,
+        thinking: thinkStreamParam(this.thinkOverride, thinkLevelsOf(this.deps.config.thinking)),
         compaction: {
-          maxContextSize: this.deps.maxContextSize,
+          maxContextSize: this.maxContextSize,
           triggerRatio: this.deps.config.compaction.triggerRatio,
           reservedTokens: this.deps.config.compaction.reservedTokens,
         },
