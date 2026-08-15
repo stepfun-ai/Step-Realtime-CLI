@@ -6,6 +6,7 @@
  * 直接对差分渲染的输出做断言。这比读 xterm 屏幕缓冲更贴近要验证的东西——我们关心的是
  * 「有没有发清屏序列」，而不是「屏幕最终长什么样」。
  */
+import chalk from 'chalk';
 import { describe, expect, it } from 'vitest';
 import { TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
@@ -222,6 +223,92 @@ describe('StatusLine', () => {
     expect(line1).toContain('busy');
     expect(line1).toContain('bg:2');
     expect(line1).toContain('queue:3');
+  });
+
+  it('bg 徽章带最近任务命令名，超 20 列截断', () => {
+    const base = {
+      mode: 'manual' as const,
+      planMode: false,
+      model: 'm',
+      busy: false,
+      cwd: '/x',
+      usedTokens: 0,
+      maxContextSize: 1000,
+      hints: '',
+      queueLen: 0,
+    };
+    const s = new StatusLine({ ...base, backgroundCount: 1, latestBgTask: 'npm run build' });
+    expect(plain(s.render(80))[0]!).toContain('bg:1 npm run build');
+    const long = new StatusLine({
+      ...base,
+      backgroundCount: 1,
+      latestBgTask: 'node scripts/very-long-command-name.mjs --flag',
+    });
+    const line = plain(long.render(120))[0]!;
+    expect(line).toContain('bg:1 node scripts/very');
+    expect(line).not.toContain('--flag');
+  });
+
+  it('goal 徽章：圆点按状态着色，显示用时与轮次/预算', () => {
+    const base = {
+      mode: 'manual' as const,
+      planMode: false,
+      model: 'm',
+      busy: false,
+      cwd: '/x',
+      usedTokens: 0,
+      maxContextSize: 1000,
+      hints: '',
+      backgroundCount: 0,
+      queueLen: 0,
+    };
+    // 无预算：只显示已用轮次
+    const active = new StatusLine({ ...base, goal: { status: 'active', turnsUsed: 3, elapsedMs: 65_000 } });
+    expect(plain(active.render(80))[0]!).toContain('goal ● 1m05s · 3');
+    // 有预算：轮次显示为 已用/预算
+    const budgeted = new StatusLine({
+      ...base,
+      goal: { status: 'active', turnsUsed: 3, turnBudget: 10, elapsedMs: 5_000 },
+    });
+    expect(plain(budgeted.render(80))[0]!).toContain('goal ● 5s · 3/10');
+    // paused / blocked 同样显示（用户不该因为暂停就看不到目标还在）
+    const paused = new StatusLine({ ...base, goal: { status: 'paused', turnsUsed: 1, elapsedMs: 1_000 } });
+    expect(plain(paused.render(80))[0]!).toContain('goal ●');
+    // 无 goal 时不占位
+    const none = new StatusLine(base);
+    expect(plain(none.render(80))[0]!).not.toContain('goal');
+  });
+
+  it('goal 圆点着色区分三态（绿 active / 黄 blocked / 灰 paused）', () => {
+    const prev = chalk.level;
+    chalk.level = 3;
+    try {
+      const base = {
+        mode: 'manual' as const,
+        planMode: false,
+        model: 'm',
+        busy: false,
+        cwd: '/x',
+        usedTokens: 0,
+        maxContextSize: 1000,
+        hints: '',
+        backgroundCount: 0,
+        queueLen: 0,
+      };
+      const colorOf = (status: 'active' | 'paused' | 'blocked'): string => {
+        const line = new StatusLine({ ...base, goal: { status, turnsUsed: 0, elapsedMs: 0 } }).render(80)[0]!;
+        const m = /\x1b\[(\d+)m●/.exec(line);
+        return m?.[1] ?? '';
+      };
+      const active = colorOf('active');
+      const blocked = colorOf('blocked');
+      const paused = colorOf('paused');
+      expect(new Set([active, blocked, paused]).size).toBe(3);
+      expect(active).toBe('32'); // green
+      expect(blocked).toBe('33'); // yellow
+    } finally {
+      chalk.level = prev;
+    }
   });
 
   it('窄终端下路径先被牺牲，context 不被截断', () => {

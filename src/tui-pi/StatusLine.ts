@@ -12,6 +12,7 @@ import { homedir } from 'node:os';
 import type { Component } from '@earendil-works/pi-tui';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { PermissionMode } from '../agent/permission/mode.js';
+import type { GoalStatus } from '../agent/goal/mode.js';
 import { c } from './theme.js';
 import { pickRandomTip, pickWorkingVerb } from '../chat/workingTips.js';
 import { t } from '../i18n.js';
@@ -31,6 +32,11 @@ export function shortenPath(p: string, max = 48): string {
   if (parts.length > 3) display = `…/${parts.slice(-3).join('/')}`;
   if (display.length > max) display = `…${display.slice(display.length - max + 1)}`;
   return display;
+}
+
+/** goal 状态圆点着色（与 Ink 版 goalStatusColor 同口径）。 */
+function goalDot(status: GoalStatus): string {
+  return status === 'active' ? c.ok('●') : status === 'blocked' ? c.warn('●') : c.dim('●');
 }
 
 /** 紧凑计数：4 位以上转 k（与 Ink 版 duration.formatCount 同口径）。 */
@@ -59,9 +65,14 @@ export interface StatusState {
   maxContextSize: number;
   hints: string;
   backgroundCount: number;
+  /** 最近一个 running 后台任务的命令名（在 bg:N 后灰色显示，截断到 20 列）。 */
+  latestBgTask?: string;
   queueLen: number;
-  /** goal 徽标：active 的自主目标显示「goal:已用轮次」，无 goal 时 undefined。 */
-  goalTurns?: number;
+  /**
+   * goal 徽标数据：任何非终态 goal 都显示（不只 active）——用户看不到徽标就不知道
+   * 目标还在，blocked 与 paused 同样需要被看见。elapsedMs 由调用方按当前时刻算好。
+   */
+  goal?: { status: GoalStatus; turnsUsed: number; turnBudget?: number; elapsedMs: number };
   /** team 团队模式是否激活（激活时显示 team 徽标）。 */
   teamActive?: boolean;
 }
@@ -92,11 +103,19 @@ export class StatusLine implements Component {
     badges.push(c.toolName(s.model));
     if (s.thinking !== undefined) badges.push(c.dim(`think:${s.thinking}`));
     badges.push(s.busy ? c.warn('busy') : c.dim('ready'));
-    if (s.backgroundCount > 0) badges.push(c.toolName(`bg:${s.backgroundCount}`));
+    if (s.backgroundCount > 0) {
+      const name = s.latestBgTask !== undefined && s.latestBgTask !== '' ? ` ${truncateToWidth(s.latestBgTask, 20)}` : '';
+      badges.push(c.toolName(`bg:${s.backgroundCount}`) + c.dim(name));
+    }
     if (s.queueLen > 0) badges.push(c.accent(`queue:${s.queueLen}`));
     // goal 与 team 是「当前处于某种自主/协作状态」的提示，必须常驻可见：
-    // 用户看不到 goal 徽标就不知道下一轮会自动续跑
-    if (s.goalTurns !== undefined) badges.push(c.accent(`goal:${s.goalTurns}`));
+    // 用户看不到 goal 徽标就不知道下一轮会自动续跑。
+    // 形态与 Ink 版一致：goal ● 用时 · 轮次[/预算]，● 按状态着色（绿 active / 黄 blocked / 灰 paused）。
+    if (s.goal !== undefined) {
+      const g = s.goal;
+      const turns = g.turnBudget !== undefined ? `${g.turnsUsed}/${g.turnBudget}` : `${g.turnsUsed}`;
+      badges.push(`${c.dim('goal ')}${goalDot(g.status)}${c.dim(` ${formatElapsed(g.elapsedMs)} · ${turns}`)}`);
+    }
     if (s.teamActive === true) badges.push(c.accent('team'));
     const left = badges.join(c.dim('  '));
     // 路径是唯一可被压缩的部分：先算徽章占宽，剩下的给路径

@@ -344,8 +344,9 @@ export class PiChat {
     const resumed = this.goal.get();
     if (resumed !== null && (resumed.status === 'active' || resumed.status === 'paused')) {
       this.push({ kind: 'note', text: `本会话有目标「${resumed.objective}」，已暂停，用 /goal resume 继续` });
-      this.status.setState({ goalTurns: undefined });
     }
+    // 恢复的 goal（含 paused）也要挂徽标：只发一条 note 的话，用户滚上去就再看不到目标还在
+    this.syncGoalBadge();
     if (this.deps.configStartupNotice !== undefined) {
       this.push({ kind: 'note', text: this.deps.configStartupNotice });
     }
@@ -359,6 +360,8 @@ export class PiChat {
     this.ticker = setInterval(() => {
       if (!this.busy || this.promptActive) return;
       this.activity.tick();
+      // goal 徽标的用时要跟着走秒（只在有 goal 时同步，避免每 120ms 白替换一次状态）
+      if (this.goal.get() !== null) this.syncGoalBadge();
       this.tui.requestRender();
     }, 120);
     this.tui.requestRender();
@@ -386,6 +389,7 @@ export class PiChat {
   }
 
   private syncStatus(): void {
+    const running = this.background.list().filter((t) => t.status === 'running');
     this.status.setState({
       mode: this.mode,
       model: this.modelLabel,
@@ -394,7 +398,30 @@ export class PiChat {
       planMode: this.planMode,
       busy: this.busy,
       queueLen: this.queue.length,
-      backgroundCount: this.background.list().filter((t) => t.status === 'running').length,
+      backgroundCount: running.length,
+      // 最近一个 running 任务的命令名：只有 bg:N 数字时用户不知道是哪个任务在占用
+      latestBgTask: running.length > 0 ? running[running.length - 1]!.command : undefined,
+    });
+    this.syncGoalBadge();
+  }
+
+  /**
+   * goal 徽标同步：任何非终态 goal 都显示（含 paused / blocked）。
+   * Ink 版只在 active 时挂数字，那样 paused 的目标彻底消失在界面上，用户以为它没了；
+   * 这里改为按状态着色的圆点常驻，状态本身由颜色表达。
+   */
+  private syncGoalBadge(): void {
+    const g = this.goal.get();
+    this.status.setState({
+      goal:
+        g === null
+          ? undefined
+          : {
+              status: g.status,
+              turnsUsed: g.turnsUsed,
+              turnBudget: g.turnBudget,
+              elapsedMs: Math.max(0, Date.now() - g.createdAt),
+            },
     });
   }
 
@@ -762,7 +789,7 @@ export class PiChat {
   private onGoalChange(ev: GoalChangeEvent): void {
     const g = ev.goal;
     if (ev.type === 'completed') {
-      this.status.setState({ goalTurns: undefined });
+      this.status.setState({ goal: undefined });
       this.push({
         kind: 'note',
         text:
@@ -773,8 +800,7 @@ export class PiChat {
       this.persist();
       return;
     }
-    // 徽标只在 active 时显示：paused/blocked 的目标不会自动续跑，挂个数字会误导
-    this.status.setState({ goalTurns: g.status === 'active' ? g.turnsUsed : undefined });
+    this.syncGoalBadge();
     if (ev.type === 'created') {
       this.push({ kind: 'note', text: `已设定目标：${g.objective}` });
     } else {
@@ -1422,7 +1448,7 @@ export class PiChat {
     this.team.deactivate();
     this.steers = [];
     this.continuation = null;
-    this.status.setState({ goalTurns: undefined, teamActive: false });
+    this.status.setState({ goal: undefined, teamActive: false });
     // context 用量归零：history 已清空，但基准仍是上一会话的值，不重置会继续显示旧占用
     this.baseTokens = 0;
     this.status.setState({ usedTokens: 0 });
@@ -1448,7 +1474,7 @@ export class PiChat {
     this.sessionApprovals.clear();
     this.goal.restore(null);
     this.team.deactivate();
-    this.status.setState({ goalTurns: undefined, teamActive: false });
+    this.status.setState({ goal: undefined, teamActive: false });
     this.session = forked;
     this.rebindBackground();
     this.persist();
@@ -1682,7 +1708,7 @@ export class PiChat {
     this.steers = [];
     this.continuation = null;
     const resumedGoal = this.goal.get();
-    this.status.setState({ goalTurns: resumedGoal?.status === 'active' ? resumedGoal.turnsUsed : undefined });
+    this.syncGoalBadge();
     if (data.model !== '' && data.model !== this.currentAlias) {
       this.applyModel(data.model, { persistDefault: false });
     }
@@ -1783,7 +1809,7 @@ export class PiChat {
           return null;
         }
         this.goal.incrementTurn();
-        this.status.setState({ goalTurns: this.goal.get()?.turnsUsed });
+        this.syncGoalBadge();
         return { inject: d.inject };
       },
       authorizeToolCall: async (req) => {
