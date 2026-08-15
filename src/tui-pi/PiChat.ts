@@ -11,7 +11,7 @@
  * Esc / Ctrl+C 语义、发送队列、/help /exit /new /clear 四个命令。
  * 审批的完整形态（计划确认、ask_user 多选）在 M2，选择器在 M3，命令全量在 M4。
  */
-import { Container, ProcessTerminal, TuiMainScreen } from '@earendil-works/pi-tui';
+import { Container, ProcessTerminal, TuiMainScreen, matchesKey } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import type { AgentEvent } from '../agent/events.js';
 import type { LoopHooks } from '../agent/hooks.js';
@@ -63,7 +63,7 @@ import { busyRoute, helpText, parseSlash } from '../chat/commands.js';
 import { resolveProviderTarget } from '../chat/providerSwitch.js';
 import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from '../chat/reload.js';
 import { extractUserText } from '../chat/backtrack.js';
-import { computeUndo } from '../chat/undo.js';
+import { clearUndoSnapshots, computeUndo, popUndoSnapshots, pushUndoSnapshot, type UndoSnapshot } from '../chat/undo.js';
 import { historyToDisplayItems } from '../chat/historyReplay.js';
 import { planTurnEnd } from '../chat/turnEnd.js';
 import { formatDuration } from '../chat/duration.js';
@@ -156,6 +156,13 @@ export class PiChat {
   /** 有 overlay 需要按秒重渲（任务弹层的用时）时置真，由 ticker 读。 */
   private overlayNeedsTick = false;
   private overlayTickCount = 0;
+  /**
+   * per-turn 附带状态快照栈（todos / plan 模式 / prePlanMode）。
+   * 这些状态是「整体替换、无历史」的，回退 history 之后无法从现状反推第 N 轮之前的值，
+   * 必须在每轮首次改动 history 前压栈。没有它的话 /history 回退只回消息、
+   * 待办与 plan 模式停在回退后的现状，界面与历史不自洽。
+   */
+  private readonly undoStack: UndoSnapshot[] = [];
 
   private readonly history: StoredMessage[] = [];
   private session: SessionData;
@@ -1167,6 +1174,9 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const arg = args.trim();
     let n: number;
     if (arg === '') {
+      // Tab = 只把那条输入取回输入框，不动历史（Ink 版同语义）：
+      // 「我想改一版重发」与「我要撤销这段对话」是两件事，只给 Enter 会逼用户先撤销
+      let recallOnly: string | null = null;
       const picked = await showPicker(this.tui, {
         title: '回退到哪一条输入之前',
         items: turns.map((t) => ({
@@ -1174,8 +1184,20 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
           label: t.label === '' ? '（空输入）' : t.label,
           description: t.turns === 1 ? '撤销最近 1 轮' : `撤销最近 ${t.turns} 轮`,
         })),
-        hint: '↑↓ 选择 · Enter 回退 · 输入过滤 · Esc 取消',
+        hint: '↑↓ 选择 · Enter 回退 · Tab 仅取回文本 · Esc 取消',
+        onKey: (data, selected) => {
+          if (!matchesKey(data, 'tab') || selected === null) return false;
+          const turn = turns.find((t) => String(t.turns) === selected.value);
+          recallOnly = turn?.label ?? '';
+          return true;
+        },
       });
+      if (recallOnly !== null) {
+        this.editor.setText(recallOnly);
+        this.push({ kind: 'note', text: '已把那条输入取回输入框（历史未改动）' });
+        this.tui.requestRender();
+        return;
+      }
       if (picked === null) return;
       n = Number(picked);
     } else {
@@ -1196,6 +1218,20 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const removed = this.history.length - result.history.length;
     this.history.length = 0;
     this.history.push(...result.history);
+    // 附带状态回滚：todos 与 plan 模式无法从 history 反推，弹快照栈恢复。
+    // 栈里没有对应快照（会话恢复后、压缩后）时保持现状——回退消息仍然成立，
+    // 只是待办与 plan 停在当前值，note 里说明这一点，不静默。
+    const snap = popUndoSnapshots(this.undoStack, result.removedTurns);
+    let sideEffects = '';
+    if (snap !== undefined) {
+      this.todos.items = [...snap.todos];
+      this.planMode = snap.planMode;
+      this.prePlanMode = snap.prePlanMode;
+      this.chrome.setTodos(this.todos.items);
+      sideEffects = '，待办与 plan 模式已同步回滚';
+    } else if (this.todos.items.length > 0 || this.planMode) {
+      sideEffects = '（没有那几轮的状态快照，待办与 plan 模式保持现状）';
+    }
     // token 回落：截断点之后没有真实 usage 可覆盖，基准归零后按截断结果重估，
     // 下一条真实 usage 再校正（与 /resume 同口径）
     this.baseTokens = 0;
@@ -1207,7 +1243,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         ...replay.items,
         {
           kind: 'note',
-          text: `已撤销最近 ${result.removedTurns} 轮，丢弃 ${removed} 条消息（文件改动不受影响，回滚文件用 /restore）`,
+          text: `已撤销最近 ${result.removedTurns} 轮，丢弃 ${removed} 条消息${sideEffects}（文件改动不受影响，回滚文件用 /restore）`,
         },
       ],
       replay.foldedTurns,
@@ -1521,6 +1557,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   private newSession(): void {
     this.persist();
     this.history.length = 0;
+    // 快照栈跨会话无意义（historyLen 对不上新会话），换会话即清
+    clearUndoSnapshots(this.undoStack);
     this.todos.items = [];
     this.subagentCounter.spawned = 0;
     this.sessionApprovals.clear();
@@ -1551,6 +1589,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const src = this.session;
     const forked = this.deps.store.create(this.deps.ctx.cwd, this.currentAlias ?? this.model);
     forked.forkedFrom = src.id;
+    // 快照栈不随 fork 走：副本是新会话，回退到分叉点之前没有意义
+    clearUndoSnapshots(this.undoStack);
     // 断开引用：新会话的消息用独立拷贝，否则两个会话共享同一数组，后续追加会串台
     const copied = this.history.map((m) => ({ ...m }));
     this.history.length = 0;
@@ -1627,6 +1667,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       } else if (compacted !== this.history) {
         this.history.length = 0;
         this.history.push(...compacted);
+        // 压缩重写了历史，旧快照的 historyLen 全部失效
+        clearUndoSnapshots(this.undoStack);
         this.appendWire({ type: 'context.apply_compaction', ts: new Date().toISOString(), messages: [...compacted] });
         const after = estimateTokens(this.history);
         // 状态栏 context 用量立即回落：after 是压缩后全量估算，基准必须一起更新，
@@ -1786,6 +1828,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.session = data;
     this.history.length = 0;
     this.history.push(...data.messages);
+    // 快照栈属于上一个会话的运行现场，切会话即清（否则回退会按错的 historyLen 截断）
+    clearUndoSnapshots(this.undoStack);
     this.mode = data.mode ?? this.mode;
     this.planMode = data.planMode ?? false;
     this.thinkOverride = data.thinkOverride;
@@ -2004,6 +2048,16 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    * 但仍要作为 user 消息进历史，否则模型看不到续接指令。
    */
   private async runTurn(text: string, opts?: { silent?: boolean }): Promise<void> {
+    // 附带状态快照：在首次改动 history 之前压栈。silent 注入（goal 续接、cron、技能正文）
+    // 不是用户的一轮输入，不压栈——否则 /history 的「撤销 N 轮」与快照栈深度错位。
+    if (opts?.silent !== true) {
+      pushUndoSnapshot(this.undoStack, {
+        historyLen: this.history.length,
+        todos: [...this.todos.items],
+        planMode: this.planMode,
+        prePlanMode: this.prePlanMode,
+      });
+    }
     // 图片占位符 → image content block。没有图片时 content 就是原文本（走旧路径），
     // 转录区显示的是折叠掉占位符的正文，不把 base64 摊到屏幕上。
     const extracted = extractImageContent(text, this.images);
