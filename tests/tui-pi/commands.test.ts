@@ -106,11 +106,15 @@ describe('formatTaskList', () => {
 
 describe('NOT_WIRED', () => {
   it('未接线提示指明去 Ink 版执行，且与「未知命令」文案可区分', () => {
-    expect(notWiredText('goal')).toContain('/goal');
-    expect(notWiredText('goal')).toContain('尚未接线');
+    expect(notWiredText('somecmd')).toContain('/somecmd');
+    expect(notWiredText('somecmd')).toContain('尚未接线');
   });
 
-  it('已在 M4 实现的命令不在未接线清单里', () => {
+  it('M4c 之后注册表里的命令全部接线，未接线清单为空', () => {
+    expect([...NOT_WIRED]).toEqual([]);
+  });
+
+  it('已实现的命令不在未接线清单里', () => {
     for (const done of [
       'help',
       'model',
@@ -131,6 +135,16 @@ describe('NOT_WIRED', () => {
       'plan',
       'exit',
       'export-debug-zip',
+      'goal',
+      'team',
+      'loop',
+      'skill',
+      'agents',
+      'reflect',
+      'plugin',
+      'provider',
+      'reload',
+      'history',
     ]) {
       expect(NOT_WIRED.has(done), done).toBe(false);
     }

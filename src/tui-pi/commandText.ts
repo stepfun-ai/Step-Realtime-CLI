@@ -9,6 +9,8 @@
  */
 import type { BackgroundTask } from '../agent/background/manager.js';
 import type { GoalState } from '../agent/goal/mode.js';
+import type { StoredMessage } from '../agent/message.js';
+import { extractUserText } from '../tui/backtrack.js';
 import { formatMemoryEntryLine, measureMemoryIndex, MEMORY_INDEX_BUDGET, scanMemory } from '../agent/memory.js';
 import { formatCount, formatDuration } from '../tui/duration.js';
 
@@ -62,21 +64,16 @@ export function formatMemoryList(cwd: string, enabled: boolean, now: number): st
 }
 
 /**
- * pi 版尚未接线的命令（M4 范围之外）。
+ * pi 版尚未接线的命令。
  *
- * 显式列出来而不是让它们落到「未知命令」：命令是存在的，只是这个前端还没接，
- * 提示要能区分「打错了」与「这版还没有」，否则用户会以为命令被删了。
+ * M4c 之后全部 29 条注册命令都已接线，这个集合空着，但机制留下：新增命令时
+ * 先登记进来，用户会看到「pi 版尚未接线」而不是「未知命令」——命令存在与命令
+ * 打错是两件事，提示混在一起会让人以为功能被删了。
+ *
+ * 仍有一处功能缺口不走这里：`/provider add` 的渠道向导（多步表单）没做，
+ * 由 runProvider 单独提示改配置文件的替代路径。
  */
-export const NOT_WIRED: ReadonlySet<string> = new Set([
-  'loop',
-  'history',
-  'reflect',
-  'agents',
-  'skill',
-  'provider',
-  'reload',
-  'plugin',
-]);
+export const NOT_WIRED: ReadonlySet<string> = new Set([]);
 
 /** 未接线命令的提示文本。 */
 export function notWiredText(name: string): string {
@@ -116,4 +113,38 @@ export function formatTeamStatus(
           )
           .join('\n');
   return `团队模式：基准分支 ${base}\n档案目录：${dir}\n任务：\n${body}`;
+}
+
+/** `/loop` 的定时任务清单文本。 */
+export function formatCronJobs(
+  jobs: readonly { id: string; cron: string; prompt: string; recurring: boolean; nextFireAt: Date }[],
+): string {
+  if (jobs.length === 0) return '当前没有定时任务（说清要定时做什么，我会用 cron_create 创建）';
+  const lines = jobs.map((j) => {
+    const kind = j.recurring ? '周期' : '一次性';
+    const prompt = j.prompt.length > 50 ? j.prompt.slice(0, 47) + '...' : j.prompt;
+    return `  ${j.id} · ${j.cron} · ${kind} · 下次 ${j.nextFireAt.toLocaleString()}\n    ${prompt}`;
+  });
+  return `定时任务（${jobs.length}）：\n${lines.join('\n')}`;
+}
+
+/**
+ * `/history` 的可回退轮次清单（最近的排最前）。
+ *
+ * 与 Ink 版 `collectHistoryItems` 同判据，但那个函数住在 HistoryPanel.tsx 里，
+ * 从 .tsx 取它会把 React 一起拖进 pi 侧的模块图，所以这里按同规则重写一份：
+ * 只有 origin.kind === 'user' 的消息算可撤销的轮（hook 注入、cron 触发、
+ * 续接注入这些不是用户发的，不占轮次）。
+ */
+export function collectUndoTurns(history: readonly StoredMessage[]): { turns: number; label: string }[] {
+  const out: { turns: number; label: string }[] = [];
+  let count = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]!;
+    if (m.origin.kind !== 'user') continue;
+    count += 1;
+    const summary = extractUserText(m).replace(/\s+/g, ' ').trim();
+    out.push({ turns: count, label: summary.length > 46 ? summary.slice(0, 43) + '...' : summary });
+  }
+  return out;
 }

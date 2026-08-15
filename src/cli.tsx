@@ -1149,6 +1149,9 @@ if (opts.reflect === true) {
     hookEngineRef,
     subagentStore,
     mcp: mcpManager,
+    reloadConfig,
+    pluginCommands: plugins.flatMap((p) => p.commands),
+    pluginIds: plugins.map((p) => p.id),
     configStartupNotice: renderConfigDiagnostics(configWarnings, ignoredBadConfig),
   });
   const info = await chat.start();

@@ -23,6 +23,8 @@ import { createSubagentRunner } from '../agent/subagent/runner.js';
 import type { SubagentStore } from '../agent/subagent/store.js';
 import type { AgentDefinition } from '../agent/subagent/types.js';
 import { BackgroundManager } from '../agent/background/manager.js';
+import { CronScheduler } from '../agent/cron/scheduler.js';
+import { CronJobStore } from '../agent/cron/store.js';
 import { assembleGoalInject, decideGoalTurn } from '../agent/goal/drive.js';
 import { GoalMode, type GoalChangeEvent } from '../agent/goal/mode.js';
 import { initTeam } from '../agent/team/mode.js';
@@ -34,6 +36,7 @@ import {
   PROVIDER_PRESETS,
   resolveModelEntry,
   saveDefaultModel,
+  saveDefaultProvider,
   saveLanguage,
   saveMemoryEnabled,
   type StepCodeConfig,
@@ -48,19 +51,35 @@ import { exportDebugBundle } from '../session/debugBundle.js';
 import type { SessionData, SessionStore } from '../session/store.js';
 import { aggregateModelUsage } from '../session/usageReport.js';
 import type { WireEvent } from '../agent/wirelog.js';
-import { skillListing, type SkillRegistry } from '../skill/registry.js';
+import { renderSkillActivation, skillListing, type SkillRegistry } from '../skill/registry.js';
+import { REFLECT_EMPTY_HISTORY, REFLECT_NO_FINDINGS, runReflect } from '../agent/reflect.js';
+import { expandPluginCommand, type PluginCommand } from '../plugin/manager.js';
+import { runPluginCommand } from '../tui/pluginCommand.js';
 import { restoreFile } from '../tools/checkpoint.js';
 import { resolvePath } from '../tools/fsutil.js';
 import type { ToolContext } from '../tools/types.js';
 import type { DisplayItem } from '../tui/types.js';
 import { busyRoute, helpText, parseSlash } from '../tui/commands.js';
+import { resolveProviderTarget } from '../tui/providerSwitch.js';
+import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from '../tui/reload.js';
+import { extractUserText } from '../tui/backtrack.js';
+import { computeUndo } from '../tui/undo.js';
 import { historyToDisplayItems } from '../tui/historyReplay.js';
 import { planTurnEnd } from '../tui/turnEnd.js';
 import { formatDuration } from '../tui/duration.js';
 import { formatUsageReport } from '../tui/usagePanel.js';
 import { parseThinkArgs, THINK_CHOICES, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../tui/thinkCommand.js';
 import { scanFileIndex } from '../tui/fileIndex.js';
-import { formatGoalPanel, formatMemoryList, formatTaskList, formatTeamStatus, NOT_WIRED, notWiredText } from './commandText.js';
+import {
+  collectUndoTurns,
+  formatCronJobs,
+  formatGoalPanel,
+  formatMemoryList,
+  formatTaskList,
+  formatTeamStatus,
+  NOT_WIRED,
+  notWiredText,
+} from './commandText.js';
 import { ChatAutocompleteProvider } from './completion.js';
 import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
 import { StreamBuffer } from '../tui/streamBuffer.js';
@@ -90,6 +109,15 @@ export interface PiChatDeps {
   subagentStore: SubagentStore;
   /** MCP 管理器：/mcp 只读状态面板用。未注入时按无配置处理。 */
   mcp?: McpManager;
+  /**
+   * 重载配置（/reload）。组合根注入：重跑 loadConfig 并换掉模块级 config/ctx/hookEngine 引用，
+   * 失败时保证一步不落（旧配置整体保留），这里只负责把结果反馈到界面。
+   */
+  reloadConfig?: () => { config: StepCodeConfig } | { error: string };
+  /** plugin 贡献的命令模板（name 已带 <pluginId>: 前缀）。 */
+  pluginCommands?: PluginCommand[];
+  /** 已发现的 plugin id 列表（供 /plugin 参数补全）。 */
+  pluginIds?: readonly string[];
   configStartupNotice?: string;
 }
 
@@ -123,6 +151,16 @@ export class PiChat {
   private readonly sessionApprovals = new Set<string>();
   /** 自主目标（会话级）：跨轮持有，active 时回合收尾自动续跑。 */
   private readonly goal = new GoalMode();
+  /**
+   * 定时任务（cwd 级，不属于单个会话）。
+   *
+   * 调度器是纯内存引擎，持久化叠在这一层：create/delete 走 onJobChange 落盘，
+   * 触发后 recurring 补写新游标、一次性任务直接清盘。
+   */
+  private readonly cronStore: CronJobStore;
+  private readonly cron: CronScheduler;
+  /** plugin 命令表：`<pluginId>:<name>` → 模板。这些名字不在 SLASH_COMMANDS 里，要单独喂给 parseSlash。 */
+  private readonly pluginCommandMap: Map<string, PluginCommand>;
   /** 团队模式（会话级）：档案目录快照随会话落盘。 */
   private readonly team = new TeamMode();
   /**
@@ -212,6 +250,33 @@ export class PiChat {
     };
     this.editor.onEscapeKey = () => this.onEscape();
     this.editor.onCtrlC = () => this.onCtrlC();
+
+    // cron 装配：到点把 prompt 静默注入跑一轮；isIdle 闸门保证回合进行中不触发
+    // （错过的会在下个空闲 tick 合并补投，coalesced 计数进卡片）。
+    this.pluginCommandMap = new Map((deps.pluginCommands ?? []).map((c) => [c.name, c]));
+    this.cronStore = new CronJobStore(deps.store, () => {
+      // 落盘失败只能忽略：TUI 模式下 console.warn 会写进终端，把渲染帧搅乱
+    });
+    this.cron = new CronScheduler(
+      (job, coalesced) => {
+        this.push({
+          kind: 'cron',
+          data: { id: job.id, cron: job.cron, prompt: job.prompt, recurring: job.recurring, coalesced },
+        });
+        void this.runTurn(job.prompt, { silent: true });
+        // 触发时 nextFireAt 已在 tick 内同步推进，这里补写的是新游标
+        if (job.recurring) queueMicrotask(() => void this.cronStore.save(this.deps.ctx.cwd, job));
+        else void this.cronStore.remove(this.deps.ctx.cwd, job.id);
+      },
+      () => !this.busy && !this.promptActive,
+    );
+    this.cron.onJobChange = (kind, job) => {
+      if (kind === 'create') void this.cronStore.save(this.deps.ctx.cwd, job);
+      else void this.cronStore.remove(this.deps.ctx.cwd, job.id);
+    };
+    // 恢复本 cwd 的任务表；stale 任务由 restore 剔除，这里补清盘
+    const staleIds = this.cron.restore(this.cronStore.load(deps.ctx.cwd));
+    for (const id of staleIds) void this.cronStore.remove(deps.ctx.cwd, id);
 
     // goal 快照恢复：active 会被降级为 paused（防重启后无人看着就自动续跑）
     this.goal.restore(deps.session.goal);
@@ -389,6 +454,7 @@ export class PiChat {
   private exit(): void {
     if (this.exitPrimedTimer !== undefined) clearTimeout(this.exitPrimedTimer);
     if (this.ticker !== undefined) clearInterval(this.ticker);
+    this.cron.stop();
     this.persist();
     this.tui.stop();
     this.resolveExit?.({ sessionId: this.session.id, hasContent: this.history.length > 0 });
@@ -432,7 +498,9 @@ export class PiChat {
    * 进行中是即时执行还是排队到回合边界，判据是该命令是否改动当前 turn 依赖的状态。
    */
   private async handleSlash(raw: string): Promise<void> {
-    const parsed = parseSlash(raw);
+    // plugin 命令名（<pluginId>:<cmd>）不在 SLASH_COMMANDS 里，要作为额外名字集喂进去，
+    // 否则会被判成未知命令
+    const parsed = parseSlash(raw, new Set(this.pluginCommandMap.keys()));
     if (parsed === null) return; // 调用方已判过前缀，这里只是类型收窄
     const { name, args } = parsed;
     if (name === '') {
@@ -551,27 +619,69 @@ export class PiChat {
         this.runGoal(args);
         return;
 
+      case 'loop':
+        this.push({ kind: 'note', text: formatCronJobs(this.cron.list()) });
+        return;
+
+      case 'skill':
+        await this.runSkill(args);
+        return;
+
+      case 'agents':
+        await this.pickSubagent();
+        return;
+
+      case 'reflect':
+        await this.runReflectCommand();
+        return;
+
+      case 'plugin':
+        // 管理命令的子命令分发在 pluginCommand.ts，这里只展示它返回的文本
+        this.push({ kind: 'note', text: runPluginCommand(args) });
+        return;
+
+      case 'provider':
+        this.runProvider(args);
+        return;
+
+      case 'reload':
+        this.runReload();
+        return;
+
+      case 'history':
+        await this.runHistory(args);
+        return;
+
       case 'team':
         await this.runTeam(args);
         return;
 
-      default:
+      default: {
+        // plugin 命令：模板里的 $ARGUMENTS 展开后当作用户消息静默提交（同 /skill 激活路径）
+        const cmd = this.pluginCommandMap.get(name);
+        if (cmd !== undefined) {
+          this.push({ kind: 'note', text: `已调用 plugin 命令 ${cmd.name}` });
+          await this.runTurn(expandPluginCommand(cmd.content, args), { silent: true });
+          return;
+        }
         this.push({
           kind: 'note',
           text: NOT_WIRED.has(name) ? notWiredText(name) : `/${name} 尚未实现`,
         });
+      }
     }
   }
 
   /** /help 正文：共用注册表生成命令清单，末尾补 pi 版特有的键位与未接线说明。 */
   private helpBody(): string {
-    const notWired = [...NOT_WIRED].map((n) => '/' + n).join(' ');
-    return [
+    const lines = [
       helpText(),
       '',
-      '快捷键：Enter 发送 · Shift+Enter 换行 · Esc 中断/取回队列 · Ctrl+C 退出',
-      `pi 版尚未接线：${notWired}`,
-    ].join('\n');
+      '快捷键：Enter 发送 · Shift+Enter 换行 · Esc 中断/取回队列 · Ctrl+C 退出 · Tab 补全',
+    ];
+    // 空集合时不打这一行：全部接线后还挂个空提示，看起来像功能残缺
+    if (NOT_WIRED.size > 0) lines.push(`pi 版尚未接线：${[...NOT_WIRED].map((n) => '/' + n).join(' ')}`);
+    return lines.join('\n');
   }
 
   // ---------------------------------------------------------------- goal 与 team
@@ -694,6 +804,392 @@ export class PiChat {
       this.push({ kind: 'note', text: '用法：/team init [--dir 路径] [--repo 路径] [--base 分支] · /team status · /team exit · /team teardown [force]' });
     } catch (e) {
       this.push({ kind: 'error', text: (e as Error).message });
+    }
+  }
+
+  // ---------------------------------------------------------------- 渠道 / 配置重载 / 对话回退
+
+  /**
+   * /provider：无参或 list 列渠道，带 id 切换。
+   *
+   * 不做 Ink 版的渠道向导（`/provider add` 是多步表单，属独立交互块）；
+   * 无参也不开管理面板，直接给只读清单，比弹一个只能看的面板更直接。
+   */
+  private runProvider(args: string): void {
+    const arg = args.trim();
+    if (arg === 'add' || arg.startsWith('add ')) {
+      this.push({
+        kind: 'note',
+        text: '渠道向导（/provider add）在 pi 版尚未接线。手动改 ~/.step-code/config.toml 的 [providers] 段后用 /reload 生效',
+      });
+      return;
+    }
+    if (arg === '' || arg === 'list') {
+      const providers = this.deps.config.providers ?? {};
+      const models = this.deps.config.models ?? {};
+      const lines = [`当前服务商：${this.deps.config.provider} · 内置预设：${Object.keys(PROVIDER_PRESETS).join(' / ')}`];
+      const ids = Object.keys(providers);
+      if (ids.length === 0) lines.push('没有自定义渠道（[providers] 段为空）');
+      for (const id of ids) {
+        const channel = providers[id]!;
+        const aliases = Object.entries(models)
+          .filter(([, entry]) => entry.provider === id)
+          .map(([alias]) => alias);
+        lines.push(
+          `  ${id} · ${channel.type} · ${channel.baseUrl ?? '默认地址'} · ${aliases.length} 个别名` +
+            (aliases.length > 0 ? `（${aliases.join(', ')}）` : ''),
+        );
+      }
+      this.push({ kind: 'note', text: lines.join('\n') });
+      return;
+    }
+    // 解析顺序：自定义渠道 id > 内置预设名 > 报错列可用
+    const target = resolveProviderTarget(this.deps.config, arg);
+    switch (target.kind) {
+      case 'alias':
+        // 渠道选定后按它的首个别名切模型（别名承载渠道、窗口、能力整组绑定）
+        this.applyModel(target.alias);
+        try {
+          saveDefaultProvider(target.providerId, this.deps.config.provider === target.providerId ? undefined : this.deps.config.provider);
+        } catch (e) {
+          this.push({ kind: 'note', text: `渠道写回配置失败：${(e as Error).message}（本次切换已生效）` });
+        }
+        return;
+      case 'noAlias':
+        this.push({ kind: 'note', text: `渠道 ${target.providerId} 下没有任何模型别名，先在 [models] 里加一个` });
+        return;
+      case 'preset':
+        this.applyPreset(target.name);
+        return;
+      case 'unknown':
+        this.push({ kind: 'note', text: `没有渠道或预设叫 ${arg}。可用：${target.available.join(' / ')}` });
+        return;
+    }
+  }
+
+  /** 按内置预设重建 provider。预设不带别名绑定，所以要断开别名与能力标记。 */
+  private applyPreset(name: string): void {
+    const preset = PROVIDER_PRESETS[name];
+    if (preset === undefined) {
+      this.push({ kind: 'note', text: `没有内置预设叫 ${name}。可用：${Object.keys(PROVIDER_PRESETS).join(' / ')}` });
+      return;
+    }
+    const nextModel = preset.model ?? this.model;
+    try {
+      this.provider = createProvider({
+        ...this.deps.config,
+        provider: name,
+        baseUrl: preset.baseUrl ?? this.deps.config.baseUrl,
+        model: nextModel,
+      });
+    } catch (e) {
+      this.push({ kind: 'error', text: `切换渠道失败：${(e as Error).message}` });
+      return;
+    }
+    // provider 按预设重建后不再代表别名绑定（渠道与模型都可能变），断开别名记录与能力标记
+    this.currentAlias = undefined;
+    this.deps.ctx.capabilities = undefined;
+    this.deps.ctx.imageMaxEdgePx = undefined;
+    this.deps.ctx.imageBudgetBytes = undefined;
+    this.model = nextModel;
+    this.modelLabel = nextModel;
+    this.syncStatus();
+    this.persist();
+    this.push({
+      kind: 'note',
+      text: `已切到 ${name}${preset.model !== undefined ? `，模型 ${nextModel}` : '，模型保持不变'}`,
+    });
+  }
+
+  /**
+   * /reload：重跑配置加载，把变更应用到运行期。
+   *
+   * 这一层是薄壳：失败时的原子性由组合根的 reloadConfig 保证（抛错则旧配置整体保留）。
+   * 会话级状态（模型、权限模式）不被覆盖，配置级绑定（能力标记、图片限额、搜索配置、
+   * 压缩绑定）按新值刷新。
+   */
+  private runReload(): void {
+    const reload = this.deps.reloadConfig;
+    if (reload === undefined) {
+      this.push({ kind: 'note', text: '当前进程没有注入配置重载入口' });
+      return;
+    }
+    const prev = this.deps.config;
+    const result = reload();
+    if ('error' in result) {
+      this.push({ kind: 'error', text: `重载失败：${result.error}（旧配置保持生效）` });
+      return;
+    }
+    const next = result.config;
+    this.deps.config = next;
+    // 能力与图片限额是配置级绑定：本轮才加上的能力（如 image_in）要即时生效，
+    // 且与 provider 是否重建无关，不能被下面的 unchanged 短路跳过
+    this.deps.ctx.capabilities = resolveCapabilitiesOnReload(next, this.currentAlias ?? null);
+    const limits = resolveImageLimitsOnReload(next, this.currentAlias ?? null);
+    this.deps.ctx.imageMaxEdgePx = limits.imageMaxEdgePx;
+    this.deps.ctx.imageBudgetBytes = limits.imageBudgetBytes;
+    this.deps.ctx.searchConfig = next.search;
+    // provider 重建决策：别名仍在按新配置重建；别名被删或重建失败则沿用旧 provider
+    const plan = planProviderReload(prev, next, this.model, this.currentAlias ?? null);
+    let providerNote = '';
+    if (plan.kind === 'rebuild') {
+      this.provider = plan.provider;
+      this.model = plan.model;
+      this.modelLabel = plan.modelLabel;
+      this.maxContextSize = plan.maxContextSize;
+      this.status.setState({ maxContextSize: plan.maxContextSize });
+      this.persist();
+      providerNote = 'provider 已按新配置重建';
+    } else if (plan.reason === 'aliasRemoved') {
+      providerNote = `别名 ${plan.alias ?? ''} 已从配置里删除，本会话继续用当前 provider`;
+    } else if (plan.reason === 'aliasInvalid') {
+      providerNote = `别名 ${plan.alias ?? ''} 无法解析，本会话继续用当前 provider`;
+    } else if (plan.reason === 'buildFailed') {
+      providerNote = `provider 重建失败：${plan.message ?? ''}，继续用旧实例`;
+    }
+    const nextLang = next.language ?? 'zh';
+    if (nextLang !== getLocale()) setLocale(nextLang);
+    // 新 hookEngine 换了引用，notice 出口要补挂，否则 hook 的可见性提示会静默丢
+    this.deps.hookEngineRef.current?.setNoticeSink((m) => this.push({ kind: 'note', text: m }));
+    const changes = diffConfig(prev, next);
+    if (changes.length === 0 && providerNote === '') {
+      this.push({ kind: 'note', text: '配置没有变化' });
+    } else {
+      const lines = changes.map((c) => formatConfigChange(c) + (c.restart === true ? '（需重启生效）' : ''));
+      if (providerNote !== '') lines.push(providerNote);
+      this.push({ kind: 'note', text: `配置已重载：\n${lines.join('\n')}` });
+    }
+    this.syncStatus();
+    this.tui.requestRender();
+  }
+
+  /**
+   * /history：回看本会话的用户输入，回退到指定轮之前。
+   *
+   * 只动对话（历史与转录区），不碰文件改动——文件级回滚是 /restore，两者互补。
+   * 轮次切割与截断点由 computeUndo 算（纯函数，两版共用），这一层只落副作用。
+   *
+   * 与 Ink 版的一处实差：Ink 版另有一套 undo 快照栈，能把 todos 与计划模式一起回滚到
+   * 那一轮之前；pi 版没有这个栈，所以附带状态保持现状（Ink 版在快照被清空时也是这个
+   * 行为，比如 resume 或压缩之后）。
+   */
+  private async runHistory(args: string): Promise<void> {
+    if (this.busy) {
+      this.push({ kind: 'note', text: '回合进行中不能回退，先 Esc 中断' });
+      return;
+    }
+    const turns = collectUndoTurns(this.history);
+    if (turns.length === 0) {
+      this.push({ kind: 'note', text: '本会话还没有可回退的输入' });
+      return;
+    }
+    const arg = args.trim();
+    let n: number;
+    if (arg === '') {
+      const picked = await showPicker(this.tui, {
+        title: '回退到哪一条输入之前',
+        items: turns.map((t) => ({
+          value: String(t.turns),
+          label: t.label === '' ? '（空输入）' : t.label,
+          description: t.turns === 1 ? '撤销最近 1 轮' : `撤销最近 ${t.turns} 轮`,
+        })),
+        hint: '↑↓ 选择 · Enter 回退 · 输入过滤 · Esc 取消',
+      });
+      if (picked === null) return;
+      n = Number(picked);
+    } else {
+      n = Number(arg);
+      if (!Number.isInteger(n) || n < 1) {
+        this.push({ kind: 'note', text: `用法：/history [轮数]（不带参数列出全部 ${turns.length} 条输入）` });
+        return;
+      }
+    }
+    const result = computeUndo(this.history, n);
+    if (result === null) {
+      this.push({ kind: 'note', text: `没有那么多轮可撤销（本会话共 ${turns.length} 轮）` });
+      return;
+    }
+    // 被撤销的最早那条消息正好在截断点上（computeUndo 从 user 消息处切）
+    const cut = this.history[result.history.length];
+    const prefill = cut === undefined ? '' : extractUserText(cut);
+    const removed = this.history.length - result.history.length;
+    this.history.length = 0;
+    this.history.push(...result.history);
+    // token 回落：截断点之后没有真实 usage 可覆盖，基准归零后按截断结果重估，
+    // 下一条真实 usage 再校正（与 /resume 同口径）
+    this.baseTokens = 0;
+    this.status.setState({ usedTokens: 0 });
+    this.persist();
+    const replay = historyToDisplayItems(this.history);
+    this.transcript.reset(
+      [
+        ...replay.items,
+        {
+          kind: 'note',
+          text: `已撤销最近 ${result.removedTurns} 轮，丢弃 ${removed} 条消息（文件改动不受影响，回滚文件用 /restore）`,
+        },
+      ],
+      replay.foldedTurns,
+    );
+    this.syncStatus();
+    this.tui.invalidate();
+    this.tui.renderNow(true);
+    // 被撤销的那条输入放回编辑器，方便改一版重发
+    if (prefill !== '') this.editor.setText(prefill);
+  }
+
+  // ---------------------------------------------------------------- 技能 / 子 agent / 反思
+
+  /**
+   * /skill：无参开选择器，`reload` 强制重扫，带参激活。
+   *
+   * 激活的形态与模型自己调 skill 工具一致：把展开后的技能正文静默注入跑一轮。
+   * 不显示成用户消息，否则转录区会出现一大段用户没打过的文本。
+   */
+  private async runSkill(args: string): Promise<void> {
+    const registry = this.deps.skillsRef.current;
+    const names = [...registry.skills.keys()];
+    if (args === '') {
+      if (names.length === 0) {
+        this.push({ kind: 'note', text: '没有发现任何技能（放到 .step-code/skills/ 或 ~/.step-code/skills/）' });
+        return;
+      }
+      const picked = await showPicker(this.tui, {
+        title: '激活技能',
+        items: [...registry.skills.values()].map((d) => ({
+          value: d.name,
+          label: d.name,
+          description: d.description ?? '',
+        })),
+        hint: '↑↓ 选择 · Enter 激活 · 输入过滤 · Esc 取消',
+      });
+      if (picked === null) return;
+      await this.activateSkill(picked, '');
+      return;
+    }
+    // reload 子命令优先于同名技能激活
+    if (args === 'reload' || args.startsWith('reload ')) {
+      const diff = this.deps.reloadSkills(true) as
+        | { added: string[]; removed: string[]; changed: string[] }
+        | null
+        | undefined;
+      const total = diff == null ? 0 : diff.added.length + diff.removed.length + diff.changed.length;
+      if (total === 0) {
+        this.push({ kind: 'note', text: '技能目录没有变化' });
+      } else {
+        const fmt = (xs: string[]): string => (xs.length > 0 ? xs.join('、') : '—');
+        this.push({
+          kind: 'note',
+          text: `技能已重扫：新增 ${fmt(diff!.added)} · 移除 ${fmt(diff!.removed)} · 变更 ${fmt(diff!.changed)}`,
+        });
+      }
+      const conflicts = this.deps.skillsRef.current.conflicts ?? [];
+      if (conflicts.length > 0) {
+        this.push({
+          kind: 'note',
+          text:
+            '同名技能冲突（前者生效）：\n' +
+            conflicts.map((c) => `  ${c.name}：${c.winner.dir} 覆盖 ${c.overridden.map((o) => o.dir).join('、')}`).join('\n'),
+        });
+      }
+      return;
+    }
+    const spaceIdx = args.search(/\s/);
+    const name = spaceIdx === -1 ? args : args.slice(0, spaceIdx);
+    const rest = spaceIdx === -1 ? '' : args.slice(spaceIdx + 1).trim();
+    await this.activateSkill(name, rest);
+  }
+
+  private async activateSkill(name: string, args: string): Promise<void> {
+    const def = this.deps.skillsRef.current.skills.get(name);
+    if (def === undefined) {
+      const names = [...this.deps.skillsRef.current.skills.keys()];
+      this.push({
+        kind: 'note',
+        text: `没有名为 ${name} 的技能。可用：${names.length > 0 ? names.join('、') : '（无）'}`,
+      });
+      return;
+    }
+    this.push({ kind: 'note', text: `已激活技能 ${def.name}` });
+    await this.runTurn(renderSkillActivation(def, args), { silent: true });
+  }
+
+  /**
+   * /agents：列出当前会话派生的子 agent 会话。
+   *
+   * Ink 版选中后在弹层里只读回看完整历史。pi 版这一步只给摘要与进入方式：
+   * 把子会话历史铺进当前转录区会盖掉主会话现场，而弹层滚动浏览是独立一块交互，
+   * 不在这次范围内。
+   */
+  private async pickSubagent(): Promise<void> {
+    const subs = this.deps.subagentStore.list(this.deps.ctx.cwd).filter((m) => m.parentId === this.session.id);
+    if (subs.length === 0) {
+      this.push({ kind: 'note', text: '本会话还没有派生过子 agent' });
+      return;
+    }
+    const picked = await showPicker(this.tui, {
+      title: '本会话的子 agent',
+      items: subs.map((m) => ({
+        value: m.id,
+        label: `${m.agentType ?? 'general'} · ${m.name ?? m.title ?? m.id}`,
+        description: `${m.status ?? '未知'} · ${m.messageCount} 条 · ${m.id.slice(0, 8)}`,
+      })),
+      hint: '↑↓ 选择 · Enter 看摘要 · 输入过滤 · Esc 取消',
+    });
+    if (picked === null) return;
+    const meta = subs.find((m) => m.id === picked);
+    this.push({
+      kind: 'note',
+      text:
+        `子 agent ${picked}\n` +
+        `类型 ${meta?.agentType ?? 'general'} · 状态 ${meta?.status ?? '未知'} · ${meta?.messageCount ?? 0} 条消息\n` +
+        `任务：${meta?.name ?? meta?.title ?? meta?.preview ?? '（无描述）'}\n` +
+        `完整历史用 step-code --session ${picked} 打开（只读回看）`,
+    });
+  }
+
+  /**
+   * /reflect：对本会话历史提炼方法论清单。
+   *
+   * 读的是不受压缩触碰的全量日志，旧会话或未落盘时回退内存历史。产出同步注入会话流，
+   * 否则用户说「记住第 2 条」时模型上下文里没有这份清单，两段动作就断开了。
+   */
+  private async runReflectCommand(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    this.activity.setBusy(true);
+    this.activity.setTip('提炼经验');
+    this.syncStatus();
+    this.push({ kind: 'note', text: '正在回顾本会话历史…' });
+    try {
+      const full = this.deps.store.loadFull(this.session.cwd, this.session.id);
+      const source = full.length > 0 ? full : this.history;
+      const text = await runReflect(this.provider, source, {});
+      this.push({ kind: 'note', text: `基于 ${source.length} 条消息的回顾：\n\n${text}` });
+      if (text !== REFLECT_EMPTY_HISTORY && text !== REFLECT_NO_FINDINGS) {
+        this.history.push(
+          stored(
+            {
+              role: 'user',
+              content:
+                '以下是 /reflect 对本次会话历史提炼的方法论清单（用户刚在界面上看过）。' +
+                '如果用户从中挑选条目让你沉淀（如「记住第 2 条」），按记忆机制写入对应目录；' +
+                '用户没有此类要求时不需要主动写。\n\n' +
+                text,
+            },
+            { kind: 'injection' },
+          ),
+        );
+        this.persist();
+      }
+    } catch (e) {
+      this.push({ kind: 'error', text: `回顾失败：${(e as Error).message}` });
+    } finally {
+      this.busy = false;
+      this.activity.setBusy(false);
+      this.activity.setTip('');
+      this.syncStatus();
+      this.tui.requestRender();
     }
   }
 
@@ -1370,6 +1866,7 @@ export class PiChat {
           background: this.background,
           goal: this.goal,
           team: this.team,
+          cron: this.cron,
           askUser: (req) => this.askUserQuestion(req),
         },
         messages: this.history,
