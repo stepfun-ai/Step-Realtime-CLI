@@ -13,6 +13,7 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { DisplayItem, WelcomeData } from '../chat/types.js';
+import { THINKING_FOLD_LINES } from '../chat/expandable.js';
 import { c, markdownTheme, thinkingMarkdownTheme } from './theme.js';
 import { markdownTransform } from '../chat/markdownPrep.js';
 import { t } from '../i18n.js';
@@ -143,6 +144,19 @@ export class ItemBlock implements Component {
     return this.markdown.render(width);
   }
 
+  /**
+   * 渲染一条展开内容（查看器复用）：去掉主界面的折叠提示，全文铺开。
+   * 与 render 路径共用同一个 Markdown 实例没必要——查看器是低频操作，新建一个即可。
+   */
+  static renderExpanded(item: Extract<DisplayItem, { kind: 'tool' | 'thinking' }>, width: number): string[] {
+    if (item.kind === 'thinking') {
+      const md = new Markdown(item.text, 0, 0, thinkingMarkdownTheme, undefined, { transform: markdownTransform });
+      return md.render(width - 2);
+    }
+    return renderToolExpanded(item, width);
+  }
+
+
   private renderItem(width: number): string[] {
     const it = this.item;
     switch (it.kind) {
@@ -156,8 +170,14 @@ export class ItemBlock implements Component {
       case 'assistant':
         return [...this.renderMarkdown(it.text, width, false), ''];
       case 'thinking': {
-        const body = this.renderMarkdown(it.text, width - 2, true);
-        return [...indent(body, c.thinking('┊ ')), ''];
+        // 长 thinking 在主界面折叠为前 N 行 + 「还有 N 行（Ctrl+O 查看）」，
+        // 全文进 ExpandViewer（Ctrl+O）。与 Ink 版同语义；阈值 3 行（Ink 是 2，
+        // pi 流式预览只有尾部 1 行，定稿多给一行，从流式到定稿的视觉落差更小）。
+        const rendered = this.renderMarkdown(it.text, width - 2, true);
+        if (rendered.length <= THINKING_FOLD_LINES) return [...indent(rendered, c.thinking('┊ ')), ''];
+        const head = rendered.slice(0, THINKING_FOLD_LINES);
+        const folded = c.thinking(`┊ … 还有 ${rendered.length - THINKING_FOLD_LINES} 行（Ctrl+O 查看）`);
+        return [...indent(head, c.thinking('┊ ')), folded, ''];
       }
       case 'note':
         return [...hanging(wrap(c.note(it.text), width - 2), c.note('· '), 2), ''];
@@ -227,4 +247,34 @@ export class ItemBlock implements Component {
     out.push('');
     return out;
   }
+}
+
+/**
+ * 查看器用：工具结果全文铺开（不折叠、不截断），diff 保持着色。
+ * 头部状态行/子工具列表沿用 renderTool 的口径，这里只重做结果体。
+ */
+function renderToolExpanded(it: Extract<DisplayItem, { kind: 'tool' }>, width: number): string[] {
+  const mark = it.status === 'running' ? c.warn('⏳') : it.status === 'ok' ? c.ok('✓') : c.error('✗');
+  const arg = summarizeInput(it.input);
+  const subagent =
+    it.subagentType !== undefined || it.description !== undefined
+      ? c.dim(` ${[it.subagentType, it.description].filter((x) => x !== undefined).join(' · ')}`)
+      : '';
+  const head = `${mark} ${c.toolName(it.name)}${arg !== '' ? ` ${c.toolArg(arg)}` : ''}${subagent}`;
+  const out = visibleWidth(head) > width ? wrap(head, width) : [head];
+  if (it.result !== undefined && it.result !== '') {
+    const lines = it.result.split('\n');
+    if (it.status === 'error') {
+      for (const l of lines) out.push(...indent(wrap(c.error(l), width - 4), '    '));
+    } else if (looksLikeDiff(lines)) {
+      for (const l of lines) {
+        const colored = l.startsWith('+') ? c.ok(l) : l.startsWith('-') ? c.error(l) : l.startsWith('@@') ? c.accent(l) : c.dim(l);
+        out.push(...indent(wrap(colored, width - 4), '    '));
+      }
+    } else {
+      for (const l of lines) out.push(...indent(wrap(l, width - 4), '    '));
+    }
+  }
+  out.push('');
+  return out;
 }

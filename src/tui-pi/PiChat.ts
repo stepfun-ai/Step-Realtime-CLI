@@ -92,6 +92,8 @@ import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { ChatEditor } from './ChatEditor.js';
 import { ActivityLine, StatusLine } from './StatusLine.js';
 import { Transcript } from './Transcript.js';
+import { ItemBlock } from './blocks.js';
+import { openExpandViewer } from './ExpandOverlay.js';
 import { c, editorTheme } from './theme.js';
 
 /** PiChat 的构造依赖。字段与 Ink 版 AppProps 一一对应，便于 cli 侧共用同一套装配。 */
@@ -279,6 +281,8 @@ export class PiChat {
       }
       return true;
     };
+    // Ctrl+O 全屏查看器：收集最近 ≤10 条被折叠的工具输出 / 长 thinking，没内容时不消费按键
+    this.editor.onCtrlO = () => this.openExpandViewer();
 
     // cron 装配：到点把 prompt 静默注入跑一轮；isIdle 闸门保证回合进行中不触发
     // （错过的会在下个空闲 tick 合并补投，coalesced 计数进卡片）。
@@ -423,6 +427,27 @@ export class PiChat {
               elapsedMs: Math.max(0, Date.now() - g.createdAt),
             },
     });
+  }
+
+  /**
+   * 打开全屏查看器（Ctrl+O）。收集为空时返回 false（不消费按键），并给一条提示——
+   * 折叠提示上写着「Ctrl+O 查看」，按了没反应比没有这个键更糟。
+   * 弹层活跃期间（审批/选择器）不开：焦点已被占用，再叠一层会打断正在进行的确认。
+   */
+  private openExpandViewer(): boolean {
+    if (this.promptActive) return false;
+    // 打开期间把焦点从编辑器移交给 overlay，关闭时归还——不归还的话按键会掉进空档
+    const opened = openExpandViewer(
+      this.tui,
+      this.transcript.items(),
+      (item, width) => ItemBlock.renderExpanded(item, width),
+      () => this.tui.setFocus(this.editor),
+    );
+    if (opened === null) {
+      this.push({ kind: 'note', text: '没有可展开的内容（工具输出与思考过程被折叠时才需要展开查看）' });
+      return true;
+    }
+    return true;
   }
 
   /** 持久化。顺序不变量与 Ink 版一致：先 appendFull 再 save（wireSeq 游标一致性）。 */
