@@ -578,6 +578,6 @@ Three warning classes (still exit code 0, listed one per line after the `ok:` li
 | Referencing a protocol preset name | `[models.k3] provider = "anthropic"` (without declaring `[providers.anthropic]`) | The alias is deactivated; declare `[providers.anthropic]` first |
 | Referencing an ignored channel | `[models.k3] provider = "ch1"` (`[providers.ch1]` has an invalid `type`) | The alias is deactivated as a result; fix the channel, not the alias |
 
-**Warning presentation channels** split by run mode: interactive TUI shows a note in the transcript area (Ink owns the terminal, nothing goes to stderr/stdout); non-interactive (`-p` / `--output-format stream-json`) writes to stderr (stdout is the protocol channel and stays clean).
+**Warning presentation channels** split by run mode: interactive TUI shows a note in the transcript area (the TUI owns the terminal, nothing goes to stderr/stdout); non-interactive (`-p` / `--output-format stream-json`) writes to stderr (stdout is the protocol channel and stays clean).
 
 It is also the "independent validation before overwriting" step in the change protocol of the built-in `update-config` skill, and the post-write validation entry point for configuration-writing operations such as `/provider add` and provider deletion (a validation failure rolls the change back).

@@ -576,7 +576,7 @@ step doctor config ./my.toml    # 校验指定路径
 | 引用协议预设名 | `[models.k3] provider = "anthropic"`（没声明 `[providers.anthropic]`） | 别名整体失效，需先声明 `[providers.anthropic]` 再引用 |
 | 引用被忽略的渠道 | `[models.k3] provider = "ch1"`（`[providers.ch1]` 的 `type` 非法） | 别名连带失效，该修的是渠道不是别名 |
 
-**警告的呈现通道**按运行模式分流：交互 TUI 走转录区 note（Ink 独占终端，不写 stderr/stdout），非交互（`-p` / `--output-format stream-json`）走 stderr（stdout 是协议通道，不污染）。
+**警告的呈现通道**按运行模式分流：交互 TUI 走转录区 note（TUI 独占终端，不写 stderr/stdout），非交互（`-p` / `--output-format stream-json`）走 stderr（stdout 是协议通道，不污染）。
 
 它也是内置 `update-config` skill 变更协议里「覆盖前独立校验」的那一环，以及 `/provider add`、删除渠道等写配置操作的写后校验入口（校验失败即回滚）。
 

@@ -9,7 +9,7 @@ This page covers day-to-day use of the interactive interface: slash commands, ke
 
 ## Interface layout
 
-The Ink terminal interface has a welcome box at the top, the conversation stream in the middle (your input, model replies, tool call cards), and a two-line status bar at the bottom. The first line shows the permission tier (manual green / auto yellow / yolo red), the model name, the status, the background task badge `bg:N`, the autonomous goal badge `goal ● elapsed · turns`, and the current path (shortened when too long). The second line shows keybinding hints and context usage (real token percentage). The last two badges appear only when relevant; they take up no space when there is no background task or goal.
+The pi-tui terminal interface has a welcome box at the top, the conversation stream in the middle (your input, model replies, tool call cards), and a two-line status bar at the bottom. The first line shows the permission tier (manual green / auto yellow / yolo red), the model name, the status, the background task badge `bg:N`, the autonomous goal badge `goal ● elapsed · turns`, and the current path (shortened when too long). The second line shows keybinding hints and context usage (real token percentage). The last two badges appear only when relevant; they take up no space when there is no background task or goal.
 
 Text you type while the model is working is not lost: it joins the send queue and is dispatched one entry at a time when the turn ends, with a queue preview above the input box.
 
@@ -246,7 +246,7 @@ After an enable/disable change, follow the prompt to run `/new` or restart for i
 ## Command-line arguments
 
 ```bash
-step                          # interactive (enters the Ink interface, manual permissions by default)
+step                          # interactive (enters the pi-tui interface, manual permissions by default)
 step -p "find every TODO under src"          # non-interactive: run a single instruction and exit
 step --yolo -p "rename a.txt to b.txt"    # --yolo allows everything / --auto allows writes (non-interactive writes need one of them)
 step --continue -p "continue the previous task"       # session continuation (-c)

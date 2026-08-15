@@ -8,7 +8,7 @@
 > 本仓从 `step-code` 复制而来（2026-08-13，基线 commit `12af693`），git remote 已摘除，不对外发布。
 > 唯一目的：把 UI 层从 Ink 整体替换为 [pi-tui](https://github.com/earendil-works/pi)
 > （差分渲染、非 React），验证其能否承载全部 TUI 需求。迁移设计归档在内部设计仓。
-> 除 `src/tui-pi/`、`src/cli.tsx`、`package.json` 外的代码与主仓保持同源，
+> 除 `src/tui-pi/`、`src/cli.ts`、`package.json` 外的代码与主仓保持同源，
 > 改动以实验结论为限，不回流代码、只回流结论。
 
 > [!IMPORTANT]
@@ -18,13 +18,13 @@
 
 [![CI](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml/badge.svg?branch=step-code-explore)](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml)
 
-A terminal coding agent CLI, with StepFun's **Step model family** as the primary target and **Ink** for the UI. The model layer speaks three protocols—Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses—so any compatible provider works out of the box; Step is the best-tested and default path.
+A terminal coding agent CLI, with StepFun's **Step model family** as the primary target and **pi-tui** for the UI. The model layer speaks three protocols—Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses—so any compatible provider works out of the box; Step is the best-tested and default path.
 
 > This repository is the `step-code-explore` exploration branch of [stepfun-ai/Step-Realtime-CLI](https://github.com/stepfun-ai/Step-Realtime-CLI).
 
 ## What it is
 
-Step Code is a terminal coding agent CLI built around an agent loop: the model uses tools to read and write real files and run real commands, results are fed back, and the loop continues until the task is done. It is built with **Ink** and targets **StepFun's Step model family** as the primary path, while also supporting any compatible provider through three open protocols (Anthropic Messages, OpenAI Chat Completions, OpenAI Responses).
+Step Code is a terminal coding agent CLI built around an agent loop: the model uses tools to read and write real files and run real commands, results are fed back, and the loop continues until the task is done. It is built with **pi-tui** and targets **StepFun's Step model family** as the primary path, while also supporting any compatible provider through three open protocols (Anthropic Messages, OpenAI Chat Completions, OpenAI Responses).
 
 Key capabilities:
 - **Permission tiers + plan mode**: enforce "say what you'll change before changing it"
@@ -74,7 +74,7 @@ English documentation lives under [`docs/en/`](./docs/en/); the Chinese original
 
 ## Development
 
-Source layers: `config` → `provider` → `tools` → `agent` (the loop) → `tui` (Ink) → `cli.tsx` (entry); `main.ts` is only the bin bootstrap (sets NODE_ENV, then loads cli.js).
+Source layers: `config` → `provider` → `tools` → `agent` (the loop) → `tui-pi` (pi-tui) → `cli.ts` (entry); `main.ts` is only the bin bootstrap (sets NODE_ENV, then loads cli.js).
 
 ```bash
 pnpm dev          # run directly with tsx, for interactive development

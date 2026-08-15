@@ -6,18 +6,18 @@
 > 验证 pi-tui 能否替代 Ink。迁移设计与阶段计划归档在内部设计仓。本文件其余内容从主仓带来，
 > 描述的是 Ink 版架构；在本仓做 TUI 相关改动时以 `src/tui-pi/` 的实际代码与设计档案为准。
 >
-> **定位**：Step Code 是一个运行在终端里的 coding agent，由阶跃星辰 Step 系列模型驱动、UI 层用 Ink。为本项目做开发的 AI 代理，在动手前应先读本文件。
+> **定位**：Step Code 是一个运行在终端里的 coding agent，由阶跃星辰 Step 系列模型驱动、UI 层用 pi-tui。为本项目做开发的 AI 代理，在动手前应先读本文件。
 
 ## 项目速览
 
 - **语言/运行时**：TypeScript + Node ≥ 22（`glob` 工具用到 `node:fs.globSync`，Node 22 起可用），ESM
 - **包管理**：pnpm（项目设置写在 `pnpm-workspace.yaml`，不是 `.npmrc`）
-- **UI 层**：Ink 7 + React 19
+- **UI 层**：pi-tui（@earendil-works/pi-tui，差分渲染、非 React）
 - **模型接入**：多协议 provider——Anthropic Messages（`@anthropic-ai/sdk`）、OpenAI Chat Completions、OpenAI Responses，三者均支持工具调用，按渠道 `type` 分发；接阶跃 Step 系列模型
 - **CLI 解析**：commander；**配置**：TOML（smol-toml）；**校验**：zod 4
 - **构建**：`pnpm build`（tsc）；**开发**：`pnpm dev`（tsx）；**类型检查**：`pnpm typecheck`；**测试**：`pnpm test`（vitest）
 
-核心分层：`config` → `provider` → `tools` → `agent`（循环）→ `tui`（Ink）→ `cli.tsx`（入口）；`main.ts` 只是 bin 引导（先设 NODE_ENV 再加载 cli.js）。
+核心分层：`config` → `provider` → `tools` → `agent`（循环）→ `tui-pi`（pi-tui）→ `cli.ts`（入口）；`main.ts` 只是 bin 引导（先设 NODE_ENV 再加载 cli.js）。
 
 ## 目录结构
 
