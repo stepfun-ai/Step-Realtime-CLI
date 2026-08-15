@@ -92,6 +92,8 @@ import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { ChatEditor } from './ChatEditor.js';
 import { ActivityLine, StatusLine } from './StatusLine.js';
 import { Transcript } from './Transcript.js';
+import { ChromePanels } from './ChromePanels.js';
+import { allTodosDone } from '../chat/chromePanels.js';
 import { ItemBlock } from './blocks.js';
 import { openExpandViewer } from './ExpandOverlay.js';
 import { c, editorTheme } from './theme.js';
@@ -148,6 +150,8 @@ export class PiChat {
   private readonly completion: ChatAutocompleteProvider;
   /** 审批等弹层的挂载点：常驻容器，内容按需增删（组件树形状不随消息变化）。 */
   private readonly overlayHost = new Container();
+  /** 输入框上方的常驻面板：待办清单 + 发送队列预览（无数据时零行）。 */
+  private readonly chrome = new ChromePanels();
 
   private readonly history: StoredMessage[] = [];
   private session: SessionData;
@@ -329,6 +333,9 @@ export class PiChat {
     this.tui.addChild(this.transcript);
     this.tui.addChild(this.activity);
     this.tui.addChild(this.overlayHost);
+    // 常驻 chrome（待办 + 队列预览）挂在输入框正上方：位置与 Ink 版一致，
+    // 但不参与任何高度预算协商——差分渲染没有超屏清屏问题，面板按内容占行
+    this.tui.addChild(this.chrome);
     this.tui.addChild(this.editor);
     this.tui.addChild(this.status);
     this.tui.setFocus(this.editor);
@@ -407,6 +414,9 @@ export class PiChat {
       latestBgTask: running.length > 0 ? running[running.length - 1]!.command : undefined,
     });
     this.syncGoalBadge();
+    // 常驻面板跟状态同步：todos 由工具改、queue 由排队改，两者都在状态变更点上
+    this.chrome.setTodos(this.todos.items);
+    this.chrome.setQueue(this.queue);
   }
 
   /**
@@ -1635,6 +1645,9 @@ export class PiChat {
    */
   private async finishTurn(): Promise<void> {
     const goalActive = this.goal.get()?.status === 'active';
+    // 清单全部完成即清空：待办面板是「还有什么没做」的提示，全绿之后继续常驻只是占行。
+    // 有未完成项则跨回合保留（Ink 版 allTodosDone 同语义）。
+    if (allTodosDone(this.todos.items)) this.todos.items = [];
     const plan = planTurnEnd({
       continuation: this.continuation,
       goalActive,
@@ -2101,6 +2114,8 @@ export class PiChat {
           (it) => it.kind === 'tool' && it.id === ev.id,
           (it) => ({ ...(it as Extract<DisplayItem, { kind: 'tool' }>), status: ev.isError ? 'error' : 'ok', result: ev.result }),
         );
+        // todo_list 工具改的是 this.todos，面板要跟着刷；其它工具走这一路开销是两次赋值
+        this.chrome.setTodos(this.todos.items);
         break;
       case 'retry':
       case 'notice':
