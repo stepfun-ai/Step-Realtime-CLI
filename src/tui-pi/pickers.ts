@@ -9,7 +9,7 @@
  * 不存在 Ink 的 Static/动态区之分，所以选择器不需要额外的行数预算计算
  * （Ink 版为此维护了 estimateChromeRows / planBoxRows 这类与渲染结构一一对应的公式）。
  */
-import { SelectList, matchesKey, type Component, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui';
+import { SelectList, matchesKey, visibleWidth, type Component, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui';
 import type { SessionMeta } from '../session/store.js';
 import type { StepCodeConfig } from '../config/config.js';
 import { c, selectListTheme } from './theme.js';
@@ -29,19 +29,37 @@ export function relativeTime(iso: string, now = Date.now()): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
+export interface PickerTab {
+  id: string;
+  label: string;
+}
+
 /**
  * 带标题与过滤输入的选择器外壳。
- * SelectList 自己处理 ↑↓/Enter/Esc，过滤串由本壳收字符后 setFilter 下推。
+ * SelectList 自己处理 ↑↓/Enter，过滤串由本壳收字符后 setFilter 下推。
+ *
+ * 渠道 tab（对应 Ink 版 ModelPicker 的 tab 条）：tabs 多于一个时渲染 tab 条，
+ * Tab / Shift+Tab 取模回卷切换；每个 tab 独立记忆过滤词与选中项，切换时保存/恢复。
+ * Esc 语义与 Ink 对齐：有过滤词先清词，再按一次才取消。
  */
 export class PickerOverlay implements Component {
   private readonly title: string;
-  private readonly list: SelectList;
+  private list: SelectList;
   private filter = '';
+  private readonly onSelectItem: (item: SelectItem) => void;
   private readonly onCancel: () => void;
   private readonly requestRender: () => void;
   /** 额外按键处理（如会话选择器的 d 删除）；返回 true 表示已消费。 */
   private readonly onKey?: (data: string, selected: SelectItem | null) => boolean;
   private readonly hint: string;
+  private readonly maxVisible: number;
+  /** Shift+Enter 确认（如模型选择器的「仅本会话生效」）；不设则 shift+enter 走普通确认。 */
+  private readonly onShiftSelect?: (item: SelectItem) => void;
+  private readonly tabs: PickerTab[];
+  private readonly itemsForTab?: (tabId: string) => SelectItem[];
+  private activeTab = 0;
+  /** 每个 tab 记忆的视图状态：过滤词 + 选中项 value。 */
+  private readonly tabStates = new Map<number, { filter: string; selected?: string }>();
 
   constructor(opts: {
     title: string;
@@ -52,15 +70,33 @@ export class PickerOverlay implements Component {
     onSelect: (item: SelectItem) => void;
     onCancel: () => void;
     onKey?: (data: string, selected: SelectItem | null) => boolean;
+    onShiftSelect?: (item: SelectItem) => void;
+    tabs?: PickerTab[];
+    itemsForTab?: (tabId: string) => SelectItem[];
+    initialTab?: string;
   }) {
     this.title = opts.title;
     this.hint = opts.hint ?? '↑↓ 选择 · Enter 确认 · 输入过滤 · Esc 取消';
     this.requestRender = opts.requestRender;
+    this.onSelectItem = opts.onSelect;
     this.onCancel = opts.onCancel;
-    this.list = new SelectList(opts.items, opts.maxVisible ?? 12, selectListTheme);
-    this.list.onSelect = opts.onSelect;
-    this.list.onCancel = opts.onCancel;
+    this.maxVisible = opts.maxVisible ?? 12;
+    this.onShiftSelect = opts.onShiftSelect;
+    this.tabs = opts.tabs ?? [];
+    this.itemsForTab = opts.itemsForTab;
+    if (opts.initialTab !== undefined) {
+      const idx = this.tabs.findIndex((t) => t.id === opts.initialTab);
+      if (idx >= 0) this.activeTab = idx;
+    }
+    this.list = this.buildList(opts.items);
     this.onKey = opts.onKey;
+  }
+
+  private buildList(items: SelectItem[]): SelectList {
+    const list = new SelectList(items, this.maxVisible, selectListTheme);
+    list.onSelect = (item) => this.onSelectItem(item);
+    list.onCancel = () => this.onCancel();
+    return list;
   }
 
   invalidate(): void {
@@ -78,9 +114,42 @@ export class PickerOverlay implements Component {
     return this.list.getSelectedItem();
   }
 
+  /** 切 tab：保存当前 tab 的过滤词与选中项，恢复目标 tab 的（对应 Ink 版 switchTab）。 */
+  private switchTab(dir: 1 | -1): void {
+    this.tabStates.set(this.activeTab, { filter: this.filter, selected: this.list.getSelectedItem()?.value });
+    this.activeTab = (this.activeTab + dir + this.tabs.length) % this.tabs.length;
+    const saved = this.tabStates.get(this.activeTab);
+    this.filter = saved?.filter ?? '';
+    const items = this.itemsForTab?.(this.tabs[this.activeTab]!.id) ?? [];
+    // 重建 SelectList：候选集换掉后选中索引语义失效，按 saved.selected 找回位置
+    this.list = this.buildList(items);
+    this.list.setFilter(this.filter);
+    if (saved?.selected !== undefined) {
+      const idx = items.findIndex((i) => i.value === saved.selected);
+      if (idx >= 0) this.list.setSelectedIndex(idx);
+    }
+    this.requestRender();
+  }
+
   handleInput(data: string): void {
+    if (this.tabs.length > 1 && (matchesKey(data, 'tab') || matchesKey(data, 'shift+tab'))) {
+      this.switchTab(matchesKey(data, 'shift+tab') ? -1 : 1);
+      return;
+    }
     if (matchesKey(data, 'escape')) {
+      // 与 Ink 对齐：有过滤词先清词，再按一次才取消
+      if (this.filter !== '') {
+        this.filter = '';
+        this.list.setFilter('');
+        this.requestRender();
+        return;
+      }
       this.onCancel();
+      return;
+    }
+    if (this.onShiftSelect !== undefined && matchesKey(data, 'shift+enter')) {
+      const sel = this.list.getSelectedItem();
+      if (sel !== null) this.onShiftSelect(sel);
       return;
     }
     if (this.onKey?.(data, this.list.getSelectedItem()) === true) return;
@@ -103,7 +172,23 @@ export class PickerOverlay implements Component {
 
   render(width: number): string[] {
     const head = `${c.accent(this.title)}${this.filter !== '' ? c.dim(`  过滤：${this.filter}`) : ''}`;
-    return [head, ...this.list.render(width), c.dim(this.hint)];
+    const lines = [head];
+    if (this.tabs.length > 1) {
+      // tab 条：active 反色加粗，其余灰色；总宽超 width 时右端截断加 …（v1 不做滚动窗口）
+      let bar = '';
+      for (let i = 0; i < this.tabs.length; i++) {
+        const t = this.tabs[i]!;
+        const seg = i === this.activeTab ? c.tabActive(` ${t.label} `) : c.dim(` ${t.label} `);
+        const next = bar === '' ? seg : `${bar} ${seg}`;
+        if (visibleWidth(next) > width - 3) {
+          bar += c.dim(' …');
+          break;
+        }
+        bar = next;
+      }
+      lines.push(bar);
+    }
+    return [...lines, ...this.list.render(width), c.dim(this.hint)];
   }
 }
 
@@ -117,27 +202,29 @@ export function sessionItems(metas: readonly SessionMeta[], now = Date.now()): S
 }
 
 /**
- * 模型选择器候选项：按渠道分组（同渠道的别名连续排列），描述里带真实 id 与窗口大小。
- * 当前生效的别名标一个「当前」。
+ * 模型选择器候选项：按渠道分组（同渠道的别名连续排列，渠道按配置首现顺序），
+ * 描述里带真实 id 与窗口大小。当前生效的别名标一个「当前」。
+ * channel 传入且非 'all' 时只留该渠道条目（渠道 tab 的结构性预过滤）。
  */
-export function modelItems(config: StepCodeConfig, currentAlias?: string): SelectItem[] {
+export function modelItems(config: StepCodeConfig, currentAlias?: string, channel?: string): SelectItem[] {
   const entries = Object.entries(config.models ?? {});
   const byChannel = new Map<string, { alias: string; model: string; ctx?: number; display?: string }[]>();
   for (const [alias, entry] of entries) {
-    const channel = entry.provider ?? config.provider ?? 'default';
-    const list = byChannel.get(channel) ?? [];
+    const ch = entry.provider ?? config.provider ?? 'default';
+    const list = byChannel.get(ch) ?? [];
     list.push({ alias, model: entry.model ?? alias, ctx: entry.maxContextSize, display: entry.displayName });
-    byChannel.set(channel, list);
+    byChannel.set(ch, list);
   }
   const items: SelectItem[] = [];
-  for (const [channel, list] of [...byChannel.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [ch, list] of byChannel.entries()) {
+    if (channel !== undefined && channel !== 'all' && ch !== channel) continue;
     for (const it of list) {
       const ctxText = it.ctx !== undefined ? ` · ${Math.round(it.ctx / 1000)}k` : '';
       const mark = it.alias === currentAlias ? '● ' : '';
       items.push({
         value: it.alias,
         label: `${mark}${it.display ?? it.alias}`,
-        description: `${channel} · ${it.model}${ctxText}`,
+        description: `${ch} · ${it.model}${ctxText}`,
       });
     }
   }
@@ -159,6 +246,16 @@ export function thinkItems(current?: string): SelectItem[] {
   }));
 }
 
+/** 模型选择器的渠道 tab 集合：'all' 恒第一，其余渠道按配置首现顺序（与 modelItems 分组同序）。 */
+export function modelTabs(config: StepCodeConfig): PickerTab[] {
+  const seen: string[] = [];
+  for (const entry of Object.values(config.models ?? {})) {
+    const channel = entry.provider ?? config.provider ?? 'default';
+    if (!seen.includes(channel)) seen.push(channel);
+  }
+  return [{ id: 'all', label: '全部' }, ...seen.sort().map((ch) => ({ id: ch, label: ch }))];
+}
+
 /** 把选择器挂成 overlay 并返回结果（取消为 null）。 */
 export function showPicker(
   tui: TUI,
@@ -167,6 +264,11 @@ export function showPicker(
     items: SelectItem[];
     hint?: string;
     onKey?: (data: string, selected: SelectItem | null, overlay: PickerOverlay) => boolean;
+    /** Shift+Enter 确认入口（模型选择器「仅本会话生效」）。 */
+    onShiftSelect?: (value: string) => void;
+    tabs?: PickerTab[];
+    itemsForTab?: (tabId: string) => SelectItem[];
+    initialTab?: string;
   },
 ): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
@@ -185,6 +287,19 @@ export function showPicker(
       onSelect: (item) => finish(item.value),
       onCancel: () => finish(null),
       onKey: (data, selected) => (opts.onKey !== undefined && overlay !== undefined ? opts.onKey(data, selected, overlay) : false),
+      onShiftSelect:
+        opts.onShiftSelect !== undefined
+          ? (item) => {
+              const v = item.value;
+              handle?.hide();
+              tui.requestRender();
+              resolve(null); // shift 路径自带结算，主 promise 置 null 防重复应用
+              opts.onShiftSelect!(v);
+            }
+          : undefined,
+      tabs: opts.tabs,
+      itemsForTab: opts.itemsForTab,
+      initialTab: opts.initialTab,
     });
     handle = tui.showOverlay(overlay, { width: '80%', maxHeight: '70%', anchor: 'center' });
     handle.focus();

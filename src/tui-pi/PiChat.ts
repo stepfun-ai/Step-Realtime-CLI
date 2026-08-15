@@ -85,7 +85,7 @@ import {
 import { ChatAutocompleteProvider } from './completion.js';
 import { clipboardToolHint, readClipboardImage } from '../chat/clipboardImage.js';
 import { extractImageContent, ImageAttachmentStore } from '../chat/imageAttachment.js';
-import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
+import { modelItems, modelTabs, showPicker, sessionItems, thinkItems } from './pickers.js';
 import { StreamBuffer } from '../chat/streamBuffer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
@@ -1711,7 +1711,19 @@ export class PiChat {
       this.push({ kind: 'note', text: '配置里没有 [models.*] 别名，先用 /model <模型 id> 直切' });
       return;
     }
-    const picked = await showPicker(this.tui, { title: '选择模型', items });
+    const tabs = modelTabs(this.deps.config);
+    const picked = await showPicker(this.tui, {
+      title: '选择模型',
+      items,
+      hint:
+        tabs.length > 1
+          ? '↑↓ 选择 · Enter 确认 · Shift+Enter 仅本会话 · Tab 切渠道 · 输入过滤 · Esc 取消'
+          : '↑↓ 选择 · Enter 确认 · Shift+Enter 仅本会话 · 输入过滤 · Esc 取消',
+      tabs,
+      itemsForTab: (tabId) => modelItems(this.deps.config, this.currentAlias, tabId),
+      // Shift+Enter = 仅本会话生效，不写回默认模型指针（Ink 版 sessionOnly 同语义）
+      onShiftSelect: (value) => this.applyModel(value, { persistDefault: false }),
+    });
     if (picked !== null) this.applyModel(picked);
   }
 
