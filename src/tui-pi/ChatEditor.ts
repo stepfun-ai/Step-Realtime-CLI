@@ -17,6 +17,14 @@ export class ChatEditor extends Editor {
   /** 返回 true 表示控制器已消费这次 Ctrl+C。 */
   onCtrlC?: () => boolean;
   /**
+   * Ctrl+V：读剪贴板图片。返回 true 表示已消费。
+   *
+   * 终端里的 Ctrl+V 通常不是「粘贴」——粘贴由终端软件自己处理并以 bracketed paste
+   * 的形式送进来，Ctrl+V 这个按键本身会原样到达应用。Ink 版据此把它用作贴图入口，
+   * 这里沿用同一约定。
+   */
+  onCtrlV?: () => boolean;
+  /**
    * 自动补全菜单是否打开。Editor 的补全状态是私有字段，外部读不到；M4 接补全时由
    * provider 侧回填这个标记，M1 阶段没有 provider，恒为 false。
    */
@@ -33,6 +41,9 @@ export class ChatEditor extends Editor {
     }
     if (matchesKey(data, 'ctrl+c')) {
       if (this.onCtrlC?.() === true) return;
+    }
+    if (matchesKey(data, 'ctrl+v')) {
+      if (this.onCtrlV?.() === true) return;
     }
     super.handleInput(data);
   }

@@ -81,6 +81,8 @@ import {
   notWiredText,
 } from './commandText.js';
 import { ChatAutocompleteProvider } from './completion.js';
+import { clipboardToolHint, readClipboardImage } from '../tui/clipboardImage.js';
+import { extractImageContent, ImageAttachmentStore } from '../tui/imageAttachment.js';
 import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
 import { StreamBuffer } from '../chat/streamBuffer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
@@ -171,6 +173,14 @@ export class PiChat {
    * 同时看到用户的话。
    */
   private steers: string[] = [];
+  /**
+   * 图片附件池（Ctrl+V 贴进来的图）。
+   *
+   * 图片以占位符文本的形式待在输入框里，用户用退格删掉占位符就等于移除那张图，
+   * 不需要额外的「取消附件」交互。提交时 extractImageContent 把仍在的占位符
+   * 展开成 image block。
+   */
+  private readonly images = new ImageAttachmentStore();
   /** 本轮 run 给出的续接文本（goal 续跑或 Stop hook 兜底），回合收尾时派发。 */
   private continuation: string | null = null;
   private readonly subagentCounter = { spawned: 0 };
@@ -250,6 +260,12 @@ export class PiChat {
     };
     this.editor.onEscapeKey = () => this.onEscape();
     this.editor.onCtrlC = () => this.onCtrlC();
+    // Ctrl+V 读剪贴板图片。busy 时也允许：只往输入框草稿追加占位符，不碰在跑的回合
+    // （提交走排队路径，drain 时统一展开成图）。
+    this.editor.onCtrlV = () => {
+      void this.attachClipboardImage();
+      return true;
+    };
 
     // cron 装配：到点把 prompt 静默注入跑一轮；isIdle 闸门保证回合进行中不触发
     // （错过的会在下个空闲 tick 合并补投，coalesced 计数进卡片）。
@@ -464,7 +480,10 @@ export class PiChat {
   // ---------------------------------------------------------------- 提交
 
   private async onSubmit(raw: string): Promise<void> {
-    const text = raw.trim();
+    // 粘贴占位符先还原为原文：pi-tui Editor 把大段粘贴折叠成标记，getText 拿到的是折叠形态，
+    // 直接发出去模型只会看到「[pasted 120 lines]」这种标记而不是内容。
+    const expanded = this.editor.getExpandedText();
+    const text = (expanded === '' ? raw : expanded).trim();
     this.editor.setText('');
     if (text === '') return;
     this.editor.addToHistory(text);
@@ -682,6 +701,35 @@ export class PiChat {
     // 空集合时不打这一行：全部接线后还挂个空提示，看起来像功能残缺
     if (NOT_WIRED.size > 0) lines.push(`pi 版尚未接线：${[...NOT_WIRED].map((n) => '/' + n).join(' ')}`);
     return lines.join('\n');
+  }
+
+  /**
+   * 读剪贴板图片并把占位符追加到输入框。
+   *
+   * 失败给三级诊断而不是一句「没有图片」：缺平台工具（Windows 无 PowerShell、
+   * macOS 无 pngpaste）与「剪贴板里确实没图」是两回事，用户按了没反应时需要
+   * 知道该装工具还是该重新复制。中间那级把剪贴板实际有哪些格式打出来，
+   * 下次失败可直接定位。
+   */
+  private async attachClipboardImage(): Promise<void> {
+    this.push({ kind: 'note', text: '正在读剪贴板图片…' });
+    const { image, formats } = await readClipboardImage();
+    if (image === null) {
+      const hint = clipboardToolHint();
+      if (hint !== null) {
+        this.push({ kind: 'note', text: hint });
+      } else if (formats !== null && formats !== '' && formats !== '<empty>') {
+        const shown = formats.length > 200 ? `${formats.slice(0, 200)}…` : formats;
+        this.push({ kind: 'note', text: `剪贴板里没有图片。当前格式：${shown}` });
+      } else {
+        this.push({ kind: 'note', text: '剪贴板里没有图片' });
+      }
+      return;
+    }
+    const att = this.images.add(image.base64, image.mediaType, image.width, image.height);
+    const cur = this.editor.getText();
+    this.editor.setText((cur === '' || cur.endsWith(' ') ? cur : `${cur} `) + att.placeholder);
+    this.tui.requestRender();
   }
 
   // ---------------------------------------------------------------- goal 与 team
@@ -1343,6 +1391,7 @@ export class PiChat {
     this.todos.items = [];
     this.subagentCounter.spawned = 0;
     this.sessionApprovals.clear();
+    this.images.clear();
     // 新会话 model 存别名（同 persist 口径），避免真实 id 被启动时的别名反查误判
     this.session = this.deps.store.create(this.deps.ctx.cwd, this.currentAlias ?? this.model);
     this.rebindBackground();
@@ -1807,8 +1856,18 @@ export class PiChat {
    * 但仍要作为 user 消息进历史，否则模型看不到续接指令。
    */
   private async runTurn(text: string, opts?: { silent?: boolean }): Promise<void> {
-    if (opts?.silent !== true) this.push({ kind: 'user', text });
-    this.history.push(stored({ role: 'user', content: text }, { kind: opts?.silent === true ? 'injection' : 'user' }));
+    // 图片占位符 → image content block。没有图片时 content 就是原文本（走旧路径），
+    // 转录区显示的是折叠掉占位符的正文，不把 base64 摊到屏幕上。
+    const extracted = extractImageContent(text, this.images);
+    if (opts?.silent !== true) {
+      this.push({
+        kind: 'user',
+        text: extracted.imageCount > 0 ? `${extracted.displayText} [${extracted.imageCount} 张图]` : text,
+      });
+    }
+    this.history.push(
+      stored({ role: 'user', content: extracted.content }, { kind: opts?.silent === true ? 'injection' : 'user' }),
+    );
 
     this.busy = true;
     this.activity.setBusy(true);
