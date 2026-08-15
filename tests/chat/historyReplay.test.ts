@@ -1,7 +1,8 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import type { MessageOriginKind, StoredMessage } from '../../src/agent/message.js';
-import { historyToDisplayItems } from '../../src/chat/historyReplay.js';
+import { assembleResumeItems, historyToDisplayItems } from '../../src/chat/historyReplay.js';
+import type { DisplayItem } from '../../src/tui/types.js';
 
 function m(
   message: Anthropic.MessageParam,
@@ -210,5 +211,41 @@ describe('historyToDisplayItems', () => {
       'q4',
       'q5',
     ]);
+  });
+});
+
+describe('assembleResumeItems', () => {
+  it('折叠提示置顶，恢复 note 与尾随提示 note 贴底', () => {
+    const replay = {
+      items: [
+        { kind: 'user', text: 'q' },
+        { kind: 'assistant', text: 'a' },
+      ] as DisplayItem[],
+      totalTurns: 20,
+      foldedTurns: 5,
+    };
+    const resumedNote: DisplayItem = { kind: 'note', text: '已恢复会话 s1' };
+    const tail: DisplayItem[] = [
+      { kind: 'note', text: '目标已暂停：x' },
+      { kind: 'note', text: '后台任务 bg1 已补投' },
+    ];
+    const items = assembleResumeItems(replay, resumedNote, tail);
+    expect(items[0]!.kind).toBe('note');
+    expect((items[0] as { text: string }).text).toContain('折叠');
+    expect(items.slice(1, 3)).toEqual(replay.items);
+    // 恢复 note 在尾随提示之前，全部贴底（回归：整体替换 setItems 前 pushItem 的 note 曾被覆盖丢失）
+    expect(items.slice(-3)).toEqual([resumedNote, ...tail]);
+  });
+
+  it('无折叠时不出现折叠提示，尾随 note 仍贴底', () => {
+    const replay = {
+      items: [{ kind: 'user', text: 'q' }] as DisplayItem[],
+      totalTurns: 1,
+      foldedTurns: 0,
+    };
+    const resumedNote: DisplayItem = { kind: 'note', text: '已恢复会话 s2' };
+    const items = assembleResumeItems(replay, resumedNote, [{ kind: 'note', text: '目标已暂停：y' }]);
+    expect(items[0]).toEqual({ kind: 'user', text: 'q' });
+    expect(items.slice(-2)).toEqual([resumedNote, { kind: 'note', text: '目标已暂停：y' }]);
   });
 });

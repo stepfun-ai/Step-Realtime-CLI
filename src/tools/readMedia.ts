@@ -14,9 +14,15 @@ export const READ_MEDIA_MAX_BYTES = 100 * 1024 * 1024;
 export const READ_MEDIA_IMAGE_BYTE_BUDGET = 256 * 1024;
 /** 交付图片的长边像素上限：超出则等比降采样（对齐主流视觉模型的推荐输入尺寸）。 */
 export const READ_MEDIA_MAX_EDGE_PX = 1568;
+/**
+ * 交付给模型的视频字节预算（原始字节）：超出直接拒绝。
+ * 32MB：覆盖常见社媒视频与录屏片段；视频只能 inline base64（v1 无文件上传通道），
+ * base64 膨胀 1.33 倍后请求体约 43MB，是愿意承担的上限。可按别名 video_budget_bytes 放大。
+ */
+export const READ_MEDIA_VIDEO_BYTE_BUDGET = 32 * 1024 * 1024;
 
 const schema = z.object({
-  path: z.string().describe('要读取的图片文件路径，相对当前工作目录或绝对路径。'),
+  path: z.string().describe('要读取的图片或视频文件路径，相对当前工作目录或绝对路径。'),
   region: z
     .object({
       x: z.number().int().min(0).describe('裁剪区域左上角 x（原图像素坐标）。'),
@@ -38,7 +44,7 @@ const schema = z.object({
 
 type Input = z.infer<typeof schema>;
 
-/** 视频/音频魔数嗅探：命中则明说 v1 不支持（区别于「不是图片」的笼统报错）。 */
+/** 视频/音频魔数嗅探：视频走 video_in 门控的交付路径，音频仍明说 v1 不支持（区别于「不是图片」的笼统报错）。 */
 function sniffMediaKind(buf: Buffer): 'video' | 'audio' | null {
   if (buf.length >= 12) {
     // MP4/MOV 等 ISO-BMFF：偏移 4 起是 ftyp
@@ -61,6 +67,17 @@ function sniffMediaKind(buf: Buffer): 'video' | 'audio' | null {
   if (buf.length >= 3 && buf.subarray(0, 3).toString('ascii') === 'ID3') return 'audio';
   if (buf.length >= 2 && buf[0] === 0xff && (buf[1]! & 0xe0) === 0xe0) return 'audio';
   return null;
+}
+
+/**
+ * 视频容器的 media_type 判定：ftyp major brand 'qt  ' → quicktime，其余 ISO-BMFF → mp4；
+ * EBML 头（sniffMediaKind 已确认是视频）→ webm。brand 误判的风险由端点容错与降级链兜底。
+ */
+function sniffVideoMediaType(buf: Buffer): string {
+  if (buf.length >= 12 && buf.subarray(4, 8).toString('ascii') === 'ftyp') {
+    return buf.subarray(8, 12).toString('ascii') === 'qt  ' ? 'video/quicktime' : 'video/mp4';
+  }
+  return 'video/webm';
 }
 
 /** jimp 可重新编码的目标格式：jpeg→jpeg，其余（png/gif/bmp/tiff）→png。webp jimp 不支持，调用方已拦。 */
@@ -124,7 +141,7 @@ function buildProbeNote(meta: ImageMeta, rawBytes: number, maxEdge: number, byte
 export const readMediaTool: ToolDef<Input> = {
   name: 'read_media',
   description:
-    '读取本地图片文件，把图片内容回传给模型看。支持 png/jpeg/gif/bmp/webp；超预算（>4MB 或长边 >1568px）会自动等比降采样，可用 region 只看原图某个区域。读大图/长图前先用 probe:true 拿精确尺寸与建议分块，避免盲目猜 region 报错。视频/音频 v1 暂不支持。',
+    '读取本地图片或视频文件，把媒体内容回传给模型看。图片支持 png/jpeg/gif/bmp/webp；超预算（>4MB 或长边 >1568px）会自动等比降采样，可用 region 只看原图某个区域。读大图/长图前先用 probe:true 拿精确尺寸与建议分块，避免盲目猜 region 报错。视频（mp4/mov/webm 等）要求当前模型声明 video_in 能力，按原始字节 inline 交付，默认预算 32MB；音频 v1 暂不支持。',
   schema,
   access: (input, ctx) => ({ kind: 'read', path: resolvePath(ctx.cwd, input.path) }),
   async execute(input, ctx) {
@@ -168,7 +185,27 @@ export const readMediaTool: ToolDef<Input> = {
     if (meta === null) {
       const kind = sniffMediaKind(buf);
       if (kind === 'video') {
-        return fail(`这是视频文件，read_media v1 暂不支持读取视频：${input.path}`);
+        // 能力门控（与 image_in 同一口径）：显式声明了 capabilities 且不含 video_in 才拒绝；
+        // capabilities undefined（裸模型/未命中别名）放行，由投影/降级链兜底。
+        if (ctx.capabilities !== undefined && !ctx.capabilities.includes('video_in')) {
+          return fail(
+            `当前模型未声明视频输入能力（capabilities 无 video_in），无法用 read_media 读取视频。` +
+              `可 /model 切换到声明了 video_in 的模型，或用 ffmpeg 抽帧后按图片读取。`,
+          );
+        }
+        const videoBudget = ctx.videoBudgetBytes ?? READ_MEDIA_VIDEO_BYTE_BUDGET;
+        if (st.size > videoBudget) {
+          return fail(
+            `视频过大（${st.size} 字节，超过交付预算 ${videoBudget}），无法用 read_media 交付给模型。` +
+              `可在别名配置 video_budget_bytes 放大预算，或剪短/抽帧后再读。`,
+          );
+        }
+        const mediaType = sniffVideoMediaType(buf);
+        return {
+          content: `已读取视频 ${input.path}（${mediaType}，${st.size} 字节，原始字节 inline 交付）。`,
+          isError: false,
+          videos: [{ mediaType, base64: buf.toString('base64') }],
+        };
       }
       if (kind === 'audio') {
         return fail(`这是音频文件，read_media v1 暂不支持读取音频：${input.path}`);

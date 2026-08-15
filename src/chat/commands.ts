@@ -130,6 +130,18 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'new', describe: 'cmd.new' },
   { name: 'compact', describe: 'cmd.compact' },
   {
+    name: 'compact-model',
+    describe: 'cmd.compactModel',
+    getArgumentCompletions: (partial, ctx) => {
+      const q = partial.toLowerCase();
+      const subs = q === '' || 'reset'.startsWith(q) ? [{ value: 'reset', description: t('cmd.compactModel.sub.reset') }] : [];
+      const aliases = Object.entries(ctx.models)
+        .filter(([alias, entry]) => q === '' || alias.toLowerCase().includes(q) || (entry.model ?? '').toLowerCase().includes(q))
+        .map(([alias, entry]) => ({ value: alias, description: entry.displayName ?? entry.model }));
+      return [...subs, ...aliases];
+    },
+  },
+  {
     name: 'history',
     aliases: ['undo'],
     describe: 'cmd.history',
@@ -207,8 +219,9 @@ const INSTANT_WHEN_BUSY: ReadonlySet<string> = new Set(['help', 'goal', 'team', 
  * 双态命令：无参是只读查询（即时），带参是状态变更（排队）。
  * skill：无参列清单（只读），带参激活技能会注入正文改动对话，故排队到回合边界。
  * think：无参显示当前档位（busy 时退化为文本展示），带参切换会话级思考深度，故排队到回合边界。
+ * compact-model：无参查询当前压缩绑定（只读），带参切换会话级压缩模型，故排队到回合边界。
  */
-const QUERY_WHEN_NO_ARGS: ReadonlySet<string> = new Set(['model', 'provider', 'permission', 'skill', 'think', 'resume']);
+const QUERY_WHEN_NO_ARGS: ReadonlySet<string> = new Set(['model', 'provider', 'permission', 'skill', 'think', 'resume', 'compact-model']);
 
 /**
  * busy 时的命令分流（判据：是否改动当前 turn 依赖的状态）。

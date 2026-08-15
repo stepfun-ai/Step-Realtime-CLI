@@ -10,6 +10,7 @@ import {
   isCompactableUserOrigin,
   microCompact,
   selectCompactionUserMessages,
+  serializeContent,
   shouldCompact,
   usageTotalTokens,
 } from '../../src/agent/compaction/compact.js';
@@ -683,5 +684,101 @@ describe('fullCompact 用户原话保真', () => {
     expect(prompt).toContain('未验证');
     expect(prompt).toContain('你仍然不知道什么');
     expect(params['system']).toContain('第一人称');
+  });
+});
+
+describe('serializeContent 摘要输入保真（2026-08-13 A/B/C/D 探针定稿）', () => {
+  it('thinking 块整块丢弃、不留标记（[thinking] 标记诱导摘要模型模仿）', () => {
+    const out = serializeContent([
+      { type: 'thinking', thinking: '很长的思考过程……', signature: 's' } as Anthropic.ContentBlockParam,
+      textBlock('正文'),
+    ]);
+    expect(out).toBe('正文');
+    expect(out).not.toContain('[thinking]');
+  });
+
+  it('tool_use 带截断参数：命令与路径对摘要模型可见', () => {
+    const out = serializeContent([
+      { type: 'tool_use', id: 't1', name: 'bash', input: { command: 'git status' } } as unknown as Anthropic.ContentBlockParam,
+    ]);
+    expect(out).toContain('[调用工具 bash]');
+    expect(out).toContain('git status');
+  });
+
+  it('tool_use 参数超预算按头截断并标注', () => {
+    const out = serializeContent([
+      {
+        type: 'tool_use',
+        id: 't1',
+        name: 'write_file',
+        input: { path: 'a.md', content: 'x'.repeat(2000) },
+      } as unknown as Anthropic.ContentBlockParam,
+    ]);
+    expect(out.length).toBeLessThan(500);
+    expect(out).toContain('…[截断]');
+  });
+
+  it('tool_result 内嵌文本超预算按头截断', () => {
+    const out = serializeContent([
+      {
+        type: 'tool_result',
+        tool_use_id: 't1',
+        content: [{ type: 'text', text: 'r'.repeat(3000) }],
+      } as unknown as Anthropic.ContentBlockParam,
+    ]);
+    expect(out).toContain('[工具结果]');
+    expect(out.length).toBeLessThan(1100);
+    expect(out).toContain('…[截断]');
+  });
+});
+
+describe('fullCompact 闸门层失败的重试策略（2026-08-13 修复）', () => {
+  it('摘要过短 → 追加提示、原输入重试（不丢消息）', async () => {
+    const msgs: StoredMessage[] = [
+      stored({ role: 'user', content: '用户提了一个很长的需求'.repeat(50) }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好的，我分几步做'.repeat(50))] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '继续' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('做完了第一步')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近3' }, { kind: 'user' }),
+    ];
+    const longSummary = '这是一份足够长的交接摘要。'.repeat(30);
+    const { provider, streamParams } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock('太短')] },
+      { textChunks: [], finalContent: [textBlock(longSummary)] },
+    ]);
+    const out = await fullCompact(provider as never, msgs, 3);
+    // 第二次尝试成功了：压缩产物里有摘要
+    expect(summaryOf(out).message.content).toContain('早期对话摘要');
+    // 两次 stream 调用：第一次无提示，第二次带「过短」提示；且两次输入等长（未丢消息）
+    expect(streamParams()).toHaveLength(2);
+    const first = (streamParams()[0]!.messages as Array<{ content: string }>)[0]!.content;
+    const second = (streamParams()[1]!.messages as Array<{ content: string }>)[0]!.content;
+    expect(first).not.toContain('上一次产出的摘要被判不合格');
+    expect(second).toContain('上一次产出的摘要被判不合格');
+    const strip = (s: string) => s.replace(/\n\n注意：上一次产出的摘要[\s\S]*?(?=\n\n---)/, '');
+    expect(strip(second)).toBe(strip(first));
+  });
+
+  it('历史含大量 thinking 块时闸门按序列化后输入判分（原始体量不再把及格线抬爆）', async () => {
+    // 原始历史体量大（thinking 全文），但序列化后很小——按原始体量判分会把 15 token 摘要判死
+    const thinkingHeavy: StoredMessage[] = [
+      stored({
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '思'.repeat(20000), signature: 's' } as Anthropic.ContentBlockParam,
+          textBlock('做了一点事'),
+        ],
+      }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '继续' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近1')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近2' }, { kind: 'user' }),
+    ];
+    const { provider } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock('摘要：做了一点事并继续推进。')] },
+    ]);
+    const out = await fullCompact(provider as never, thinkingHeavy, 2);
+    expect(summaryOf(out).message.content).toContain('早期对话摘要');
   });
 });

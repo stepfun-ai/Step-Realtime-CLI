@@ -48,6 +48,7 @@ const UPDATE_CONFIG_BODY = `# update-config：step-code 自身配置的查询与
 | media_keep_recent | number | 10 | 媒体降级（413/400 图片超限触发）时保留的最近图片张数，更旧的图换占位文本；0 = 全部换占位。全通道生效（stepfun 走 adapter.send，其余走 withMediaDegradation wrapper）；[models.*] 下可按别名覆盖 |
 | extra_skill_dirs | string[] | 无 | 追加的 skill 扫描目录，同名 skill 追加目录胜出 |
 | disabled_skills | string[] | 无 | 按名排除的 skill 清单，任何来源的同名 skill 都不加载 |
+| skill_listing_budget | number | 8000 | system prompt 中可用技能清单的字符预算；超预算先压缩描述，再截断尾部技能。技能较多时可调大（如 20000），让更多技能名称和描述常驻；也可始终用 skill_search 工具搜索被截断的技能 |
 | continuation | table | 无 | 输出截断自动续写配置（[continuation] 段） |
 | tools | table | 无 | 网页结果缓存配置（[tools.web] 段），未配置时使用内置默认值 |
 
@@ -154,6 +155,7 @@ endpoint 解析优先级：[search.web]/[search.image] → [search] → 主会�
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | error_preview_lines | number | 4 | 工具错误输出折叠态预览行数，clamp [1, 20] |
+| terminal_title | bool | true | 把会话标题写进终端 tab 标题（OSC 0），新会话显示目录名、第一轮后换成 AI 标题；false 关闭。不支持的终端自动跳过 |
 
 ### [models.<别名>] 模型别名表（渠道与模型分离）
 
@@ -170,6 +172,7 @@ endpoint 解析优先级：[search.web]/[search.image] → [search] → 主会�
 | capabilities | string[] | 能力标记（如 thinking / image_in），原样透传给多模态门控 |
 | image_max_edge_px | number | 无（read_media 回退全局 1568） | 图片输入长边上限（像素），read_media 降采样阈值；高上限通道（如 GPT 系 2048）按别名放宽，下限钳制 256 |
 | image_budget_bytes | number | 无（read_media 回退全局 262144） | 单图交付字节预算（经济性预算，非 API 硬限制）；需要原图精度的读图场景按别名放宽，下限钳制 16384 |
+| video_budget_bytes | number | 无（read_media 回退全局 33554432） | 单视频交付字节预算（v1 视频 inline base64，膨胀 1.33 倍进请求体）；确认端点吃得下更大文件时按别名放宽，下限钳制 1048576 |
 
 ### [providers.<id>] 渠道表
 

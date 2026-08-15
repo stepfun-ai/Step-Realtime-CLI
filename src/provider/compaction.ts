@@ -34,17 +34,20 @@ export interface CompactionBinding {
 }
 
 /**
- * 解析 `[compaction] model` 为压缩摘要绑定。
+ * 解析压缩摘要模型为压缩摘要绑定。
  *
  * @param config 配置（取 `compaction.model` 与 `[models]`/`[providers]` 表）
  * @param cache 按别名缓存的 provider 实例（调用方持有，跨 `/reload` 由调用方决定是否清空）；
  *   省略则每次调用新建实例
+ * @param override 会话级覆盖（`/compact-model` 命令设置）：非 undefined 时取代
+ *   `config.compaction.model` 参与解析，解析规则与 config 来源完全一致（同一事实源）
  */
 export function resolveCompactionBinding(
   config: StepCodeConfig,
   cache?: Map<string, ChatProvider>,
+  override?: string,
 ): CompactionBinding {
-  const name = config.compaction.model;
+  const name = override ?? config.compaction.model;
   if (name === undefined || name === '') return {};
 
   const resolved = resolveModelEntry(config, name);

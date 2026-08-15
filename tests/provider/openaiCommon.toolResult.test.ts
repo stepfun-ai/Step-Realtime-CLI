@@ -298,3 +298,41 @@ describe('messagesToOpenAi · user 消息图片块（2026-08-12 实录：贴图�
     expect(Array.isArray(out[1]!.content)).toBe(true);
   });
 });
+
+describe('messagesToOpenAi · 视频块（read_media 视频回灌）', () => {
+  const videoBlock = {
+    type: 'video',
+    source: { type: 'base64', media_type: 'video/mp4', data: 'dmlkZW8=' },
+  } as unknown as Anthropic.ContentBlockParam;
+
+  it('tool_result 内嵌视频块 → video_url data URI part', () => {
+    const out = messagesToOpenAi('', [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_v',
+            content: [{ type: 'text', text: '已读取视频' }, videoBlock],
+          } as Anthropic.ToolResultBlockParam,
+        ],
+      },
+    ]);
+    expect(out[0]!.role).toBe('tool');
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: '已读取视频' },
+      { type: 'video_url', video_url: { url: 'data:video/mp4;base64,dmlkZW8=' } },
+    ]);
+  });
+
+  it('user 消息内嵌视频块 → parts 数组含 video_url', () => {
+    const out = messagesToOpenAi('', [
+      { role: 'user', content: [{ type: 'text', text: '看这个视频' }, videoBlock] },
+    ]);
+    expect(out[0]!.role).toBe('user');
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: '看这个视频' },
+      { type: 'video_url', video_url: { url: 'data:video/mp4;base64,dmlkZW8=' } },
+    ]);
+  });
+});

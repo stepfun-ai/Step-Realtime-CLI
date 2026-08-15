@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { mapBlocksDeep, type StoredMessage } from '../agent/message.js';
+import { mapBlocksDeep, type AnyContentBlock, type StoredMessage } from '../agent/message.js';
 import type { GoalState } from '../agent/goal/mode.js';
 import type { PermissionMode } from '../agent/permission/mode.js';
 import {
@@ -349,12 +349,13 @@ export class SessionStore {
    */
   offloadForStorage(cwd: string, m: StoredMessage): StoredMessage {
     const mapped = mapBlocksDeep(m.message.content, (block) => {
-      if (block.type !== 'image' || block.source.type !== 'base64') return block;
+      // 图片与视频块同一卸载通道：视频字节更大（可达几十 MB），不走 stepref 会把会话文件撑爆
+      if ((block.type !== 'image' && block.type !== 'video') || block.source.type !== 'base64') return block;
       const data = block.source.data;
       if (isStepref(data)) return block;
       const ref = this.attachments.offload(cwd, data, block.source.media_type);
       if (ref === data) return block;
-      return { ...block, source: { ...block.source, data: ref } };
+      return { ...block, source: { ...block.source, data: ref } } as AnyContentBlock;
     });
     if (!mapped.changed) return m;
     return { ...m, message: { ...m.message, content: mapped.content } };

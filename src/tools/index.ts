@@ -25,6 +25,7 @@ import { readFileTool } from './readFile.js';
 import { readMediaTool } from './readMedia.js';
 import { spawnAgentTool } from './spawnAgent.js';
 import { skillTool } from './skill.js';
+import { skillSearchTool } from './skillSearch.js';
 import { taskListTool, taskOutputTool, taskStopTool } from './task.js';
 import { todoListTool } from './todoList.js';
 import { toolSearchTool } from './toolSearch.js';
@@ -55,6 +56,7 @@ const ALL_TOOLS: ToolDef<any>[] = [
   taskOutputTool,
   taskStopTool,
   skillTool,
+  skillSearchTool,
   createGoalTool,
   updateGoalTool,
   setGoalBudgetTool,

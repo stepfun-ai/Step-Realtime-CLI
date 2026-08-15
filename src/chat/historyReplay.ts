@@ -54,6 +54,29 @@ export interface ReplayResult {
 }
 
 /**
+ * 组装 resume 完成后的完整 items：折叠提示（若有）置顶，回放历史居中，
+ * 恢复 note 与尾随提示 note（goal 暂停、后台任务补投等）贴底。
+ * 抽成纯函数的原因：调用方（App.resumeSessionById）用 setItems 整体替换 items，
+ * 中途 pushItem 的 note 会被覆盖丢失，必须先收集再一次性拼装（2026-08-15 修复）。
+ */
+export function assembleResumeItems(
+  replay: ReplayResult,
+  resumedNote: DisplayItem,
+  tailNotes: DisplayItem[] = [],
+): DisplayItem[] {
+  const head: DisplayItem[] =
+    replay.foldedTurns > 0
+      ? [
+          {
+            kind: 'note',
+            text: t('app.replay.folded', { folded: replay.foldedTurns, total: replay.totalTurns }),
+          },
+        ]
+      : [];
+  return [...head, ...replay.items, resumedNote, ...tailNotes];
+}
+
+/**
  * 把历史消息转成 DisplayItem 列表。
  * keepTurns 控制回放的最近轮数；<=0 表示全量。
  */

@@ -185,14 +185,14 @@ When several step processes switch models at the same time, the last writer wins
 | `thinking` | The model emits its reasoning process | Historical thinking blocks are sent back with the request instead of being stripped |
 | `tool_use` | The model supports tool calling | The tool table is sent normally |
 | `cache_control` | The model accepts prompt cache breakpoints | Allows injecting that field (measured as incompatible on the Step family, so it is not injected by default) |
-| `video_in` | The model accepts video input | Reserved (the v1 video path is not implemented) |
+| `video_in` | The model accepts video input | `read_media` can read videos (mp4/mov/webm, delivered inline as raw bytes, default budget 32 MB); video blocks in requests are not projected to placeholder text |
 | `audio_in` | The model accepts audio input | Reserved |
 
-**Defaults when undeclared**: `image_in` / `thinking` / `tool_use` are treated as **supported**, and `cache_control` is not injected.
+**Defaults when undeclared**: `image_in` / `thinking` / `tool_use` are treated as **supported**, `video_in` is treated as **unsupported** (video blocks are large and endpoint support is narrow; undeclared models get video blocks projected to placeholder text before sending), and `cache_control` is not injected.
 
 This bias is deliberate. Guess a capability too low and the client silently strips content you actually sent (images replaced by placeholder text, historical thinking deleted) with no error and nothing to see; guess too high and the server returns an explicit error, with automatic reprojection downgrade as a fallback. **Silently losing content is far harder to diagnose than an explicit error**, so the default is to let it through.
 
-The semantics of `capabilities` are **additive only**: listing a value declares support, and dimensions you omit fall back to the defaults above — omitting one never costs you a capability.
+The semantics of `capabilities`: listing a value declares support, and dimensions you omit fall back to the defaults above — omitting one never costs you a capability. A `-` prefix **explicitly negates** (e.g. `capabilities = ["-image_in"]` declares the model does not accept images) for cases where you know the endpoint's behavior: once declared, submitting a message with images is blocked with a notice, and images in history are projected as placeholder text before sending (originals are kept; switching back to a vision-capable model restores them). A lone `-` is treated as an unknown value and fails at startup.
 
 - The value domain is validated: an unknown capability name (for example `image_in` misspelled as `image-in`) fails at startup with the list of valid values, instead of silently doing nothing. A wrong field type (not a non-empty string array) also fails.
 - Case and surrounding whitespace are normalized (`IMAGE_IN` equals `image_in`).
@@ -327,6 +327,9 @@ Cleanup for `max_sessions` / `ttl_days` runs once at process startup, and every 
 | `model` | — | — | A dedicated model for compaction summaries; defaults to the main model. Accepts either a model id or an alias from `[models.<alias>]` — with an alias, summaries go through that alias's **channel** (endpoint / key / protocol), so the main conversation and compaction can live on different channels |
 | `user_message_max_tokens` | 20000 | 0–200000 | Verbatim budget for the user's own words: the total volume of original user messages preserved separately alongside the summary during compaction. 0 disables the verbatim block, returning to pure summary behavior |
 | `user_message_head_tokens` | 2000 | 0–the previous field | The share of the verbatim budget allotted to the "earliest messages"; the remainder goes to the most recent ones |
+
+At runtime, `/compact-model` switches the compaction model at session scope (overrides the `model` setting, not persisted; `/new` and restarts return to the config):
+`/compact-model <alias|model-id>` switches, `/compact-model reset` clears the override, and no arguments show the current binding source and resolution.
 
 Besides producing a handoff summary, compaction also preserves the original user messages that were compacted away, **verbatim** and as **separate messages** within the budget, placed before the summary.
 This directly addresses the fact that a summary loses the original intent through paraphrase: a summary is the model's second-hand retelling, and once the wording drifts, later turns keep working from the wrong understanding.

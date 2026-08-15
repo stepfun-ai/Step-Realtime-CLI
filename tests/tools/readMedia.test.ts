@@ -152,14 +152,15 @@ describe('read_media', () => {
     expect(r.content).toContain('图片解码失败');
   });
 
-  it('视频文件（MP4 魔数）→ 明说 v1 不支持', async () => {
+  it('视频文件（MP4 魔数）→ 能力门控报错（未声明 video_in 时）', async () => {
     const mp4 = Buffer.alloc(32);
     mp4.write('ftyp', 4, 'ascii');
     writeFileSync(join(dir, 'v.mp4'), mp4);
+    // 文件级 ctx 声明的是 ['image_in']（无 video_in）→ 明确报能力缺失而非「不是图片」
     const r = await executeTool('read_media', { path: 'v.mp4' }, ctx);
     expect(r.isError).toBe(true);
     expect(r.content).toContain('视频');
-    expect(r.content).toContain('暂不支持');
+    expect(r.content).toContain('video_in');
   });
 
   it('probe 模式：只回元数据不交付图片，小图建议无需分块', async () => {
@@ -245,5 +246,62 @@ describe('read_media', () => {
     expect(r.isError).toBe(true);
     // y clamp 到 79，height 收窄为 80-79=1
     expect(r.content).toContain('建议改用 region {x:0,y:79,width:50,height:1}');
+  });
+});
+
+/** 最小 ISO-BMFF 视频头（size + ftyp + brand），供视频分支测试。 */
+function mp4Bytes(total = 4096, brand = 'isom'): Buffer {
+  const buf = Buffer.alloc(total);
+  buf.writeUInt32BE(24, 0);
+  buf.write('ftyp', 4, 'ascii');
+  buf.write(brand, 8, 4, 'ascii');
+  return buf;
+}
+
+describe('read_media · 视频', () => {
+  it('声明 video_in → 原始字节 inline 交付，mediaType 嗅探为 video/mp4', async () => {
+    const bytes = mp4Bytes();
+    writeFileSync(join(dir, 'clip.mp4'), bytes);
+    const r = await executeTool('read_media', { path: 'clip.mp4' }, { cwd: dir, capabilities: ['image_in', 'video_in'] });
+    expect(r.isError).toBe(false);
+    expect(r.videos).toHaveLength(1);
+    expect(r.videos![0]!.mediaType).toBe('video/mp4');
+    expect(Buffer.from(r.videos![0]!.base64, 'base64').equals(bytes)).toBe(true);
+    expect(r.content).toContain('已读取视频');
+  });
+
+  it('capabilities 显式声明不含 video_in → 能力门控报错，提示抽帧替代', async () => {
+    writeFileSync(join(dir, 'clip.mp4'), mp4Bytes());
+    const r = await executeTool('read_media', { path: 'clip.mp4' }, { cwd: dir, capabilities: ['image_in'] });
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('video_in');
+    expect(r.content).toContain('抽帧');
+    expect(r.videos).toBeUndefined();
+  });
+
+  it('capabilities 为 undefined → 不拒绝，正常构造 videos（由投影/降级链兜底）', async () => {
+    writeFileSync(join(dir, 'clip.mp4'), mp4Bytes());
+    const r = await executeTool('read_media', { path: 'clip.mp4' }, { cwd: dir });
+    expect(r.isError).toBe(false);
+    expect(r.videos).toHaveLength(1);
+  });
+
+  it('超出交付预算 → 明确报错（按别名 video_budget_bytes 收窄验证）', async () => {
+    writeFileSync(join(dir, 'big.mp4'), mp4Bytes(4096));
+    const r = await executeTool(
+      'read_media',
+      { path: 'big.mp4' },
+      { cwd: dir, capabilities: ['image_in', 'video_in'], videoBudgetBytes: 1024 },
+    );
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('交付预算');
+    expect(r.videos).toBeUndefined();
+  });
+
+  it("ftyp brand 'qt  ' → mediaType video/quicktime", async () => {
+    writeFileSync(join(dir, 'clip.mov'), mp4Bytes(4096, 'qt  '));
+    const r = await executeTool('read_media', { path: 'clip.mov' }, { cwd: dir, capabilities: ['image_in', 'video_in'] });
+    expect(r.isError).toBe(false);
+    expect(r.videos![0]!.mediaType).toBe('video/quicktime');
   });
 });

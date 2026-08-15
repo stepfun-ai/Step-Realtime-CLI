@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { mapBlocksDeep, type StoredMessage } from './message.js';
+import { mapBlocksDeep, type AnyContentBlock, type StoredMessage } from './message.js';
 import type { AttachmentStore } from '../session/attachments.js';
 import { isStepref } from '../session/attachments.js';
 
@@ -9,24 +9,28 @@ export interface WireOptions {
   cwd: string;
 }
 
-/** 附件缺失时的图片占位文本。 */
+/** 附件缺失时的占位文本。 */
 const IMAGE_MISSING = '[image missing]';
+const VIDEO_MISSING = '[video missing]';
 
 /**
- * 把一条 wire 消息里的 stepref 图片块还原成 base64（下钻 tool_result 的数组 content，
- * read_media 回传的内嵌图片同样处理）：
- * - `source.data` 是 `stepref:<hash>` → 读回附件文件填回 base64；文件缺失则整块换成文本 `[image missing]`。
- * - 其它块（含原始 base64 图片）原样保留。无图消息返回同引用。
+ * 把一条 wire 消息里的 stepref 媒体块还原成 base64（下钻 tool_result 的数组 content，
+ * read_media 回传的内嵌图片/视频同样处理）：
+ * - `source.data` 是 `stepref:<hash>` → 读回附件文件填回 base64；文件缺失则整块换成文本占位。
+ * - 其它块（含原始 base64 媒体）原样保留。无媒体消息返回同引用。
  */
 function rehydrateMessage(msg: Anthropic.MessageParam, opts: WireOptions): Anthropic.MessageParam {
   const mapped = mapBlocksDeep(msg.content, (block) => {
-    if (block.type !== 'image' || block.source.type !== 'base64') return block;
+    if ((block.type !== 'image' && block.type !== 'video') || block.source.type !== 'base64') return block;
     if (!isStepref(block.source.data)) return block;
     const base64 = opts.attachments.rehydrate(opts.cwd, block.source.data);
     if (base64 === null) {
-      return { type: 'text', text: IMAGE_MISSING } satisfies Anthropic.TextBlockParam;
+      return {
+        type: 'text',
+        text: block.type === 'video' ? VIDEO_MISSING : IMAGE_MISSING,
+      } satisfies Anthropic.TextBlockParam;
     }
-    return { ...block, source: { ...block.source, data: base64 } };
+    return { ...block, source: { ...block.source, data: base64 } } as AnyContentBlock;
   });
   return mapped.changed ? { ...msg, content: mapped.content } : msg;
 }

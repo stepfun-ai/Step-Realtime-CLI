@@ -179,14 +179,14 @@ capabilities = ["thinking", "image_in"] # 可选，见下方 capabilities 能力
 | `thinking` | 模型带推理过程输出 | 历史思考块随请求回传，不被剥离 |
 | `tool_use` | 模型支持工具调用 | 工具表正常下发 |
 | `cache_control` | 模型接受 prompt cache 断点 | 允许注入该字段（Step 系列实测不兼容，默认不注入） |
-| `video_in` | 模型接受视频输入 | 预留（v1 视频链路未实现） |
+| `video_in` | 模型接受视频输入 | `read_media` 可读取视频（mp4/mov/webm，按原始字节 inline 交付，默认预算 32MB）；请求里的视频块不被投影为占位文本 |
 | `audio_in` | 模型接受音频输入 | 预留 |
 
-**未声明时的默认值**：`image_in` / `thinking` / `tool_use` 默认视为**支持**，`cache_control` 默认不注入。
+**未声明时的默认值**：`image_in` / `thinking` / `tool_use` 默认视为**支持**，`video_in` 默认视为**不支持**（视频块体积大、端点接受面窄，未声明时发送前投影为占位文本），`cache_control` 默认不注入。
 
 这个取向是刻意的：能力猜少了，客户端会静默剥掉你真实发出的内容（图片被换成占位文本、历史思考被删），不报错也看不见；猜多了服务端会明确报错，且有自动降级重投影兜底。**静默丢内容比显式报错难查得多**，所以默认放行。
 
-`capabilities` 的语义是**只增不减**：写了某个值就是声明支持，没写的维度沿用上面的默认值，不会因为漏写而丢能力。
+`capabilities` 的语义：写了某个值就是声明支持，没写的维度沿用上面的默认值，不会因为漏写而丢能力。此外支持 `-` 前缀**显式取负**（如 `capabilities = ["-image_in"]` 声明该模型不收图片），用于你确知端点行为的场景——声明不收图后，带图提交会被拦下并提示，历史中的图片在发送前以占位文本投影（原图保留，切回多模态模型即恢复）。孤立的 `-` 视为未知值，启动报错。
 
 - 取值域有校验：写了未知能力名（如把 `image_in` 拼成 `image-in`）会在启动时报错并列出可用值，不再静默失效。字段类型不对（不是非空字符串数组）同样报错。
 - 大小写与首尾空白会被归一（`IMAGE_IN` 等同 `image_in`）。
@@ -326,6 +326,9 @@ max_auto_continues = 3  # 默认 3；设 0 关闭自动续写
 | `user_message_max_tokens` | 20000 | 0–200000 | 用户原话保真预算：压缩时在摘要之外单独保留的用户原始消息总量。0 = 关闭保真块，回到纯摘要行为 |
 | `user_message_head_tokens` | 2000 | 0–上一项 | 保真预算中划给「最早消息」的份额，其余给最近消息 |
 
+运行时可用 `/compact-model` 会话级切换压缩模型（覆盖 `model` 配置，不落盘，`/new` 与重启后回到配置）：
+`/compact-model <别名|模型id>` 切换、`/compact-model reset` 清除覆盖、无参查询当前绑定来源与解析结果。
+
 压缩时除了生成交接摘要，还会把被压缩掉的用户原始消息在预算内以**独立消息**形态逐条**原样**保留，排在摘要之前。
 这是对「摘要转述丢失原始意图」的正面修补：摘要是模型的二手转述，措辞一旦漂移，后续回合会按错误理解继续干活。
 
@@ -407,6 +410,15 @@ enabled = true   # 默认 false：不注入记忆段、不建目录；已有文�
 `notify_terminal` 的两层机制：BEL 铃响所有终端通用；OSC 9 桌面通知只在识别得出支持的终端里发送（iTerm2、WezTerm、Kitty、Ghostty、Windows Terminal、Warp），tmux 内自动套 DCS 透传。不支持的终端只会响铃，不报错。
 
 非布尔值写在 bool 字段上、非数字写在 `bash_task_timeout_s` 上时，该字段视为未配置、落默认值。
+
+### `[tui]` 终端界面
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `error_preview_lines` | int | 4 | 工具错误输出折叠态预览行数，clamp 到 1–20 |
+| `terminal_title` | bool | true | 把会话标题写进终端 tab 标题（OSC 0）；`false` 为不写 |
+
+`terminal_title` 开启时，会话的 tab 标题在新会话时为当前目录名，第一轮回答后自动换成 AI 生成的会话标题，`/resume` 切换会话、`/rename` 改名时同步更新，退出时清空。不支持的终端（非 TTY 重定向、`TERM=dumb`、CI 环境、tmux 未开启 passthrough）会自动跳过，不会污染输出；也可用环境变量 `STEP_CODE_NO_TERMINAL_TITLE=1` 强制关闭。Windows Terminal 的 profile 若设了 `suppressApplicationTitle: true`，tab 标题被终端侧锁定，程序无法修改。
 
 ### `[search]` 联网搜索
 
@@ -494,6 +506,7 @@ timeout = 30                                 # 秒，可选，默认 30，硬顶
 | 变量 | 说明 |
 |------|------|
 | `STEP_CODE_API_KEY` | API key，隐式渠道只认这个变量 |
+| `STEP_CODE_NO_TERMINAL_TITLE` | 设为 `1` 时不写终端 tab 标题（同 `[tui] terminal_title = false`，不改 config 也能立刻关掉） |
 | `ANTHROPIC_API_KEY` | 渠道/provider 类型为 `anthropic` 时的惯例 key 变量 |
 | `OPENAI_API_KEY` | 渠道/provider 类型为 `openai` / `openai_responses` 时的惯例 key 变量 |
 | `STEP_CODE_PROVIDER` | 服务商，优先级高于 config.toml、低于 `--provider` |

@@ -682,3 +682,52 @@ describe('SessionStore 索引缓存（_index.json）', () => {
     expect(store.list(cwd).map((m) => m.id)).toEqual([s.id]);
   });
 });
+
+describe('SessionStore 视频引用式存储（与图片同一卸载通道）', () => {
+  function bigBase64(bytes = 4000): string {
+    return Buffer.alloc(bytes, 7).toString('base64');
+  }
+
+  function videoStored(b64: string) {
+    return stored(
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_v',
+            content: [
+              { type: 'text', text: '已读取视频' },
+              { type: 'video', source: { type: 'base64', media_type: 'video/mp4', data: b64 } },
+            ],
+          } as Anthropic.ToolResultBlockParam,
+        ],
+      },
+      { kind: 'tool' },
+    );
+  }
+
+  function videoData(sm: { message: Anthropic.MessageParam }): string {
+    const content = sm.message.content as Anthropic.ToolResultBlockParam[];
+    const inner = content[0]!.content as Array<{ type: string; source?: { data: string } }>;
+    return inner.find((b) => b.type === 'video')!.source!.data;
+  }
+
+  it('save：落盘文件里 tool_result 内嵌视频是 stepref，内存 history 仍是原始 base64', () => {
+    const b64 = bigBase64();
+    const s = store.create(cwd, 'm');
+    s.messages.push(videoStored(b64));
+    store.save(s);
+
+    const raw = readFileSync(join(base, workdirKey(cwd), `${s.id}.json`), 'utf8');
+    expect(raw).toContain('stepref:');
+    expect(raw).not.toContain(b64);
+
+    // 内存态未被污染
+    expect(videoData(s.messages[0]!)).toBe(b64);
+
+    // 读回快照后是 stepref（供 toWire rehydrate）
+    const loaded = store.load(cwd, s.id)!;
+    expect(isStepref(videoData(loaded.messages[0]!))).toBe(true);
+  });
+});

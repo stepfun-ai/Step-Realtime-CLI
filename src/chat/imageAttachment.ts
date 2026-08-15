@@ -145,3 +145,25 @@ export function extractImageContent(text: string, store: ImageAttachmentStore): 
     displayText: displayParts.join('').trim(),
   };
 }
+
+/**
+ * 统计历史中的图片块数（顶层 image 块 + tool_result 内嵌图）。
+ *
+ * 用途：切到显式声明不收图（capabilities 含 `-image_in`）的模型时，据此提示
+ * 「历史里这 N 张图会以占位文本投影」。原图仍在会话里，切回多模态模型即恢复——
+ * 投影发生在发送前的包装层（`withCapabilityProjection`），不改写历史。
+ */
+export function countHistoryImages(messages: readonly { message: { content: unknown } }[]): number {
+  let n = 0;
+  for (const sm of messages) {
+    const c = sm.message.content;
+    if (!Array.isArray(c)) continue;
+    for (const b of c as { type?: string; content?: unknown }[]) {
+      if (b.type === 'image') n++;
+      else if (b.type === 'tool_result' && Array.isArray(b.content)) {
+        for (const inner of b.content as { type?: string }[]) if (inner.type === 'image') n++;
+      }
+    }
+  }
+  return n;
+}

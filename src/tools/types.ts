@@ -65,10 +65,18 @@ export interface ToolContext {
   imageMaxEdgePx?: number;
   /** 当前模型的单图交付字节预算（来自别名 image_budget_bytes）。缺省由 read_media 回退 256KB。 */
   imageBudgetBytes?: number;
+  /** 当前模型的单视频交付字节预算（来自别名 video_budget_bytes）。缺省由 read_media 回退 32MB。 */
+  videoBudgetBytes?: number;
 }
 
 /** 工具结果附带的图片载荷（如 read_media 读图），回灌时内嵌进 tool_result 的 content 块数组。 */
 export interface ToolResultImage {
+  mediaType: string;
+  base64: string;
+}
+
+/** 工具结果附带的视频载荷（如 read_media 读视频），回灌时内嵌进 tool_result 的 content 块数组。 */
+export interface ToolResultVideo {
   mediaType: string;
   base64: string;
 }
@@ -87,6 +95,12 @@ export interface ToolResult {
    * 不参与 tool_end 事件（UI 只回 text 部分）。
    */
   images?: ToolResultImage[];
+  /**
+   * 返回给模型的视频（可选）。与 images 同通道升格进 tool_result 块数组；
+   * Anthropic 官方类型无 video 块，wire 形态由各协议适配层负责（openai → video_url，
+   * anthropic → 同形状 video 扩展块），能力不支持时由投影层换占位文本。
+   */
+  videos?: ToolResultVideo[];
 }
 
 /**

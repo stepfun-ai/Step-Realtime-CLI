@@ -332,7 +332,7 @@ export function skillListing(registry: SkillRegistry, budget: number = SKILL_LIS
   }
   let out = LISTING_HEADER + kept.join('\n');
   if (omitted > 0) {
-    out += `\n（另有 ${omitted} 个技能因篇幅省略，可用 /skill <名称> 或直接说明需求后激活）`;
+    out += `\n（另有 ${omitted} 个技能因篇幅省略，用 skill_search 工具按关键词搜索，或 /skill <名称> 激活）`;
   }
   return out;
 }

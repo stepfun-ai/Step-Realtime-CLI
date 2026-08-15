@@ -28,9 +28,11 @@ export interface OpenAiMessage {
 
 /** OpenAI Chat 的多模态 content part（user/tool 消息的 content 数组元素）。 */
 export interface OpenAiContentPart {
-  type: 'text' | 'image_url';
+  type: 'text' | 'image_url' | 'video_url';
   text?: string;
   image_url?: { url: string };
+  /** 视频扩展形态（非 OpenAI 官方）：两个 openai 兼容端点 2026-08-13 实测接受。 */
+  video_url?: { url: string };
 }
 
 /** OpenAI Chat 的一次工具调用（function 型）。 */
@@ -104,6 +106,13 @@ function toolResultContent(block: Anthropic.ToolResultBlockParam): string | Open
       // data URI 格式：data:<media_type>;base64,<data>
       const url = `data:${part.source.media_type};base64,${part.source.data}`;
       parts.push({ type: 'image_url', image_url: { url } });
+    } else if ((part as { type: string }).type === 'video') {
+      // video 扩展块（官方类型无此块，read_media 视频回灌）→ video_url data URI。
+      // 两个 openai 兼容端点实测接受该形态（2026-08-13 探针）。
+      const src = (part as unknown as { source: { type: string; media_type: string; data: string } }).source;
+      if (src.type === 'base64') {
+        parts.push({ type: 'video_url', video_url: { url: `data:${src.media_type};base64,${src.data}` } });
+      }
     }
     // document / tool_use / tool_result 等块在 tool_result 里不该出现，丢弃
   }
@@ -163,6 +172,16 @@ export function messagesToOpenAi(
             type: 'image_url',
             image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` },
           });
+        } else if ((b as { type: string }).type === 'video') {
+          // user 消息内嵌视频块（与图片同路升格 parts 数组；read_media 视频经 tool_result
+          // 落地，此路径覆盖贴图/重放等 user 侧视频形态）
+          const src = (b as unknown as { source: { type: string; media_type: string; data: string } }).source;
+          if (src.type === 'base64') {
+            imageParts.push({
+              type: 'video_url',
+              video_url: { url: `data:${src.media_type};base64,${src.data}` },
+            });
+          }
         }
       }
       for (const tr of toolResults) {

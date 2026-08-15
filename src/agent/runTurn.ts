@@ -635,21 +635,22 @@ export async function* runTurn(
 }
 
 /**
- * 组装 tool_result 块。result.images 非空时 content 从纯文本升格为块数组
- * [{type:'text',text}, ...imageBlocks]（Anthropic 官方支持 tool_result 内嵌 image，
- * 这是 read_media 等工具把图片回灌给模型的通道）。无图片时维持纯文本形态不变。
+ * 组装 tool_result 块。result.images/videos 非空时 content 从纯文本升格为块数组
+ * [{type:'text',text}, ...mediaBlocks]（Anthropic 官方支持 tool_result 内嵌 image，
+ * 这是 read_media 等工具把媒体回灌给模型的通道；video 块是扩展形状，官方类型无此块，
+ * 由下游协议适配层翻译）。无媒体时维持纯文本形态不变。
  */
 function makeToolResult(
   toolUseId: string,
   result: ToolResult,
 ): Anthropic.ToolResultBlockParam {
   const base = { type: 'tool_result' as const, tool_use_id: toolUseId, is_error: result.isError };
-  if (result.images === undefined || result.images.length === 0) {
+  const hasMedia = (result.images?.length ?? 0) > 0 || (result.videos?.length ?? 0) > 0;
+  if (!hasMedia) {
     return { ...base, content: result.content };
   }
-  const content: Exclude<Anthropic.ToolResultBlockParam['content'], string> = [
-    { type: 'text', text: result.content },
-    ...result.images.map((img) => ({
+  const mediaBlocks = [
+    ...(result.images ?? []).map((img) => ({
       type: 'image' as const,
       source: {
         type: 'base64' as const,
@@ -657,6 +658,11 @@ function makeToolResult(
         data: img.base64,
       },
     })),
+    ...(result.videos ?? []).map((v) => ({
+      type: 'video' as const,
+      source: { type: 'base64' as const, media_type: v.mediaType, data: v.base64 },
+    })),
   ];
-  return { ...base, content };
+  const content = [{ type: 'text' as const, text: result.content }, ...mediaBlocks];
+  return { ...base, content: content as Anthropic.ToolResultBlockParam['content'] };
 }

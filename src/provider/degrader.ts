@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ModelCapability } from './capability-registry.js';
 import { isContextOverflowError } from './retry.js';
+import type { ChatProvider } from './types.js';
 
 /**
  * 按能力声明的主动降级 + 错误驱动的重投影链。
@@ -21,6 +22,7 @@ const MEDIA_BLOCK_TYPES = new Set(['image', 'document']);
 /** 媒体块占位文本：如实告知模型此处有媒体被省略。 */
 const IMAGE_OMITTED_TEXT = '[image omitted: model has no image input]';
 const DOCUMENT_OMITTED_TEXT = '[document omitted: model has no document input]';
+const VIDEO_OMITTED_TEXT = '[video omitted: model has no video input]';
 /**
  * 降级重投影换下的旧图占位文本：必须保留「原图曾存在、因 API 限制被移除」的语义。
  * 模型在前面的轮次可能描述过这些图，只写 [image omitted] 会让它以为自己记错了；
@@ -65,12 +67,25 @@ function stripCacheControl(block: Block): Block {
   return rest as Block;
 }
 
-/** 映射一条消息；空的 content 数组原样保留（不在这里丢消息，避免改变轮次结构）。 */
+/**
+ * 映射一条消息；空的 content 数组原样保留（不在这里丢消息，避免改变轮次结构）。
+ * 下钻 tool_result 的数组 content：read_media 回灌的图片/视频块内嵌在内层，
+ * 只看顶层会让投影与降级对它们全部失效（2026-08-13 视频支持时发现的既有缺口：
+ * 内嵌图片此前也不参与投影与 keepRecent 计数）。
+ */
 function mapBlocks(msg: Anthropic.MessageParam, fn: (block: Block) => Block | null): Anthropic.MessageParam {
   if (typeof msg.content === 'string') return msg;
   const out: Block[] = [];
   for (const block of msg.content) {
-    const mapped = fn(block);
+    let mapped = fn(block);
+    if (mapped !== null && mapped.type === 'tool_result' && Array.isArray(mapped.content)) {
+      const inner: unknown[] = [];
+      for (const ib of mapped.content) {
+        const m2 = fn(ib as Block);
+        if (m2 !== null) inner.push(m2);
+      }
+      mapped = { ...mapped, content: inner } as Block;
+    }
     if (mapped !== null) out.push(mapped);
   }
   return { role: msg.role, content: out };
@@ -92,6 +107,11 @@ export function degradeMessages(
     mapBlocks(msg, (block) => {
       let b: Block | null = block;
       if (!capability.image_in && isMediaBlock(b)) b = mediaPlaceholder(b);
+      // video 块独立门控（官方类型无此块，按运行时形状判定）：模型未声明 video_in 时
+      // 发送前换占位文本，与 image 投影同一层生效（2026-08-13 read_media 视频支持引入）。
+      if (!capability.video_in && (b as unknown as { type: string }).type === 'video') {
+        b = { type: 'text', text: VIDEO_OMITTED_TEXT };
+      }
       if (!capability.reasoning && isThinkingBlock(b)) b = null;
       if (b !== null && !capability.cache_control) b = stripCacheControl(b);
       return b;
@@ -120,18 +140,28 @@ export function applyReprojectionLevel(
 
   // media-degraded 且要保留最近 N 张时，先按消息逆序数出要保留的 image 块集合。
   // 同一块可能被多条消息引用（实际上不会，但防御），用 Set 去重。
+  // 下钻 tool_result 内嵌块：read_media 回灌的图片在内层，漏数会把「最近的图」判成旧图剥掉。
   let keep: Set<Block> | undefined;
   if (level === 'media-degraded' && keepRecentImages > 0) {
     keep = new Set<Block>();
+    const collect = (block: Anthropic.ContentBlockParam): boolean => {
+      if (block.type === 'tool_result' && Array.isArray(block.content)) {
+        for (let ii = block.content.length - 1; ii >= 0; ii--) {
+          if (collect(block.content[ii] as Anthropic.ContentBlockParam)) return true;
+        }
+        return false;
+      }
+      if (block.type === 'image') {
+        keep!.add(block);
+        return keep!.size >= keepRecentImages;
+      }
+      return false;
+    };
     outer: for (let mi = messages.length - 1; mi >= 0; mi--) {
       const content = messages[mi]!.content;
       if (typeof content === 'string') continue;
       for (let bi = content.length - 1; bi >= 0; bi--) {
-        const block = content[bi]!;
-        if (block.type === 'image') {
-          keep.add(block);
-          if (keep.size >= keepRecentImages) break outer;
-        }
+        if (collect(content[bi]!)) break outer;
       }
     }
   }
@@ -184,6 +214,26 @@ const MEDIA_ERROR_PATTERNS: readonly RegExp[] = [
   // 端点只收 text part（智谱等）：我们发出的非 text part 只有图片，命中即媒体问题
   /content\.type.{0,30}(参数非法|取值范围|invalid|not supported|must be)/i,
 ];
+
+/**
+ * 发送前能力投影（provider 包装器）：image_in=false 时把请求消息里的媒体块
+ * 换成占位文本再发，不等服务端 400。只投影请求参数，不改历史存储——切回多模态
+ * 模型后图片自动恢复。与错误驱动的重投影链互补：声明过的端点零失败请求，
+ * 未声明的端点仍由 400 方言降级链兜底（2026-08-13 设计：能力声明 + 发送前投影）。
+ *
+ * image_in=true（默认）时原样返回 inner，零包装零开销。
+ */
+export function withCapabilityProjection<T extends ChatProvider>(
+  inner: T,
+  capability: ModelCapability,
+): T {
+  if (capability.image_in) return inner;
+  const wrapped = Object.create(Object.getPrototypeOf(inner)) as T;
+  Object.assign(wrapped, inner);
+  wrapped.stream = (params: Parameters<ChatProvider['stream']>[0]) =>
+    inner.stream({ ...params, messages: degradeMessages(params.messages, capability) });
+  return wrapped;
+}
 
 /** 从错误上提取可匹配的文本（message + error.type，覆盖 SDK 包装与裸 Error）。 */
 function errorText(err: unknown): string {

@@ -59,6 +59,10 @@ describe('busyRoute（回合进行中的命令分流）', () => {
     expect(busyRoute('think', 'high')).toBe('queue');
     expect(busyRoute('resume', '')).toBe('instant');
     expect(busyRoute('resume', '20260814-abc')).toBe('queue');
+    // compact-model：无参查询压缩绑定（只读）→ 即时；带参/reset 改绑定 → 排队
+    expect(busyRoute('compact-model', '')).toBe('instant');
+    expect(busyRoute('compact-model', 'song')).toBe('queue');
+    expect(busyRoute('compact-model', 'reset')).toBe('queue');
   });
 
   it('未知命令即时（立即提示，不用等回合结束）', () => {

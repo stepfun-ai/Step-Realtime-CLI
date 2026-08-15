@@ -109,4 +109,33 @@ describe('resolveCompactionBinding', () => {
     expect(binding.provider).toBeUndefined();
     expect(binding.model).toBe('ghost');
   });
+
+  it('会话级覆盖（/compact-model）优先于 config：override 是裸 id 时 config 里的别名不生效', () => {
+    const cfg = crossChannelConfig('step35-plan');
+    const binding = resolveCompactionBinding(cfg, undefined, 'step-3.5-flash-2603');
+    expect(binding.provider).toBeUndefined();
+    expect(binding.model).toBe('step-3.5-flash-2603');
+  });
+
+  it('override 命中别名 → 与 config 来源同一解析路径：建独立 provider、回真实模型 id', () => {
+    const binding = resolveCompactionBinding(crossChannelConfig(), undefined, 'step35-plan');
+    const inner = (binding.provider as NormalizedChatProvider).inner;
+    expect(inner).toBeInstanceOf(OpenAiChatProvider);
+    expect(binding.model).toBe('step-3.5-flash-2603');
+  });
+
+  it('override 显式传 undefined → 与现状一致（config 生效）', () => {
+    const binding = resolveCompactionBinding(crossChannelConfig('step35-plan'), undefined, undefined);
+    expect(binding.provider).toBeDefined();
+    expect(binding.model).toBe('step-3.5-flash-2603');
+  });
+
+  it('override 与 config 来源共享同一 provider 缓存（按别名键，/reload 清缓存由调用方负责）', () => {
+    const cfg = crossChannelConfig();
+    const cache = new Map<string, ChatProvider>();
+    const first = resolveCompactionBinding(cfg, cache, 'step35-plan');
+    const second = resolveCompactionBinding(cfg, cache, 'step35-plan');
+    expect(second.provider).toBe(first.provider);
+    expect(cache.size).toBe(1);
+  });
 });

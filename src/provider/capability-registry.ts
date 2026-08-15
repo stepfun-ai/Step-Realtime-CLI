@@ -14,7 +14,8 @@
  * 难查得多，所以这里刻意选择「宁可多给、让服务端拒绝」而非「宁可少给、自己先削」。
  *
  * 例外见 {@link DEFAULT_CAPABILITY} 各字段注释：cache_control 默认 false 是实测
- * 结论而非取向；video_in / audio_in 默认 false 是因为它们没有对应的降级占位路径。
+ * 结论而非取向；video_in 默认 false 是因视频块体积大、端点接受面窄，且有占位降级
+ * 路径兜底（audio_in 仍无对应路径，不映射）。
  *
  * config.toml 的显式声明通过 overrides 参数注入（本模块不直接读配置，保持与
  * config 层解耦；由工厂/装配层把配置解析成 {@link CapabilityOverride} 传进来）。
@@ -25,6 +26,8 @@
 export interface ModelCapability {
   /** 是否接受图片输入。 */
   image_in: boolean;
+  /** 是否接受视频输入。默认 false：未声明的模型收到视频块一律投影占位（安全默认）。 */
+  video_in: boolean;
   /** 是否支持 reasoning/thinking（含 thinking 块回灌）。 */
   reasoning: boolean;
   /** 是否接受 cache_control 字段（prompt cache 断点）。 */
@@ -44,6 +47,12 @@ export interface ModelCapability {
 export const DEFAULT_CAPABILITY: ModelCapability = {
   /** 默认接受图片：默认 false 会把用户真实发出的图静默换成占位文本（explore 读图失效即此因）。 */
   image_in: true,
+  /**
+   * 默认不接受视频：视频块体积大、端点接受面窄（2026-08-13 实测仅部分 openai
+   * 协议端点收 video_url），默认 true 会把几十 MB 的 base64 打给大概率
+   * 不认识的端点。视频有明确的占位降级路径（[video omitted ...]），静默劣化不成立。
+   */
+  video_in: false,
   /**
    * 默认保留 thinking 块。此维度只管「历史 thinking 块要不要保留」，不控制本次是否思考
    * （那是 sendThinking 与 reasoning.effort 的职责）。默认 false 会无条件删除历史思考
@@ -122,13 +131,14 @@ export type CapabilityKey = (typeof CAPABILITY_KEYS)[number];
 /**
  * 把 config.toml 的 capabilities 字符串数组翻译成 {@link CapabilityOverride} 的能力片段。
  *
- * 语义是**只增不减的并集**：声明某维度即置 true，
- * 未声明的维度不写进片段、继续沿用默认。这样用户漏写一个维度不会丢掉该能力，
- * 只有在静态表里显式登记例外才会降能力。
+ * 语义：正向声明置 true；**`-` 前缀显式取负置 false**（如 `"-image_in"` 声明该模型
+ * 不收图——端点只收纯文本时用，2026-08-13 智谱端点 400 实录）。未提到的维度不写进
+ * 片段、继续沿用表结果或默认。取负是给「用户确知端点行为」的显式通道，不改变
+ * 「未声明默认支持」的全局取向（静默劣化比显式报错难查，那条取向依然成立）。
  *
  * `thinking` 映射到 ModelCapability.reasoning（一个是配置词，一个是内部字段名）。
- * `video_in` / `audio_in` 目前只用于工具门控，degrader 无对应降级路径，
- * 因此不参与请求整形、此处不映射。
+ * `video_in` 映射到 ModelCapability.video_in（发送前投影把视频块换占位文本）。
+ * `audio_in` 目前只用于工具门控，degrader 无对应降级路径，不参与请求整形、此处不映射。
  */
 export function capabilitiesToOverride(
   channel: string,
@@ -136,12 +146,17 @@ export function capabilitiesToOverride(
   capabilities: readonly string[] | undefined,
 ): CapabilityOverride | undefined {
   if (capabilities === undefined || capabilities.length === 0) return undefined;
-  const declared = new Set(capabilities.map((c) => c.trim().toLowerCase()));
   const capability: Partial<ModelCapability> = {};
-  if (declared.has('image_in')) capability.image_in = true;
-  if (declared.has('thinking')) capability.reasoning = true;
-  if (declared.has('tool_use')) capability.tool_use = true;
-  if (declared.has('cache_control')) capability.cache_control = true;
+  for (const raw of capabilities) {
+    const c = raw.trim().toLowerCase();
+    const negate = c.startsWith('-');
+    const key = negate ? c.slice(1) : c;
+    if (key === 'image_in') capability.image_in = !negate;
+    else if (key === 'video_in') capability.video_in = !negate;
+    else if (key === 'thinking') capability.reasoning = !negate;
+    else if (key === 'tool_use') capability.tool_use = !negate;
+    else if (key === 'cache_control') capability.cache_control = !negate;
+  }
   if (Object.keys(capability).length === 0) return undefined;
   return { channel, model, capability };
 }

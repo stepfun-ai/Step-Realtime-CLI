@@ -89,6 +89,8 @@ export interface SubagentRunnerDeps {
   /** 图片输入长边上限与单图字节预算（来自别名声明）：同 capabilities，原样继承。 */
   imageMaxEdgePx?: number;
   imageBudgetBytes?: number;
+  /** 单视频交付字节预算（来自别名声明）：同 capabilities，原样继承。 */
+  videoBudgetBytes?: number;
   /**
    * 完整配置（组合根注入）：角色定义里的 `model` 命中 `[models.<别名>]` 时，
    * 据此解析出该别名绑定的渠道并单独构造 provider——子 agent 因此可以跨渠道
@@ -132,6 +134,7 @@ interface ResolvedBinding {
   capabilities?: readonly string[];
   imageMaxEdgePx?: number;
   imageBudgetBytes?: number;
+  videoBudgetBytes?: number;
   maxContextSize?: number;
   /** 渠道名（如 stepfun / openai），空响应诊断上下文用；fallback 路径为 undefined。 */
   providerName?: string;
@@ -156,6 +159,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       capabilities: deps.capabilities,
       imageMaxEdgePx: deps.imageMaxEdgePx,
       imageBudgetBytes: deps.imageBudgetBytes,
+      videoBudgetBytes: deps.videoBudgetBytes,
     };
     if (alias === undefined || alias === '' || deps.config === undefined) return fallback;
 
@@ -169,6 +173,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         capabilities: resolved.capabilities,
         imageMaxEdgePx: resolved.imageMaxEdgePx,
         imageBudgetBytes: resolved.imageBudgetBytes,
+        videoBudgetBytes: resolved.videoBudgetBytes,
         maxContextSize: resolved.maxContextSize,
         providerName: resolved.provider,
       };
@@ -182,6 +187,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         capabilities: resolved.capabilities,
         imageMaxEdgePx: resolved.imageMaxEdgePx,
         imageBudgetBytes: resolved.imageBudgetBytes,
+        videoBudgetBytes: resolved.videoBudgetBytes,
         maxContextSize: resolved.maxContextSize,
         providerName: resolved.provider,
       };
@@ -320,7 +326,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
       // system 拼上 skill 清单：子 agent 也能按需激活技能（与主 agent 一致的懒加载呈现）
       // cwd 覆盖（team worker 落进自己工作间）：system 提示与 ctx 同步用覆盖值
       const cwd = req.cwd ?? deps.cwd;
-      const skillPart = deps.skills !== undefined ? skillListing(deps.skills) : '';
+      const skillPart = deps.skills !== undefined ? skillListing(deps.skills, deps.config?.skillListingBudget) : '';
       // 记忆索引对子 agent 只读注入（开启时）：它做调研需要偏好上下文，但无写入权
       const memoryPart =
         deps.config?.memory?.enabled === true ? `\n\n${memorySection(scanMemory(cwd), 'readonly')}` : '';
@@ -348,6 +354,7 @@ export function createSubagentRunner(deps: SubagentRunnerDeps): RunSubagentFn {
         capabilities: binding.capabilities,
         imageMaxEdgePx: binding.imageMaxEdgePx,
         imageBudgetBytes: binding.imageBudgetBytes,
+        videoBudgetBytes: binding.videoBudgetBytes,
       };
 
       // 显示描述优先用模型写的短标签（短 description 防多行/长 prompt 溢出 TUI 行宽、

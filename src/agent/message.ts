@@ -103,8 +103,17 @@ export type ToolResultInnerBlock = Exclude<
   string | undefined
 >[number];
 
+/**
+ * 视频内容块：Anthropic 官方类型无此块（部分 anthropic 兼容端点定义了同形状扩展，
+ * openai 协议侧由适配层翻译成 video_url）。source.data 落盘时同样走 stepref 卸载。
+ */
+export interface VideoBlock {
+  type: 'video';
+  source: { type: 'base64'; media_type: string; data: string };
+}
+
 /** 深度遍历时回调会收到的块：顶层 ContentBlockParam 或 tool_result 内嵌块。 */
-export type AnyContentBlock = Anthropic.ContentBlockParam | ToolResultInnerBlock;
+export type AnyContentBlock = Anthropic.ContentBlockParam | ToolResultInnerBlock | VideoBlock;
 
 /**
  * 深度遍历一条 wire 消息的 content 块：顶层块逐个回调，且下钻进 tool_result 的数组 content

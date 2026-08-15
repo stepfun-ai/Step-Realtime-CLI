@@ -8,6 +8,7 @@ import { t } from '../i18n.js';
 import { StepfunAdapter } from './adapter.js';
 import { capabilitiesToOverride, resolveCapability } from './capability-registry.js';
 import { AnthropicMessagesProvider } from './anthropicMessages.js';
+import { withCapabilityProjection } from './degrader.js';
 import { withMediaDegradation } from './mediaDegradation.js';
 import { OpenAiChatProvider } from './openaiChat.js';
 import { OpenAiResponsesProvider } from './openaiResponses.js';
@@ -72,34 +73,48 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
   if (preset.protocol === 'openai') {
     const override = capabilitiesToOverride('openai', config.model, config.capabilities);
     const capability = resolveCapability('openai', config.model, override !== undefined ? [override] : undefined);
-    return withMediaDegradation(
-      withHistoryNormalization(
-        new OpenAiChatProvider({
-          apiKey,
-          baseUrl: config.baseUrl,
-          model: config.model,
-          maxTokens: config.maxTokens,
-          sendThinking,
-          ...(thinking !== undefined ? { thinking } : {}),
-          reasoning: capability.reasoning,
-        }),
+    // 能力投影最外层：image_in=false 时发送前把媒体块换占位文本（不等 400）；
+    // 未声明/声明支持时零包装，400 方言降级链继续兜底未知端点。
+    return withCapabilityProjection(
+      withMediaDegradation(
+        withHistoryNormalization(
+          new OpenAiChatProvider({
+            apiKey,
+            baseUrl: config.baseUrl,
+            model: config.model,
+            maxTokens: config.maxTokens,
+            sendThinking,
+            ...(thinking !== undefined ? { thinking } : {}),
+            reasoning: capability.reasoning,
+          }),
+        ),
+        { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
       ),
-      { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
+      capability,
     );
   }
   if (preset.protocol === 'openai_responses') {
-    return withMediaDegradation(
-      withHistoryNormalization(
-        new OpenAiResponsesProvider({
-          apiKey,
-          baseUrl: config.baseUrl,
-          model: config.model,
-          maxTokens: config.maxTokens,
-          sendThinking,
-          ...(thinking !== undefined ? { thinking } : {}),
-        }),
+    const override = capabilitiesToOverride('openai_responses', config.model, config.capabilities);
+    const capability = resolveCapability(
+      'openai_responses',
+      config.model,
+      override !== undefined ? [override] : undefined,
+    );
+    return withCapabilityProjection(
+      withMediaDegradation(
+        withHistoryNormalization(
+          new OpenAiResponsesProvider({
+            apiKey,
+            baseUrl: config.baseUrl,
+            model: config.model,
+            maxTokens: config.maxTokens,
+            sendThinking,
+            ...(thinking !== undefined ? { thinking } : {}),
+          }),
+        ),
+        { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
       ),
-      { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
+      capability,
     );
   }
 
@@ -122,17 +137,26 @@ export function createProvider(config: StepCodeConfig): ChatProvider {
     });
   }
 
-  return withMediaDegradation(
-    withHistoryNormalization(
-      new AnthropicMessagesProvider({
-        apiKey,
-        baseUrl: config.baseUrl,
-        model: config.model,
-        maxTokens: config.maxTokens,
-        sendThinking,
-        thinking,
-      }),
+  const anthropicOverride = capabilitiesToOverride('anthropic', config.model, config.capabilities);
+  const anthropicCapability = resolveCapability(
+    'anthropic',
+    config.model,
+    anthropicOverride !== undefined ? [anthropicOverride] : undefined,
+  );
+  return withCapabilityProjection(
+    withMediaDegradation(
+      withHistoryNormalization(
+        new AnthropicMessagesProvider({
+          apiKey,
+          baseUrl: config.baseUrl,
+          model: config.model,
+          maxTokens: config.maxTokens,
+          sendThinking,
+          thinking,
+        }),
+      ),
+      { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
     ),
-    { keepRecentImages: config.mediaKeepRecentImages ?? 10 },
+    anthropicCapability,
   );
 }

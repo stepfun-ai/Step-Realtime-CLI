@@ -642,6 +642,12 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
                 ? t('loop.maxTokens.thinkingExhaustedWithLimit', { limit })
                 : t('loop.maxTokens.thinkingExhausted'),
           };
+          // goal 等自主续接：max_tokens 出口同样要过续跑裁决——曾在此直接 turn_done
+          // 静默停跑（2026-08-15 根因 B），goal active 时必须产出 continuation
+          const contEx = await resolveContinuation(hooks);
+          if (contEx !== null) {
+            yield { type: 'continuation', inject: contEx.inject };
+          }
           yield { type: 'turn_done' };
           return;
         }
@@ -662,6 +668,11 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
           type: 'notice',
           message: continuationStopMessage(verdict.reason, verdict.detail, limit),
         };
+        // goal 等自主续接：同上——守卫拦停的是「文本续写」，不是 goal 续跑，两者不互相豁免
+        const contStop = await resolveContinuation(hooks);
+        if (contStop !== null) {
+          yield { type: 'continuation', inject: contStop.inject };
+        }
         yield { type: 'turn_done' };
         return;
       }

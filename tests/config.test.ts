@@ -776,4 +776,20 @@ describe('resolveTuiConfig', () => {
   it('非法值（非数字）视为缺失，返回 undefined', () => {
     expect(resolveTuiConfig({ error_preview_lines: 'abc' })).toBeUndefined();
   });
+
+  it('terminal_title 布尔值独立解析', () => {
+    expect(resolveTuiConfig({ terminal_title: false })).toEqual({ terminalTitle: false });
+    expect(resolveTuiConfig({ terminal_title: true })).toEqual({ terminalTitle: true });
+  });
+
+  it('两个字段可同时配置、互不影响（回归：旧实现只配 terminal_title 时整段被吞）', () => {
+    expect(resolveTuiConfig({ error_preview_lines: 8, terminal_title: false })).toEqual({
+      errorPreviewLines: 8,
+      terminalTitle: false,
+    });
+  });
+
+  it('terminal_title 非布尔值忽略（不污染结果对象）', () => {
+    expect(resolveTuiConfig({ terminal_title: 'yes' })).toBeUndefined();
+  });
 });

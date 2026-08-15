@@ -89,3 +89,50 @@ describe('toWire', () => {
     expect(wire[1]!.content).toEqual([{ type: 'text', text: 'ok' }]);
   });
 });
+
+describe('toWire · 视频块', () => {
+  function videoMsg(data: string): StoredMessage {
+    return stored(
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'call_v',
+            content: [
+              { type: 'text', text: '已读取视频' },
+              { type: 'video', source: { type: 'base64', media_type: 'video/mp4', data } },
+            ],
+          } as Anthropic.ToolResultBlockParam,
+        ],
+      },
+      { kind: 'tool' },
+    );
+  }
+
+  function videoBlockData(msg: Anthropic.MessageParam): string | undefined {
+    const c = msg.content;
+    if (typeof c === 'string') return undefined;
+    const tr = c[0] as Anthropic.ToolResultBlockParam;
+    const inner = tr.content as Array<{ type: string; source?: { data: string } }>;
+    return inner.find((b) => b.type === 'video')?.source?.data;
+  }
+
+  it('遇 stepref 视频块 rehydrate 回 base64', () => {
+    const b64 = bigBase64();
+    const ref = attachments.offload(cwd, b64, 'video/mp4');
+    const wire = toWire([videoMsg(ref)], { attachments, cwd });
+    expect(videoBlockData(wire[0]!)).toBe(b64);
+  });
+
+  it('附件缺失时把视频块换成 [video missing] 文本', () => {
+    const b64 = bigBase64();
+    const ref = attachments.offload(cwd, b64, 'video/mp4');
+    rmSync(join(base), { recursive: true, force: true });
+    const wire = toWire([videoMsg(ref)], { attachments, cwd });
+    expect(videoBlockData(wire[0]!)).toBeUndefined();
+    const tr = (wire[0]!.content as Anthropic.ToolResultBlockParam[])[0]!;
+    const inner = tr.content as Array<{ type: string; text?: string }>;
+    expect(inner.some((b) => b.type === 'text' && b.text === '[video missing]')).toBe(true);
+  });
+});

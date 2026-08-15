@@ -39,6 +39,7 @@ export const CONFIG_TOP_LEVEL_KEYS = [
   'media_keep_recent',
   'extra_skill_dirs',
   'disabled_skills',
+  'skill_listing_budget',
   'models',
   'providers',
   'hooks',

@@ -5,7 +5,7 @@ import { estimateTextTokens, estimateTokens } from '../../src/agent/compaction/c
 import { toAnthropicTools } from '../../src/tools/index.js';
 import { GoalMode } from '../../src/agent/goal/mode.js';
 import { stored, type StoredMessage } from '../../src/agent/message.js';
-import { collect, makeFakeProvider, textBlock, toolUseBlock } from '../helpers/fakeProvider.js';
+import { collect, makeFakeProvider, textBlock, thinkingBlock, toolUseBlock } from '../helpers/fakeProvider.js';
 
 /** 包一条 storage 消息（测试用）。 */
 function sm(message: Anthropic.MessageParam, origin: 'user' | 'assistant' | 'tool' = 'user'): StoredMessage {
@@ -408,5 +408,66 @@ describe('runAgent', () => {
       | { type: 'error'; message: string }
       | undefined;
     expect(err?.message).toContain('2');
+  });
+
+  it('max_tokens 守卫拦停：goal 闸门放行时产出 continuation（不静默停跑，2026-08-15 根因 B 回归）', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      {
+        textChunks: ['我需要先读取'],
+        finalContent: [textBlock('我需要先读取'), toolUseBlock('call_1', 'nonexistent_tool', {})],
+        stopReason: 'max_tokens',
+      },
+    ]);
+    const messages: StoredMessage[] = [sm({ role: 'user', content: 'go' })];
+    const events = await collect(
+      runAgent({
+        ...baseOpts(provider, messages),
+        hooks: { shouldContinueAfterStop: () => ({ inject: '截断后继续推进' }) },
+      }),
+    );
+    // 自动续写未开启（默认 0）→ 守卫拦停；但 goal 闸门放行 → 仍要产出 continuation 事件
+    expect(streamCalls()).toBe(1);
+    const cont = events.find((e) => e.type === 'continuation') as
+      | { type: 'continuation'; inject: string }
+      | undefined;
+    expect(cont?.inject).toBe('截断后继续推进');
+    expect(events.at(-1)!.type).toBe('turn_done');
+  });
+
+  it('max_tokens thinking 耗尽：goal 闸门放行时产出 continuation（不静默停跑）', async () => {
+    const { provider, streamCalls } = makeFakeProvider([
+      {
+        textChunks: [],
+        finalContent: [thinkingBlock('想了一大段')],
+        stopReason: 'max_tokens',
+      },
+    ]);
+    const messages: StoredMessage[] = [sm({ role: 'user', content: 'go' })];
+    const events = await collect(
+      runAgent({
+        ...baseOpts(provider, messages),
+        hooks: { shouldContinueAfterStop: () => ({ inject: '思考耗尽后继续' }) },
+      }),
+    );
+    expect(streamCalls()).toBe(1);
+    const cont = events.find((e) => e.type === 'continuation') as
+      | { type: 'continuation'; inject: string }
+      | undefined;
+    expect(cont?.inject).toBe('思考耗尽后继续');
+    expect(events.at(-1)!.type).toBe('turn_done');
+  });
+
+  it('max_tokens 截断：hook 缺省时照旧无 continuation（非 goal 场景回归保护）', async () => {
+    const { provider } = makeFakeProvider([
+      {
+        textChunks: ['我需要先读取'],
+        finalContent: [textBlock('我需要先读取'), toolUseBlock('call_1', 'nonexistent_tool', {})],
+        stopReason: 'max_tokens',
+      },
+    ]);
+    const messages: StoredMessage[] = [sm({ role: 'user', content: 'go' })];
+    const events = await collect(runAgent(baseOpts(provider, messages)));
+    expect(events.some((e) => e.type === 'continuation')).toBe(false);
+    expect(events.at(-1)!.type).toBe('turn_done');
   });
 });

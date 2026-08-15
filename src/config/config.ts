@@ -192,6 +192,12 @@ export interface ModelEntry {
    */
   imageBudgetBytes?: number;
   /**
+   * 按别名声明单视频交付字节预算（config.toml [models.*] video_budget_bytes）。
+   * 消费方：read_media 视频预算。缺省走全局保守值 32MB（v1 视频只能 inline base64，
+   * 膨胀 1.33 倍进请求体）；确认端点吃得下更大文件时可按别名放宽。
+   */
+  videoBudgetBytes?: number;
+  /**
    * 按别名覆盖媒体降级保留张数（config.toml [models.*] media_keep_recent）。
    * 缺省继承顶层 media_keep_recent，再缺省 10。通道限制差异大（step-3.7 实测
    * 60 张、Gemini 10 张、GLM 5 张），宽松通道可多留、严格通道少留。
@@ -250,6 +256,8 @@ export interface MemoryConfig {
 export interface TuiConfig {
   /** 工具错误输出折叠态预览行数（clamp [1, 20]）。默认 4。 */
   errorPreviewLines?: number;
+  /** 是否把会话标题写进终端 tab 标题（OSC 0）。默认 true；不支持的终端自动跳过。 */
+  terminalTitle?: boolean;
 }
 
 /**
@@ -313,6 +321,8 @@ export interface StepCodeConfig {
   extraSkillDirs?: string[];
   /** 按名排除的 skill 清单（config.toml disabled_skills）。合并完成后统一过滤，任何来源的同名 skill 都不加载；用于屏蔽不归你管的目录（团队共享 .agents/skills 等）里的个别 skill。 */
   disabledSkills?: string[];
+  /** skill 清单注入 system prompt 的字符预算（config.toml skill_listing_budget）。缺省 8000；超预算先压缩描述再逐条截断。调高可让更多 skill 的名称和描述常驻 L1。 */
+  skillListingBudget?: number;
   /**
    * 媒体降级时保留的最近图片张数（config.toml media_keep_recent）。缺省 10。
    * 全通道生效：stepfun 走 StepfunAdapter.send 的重投影，其余通道走
@@ -341,6 +351,8 @@ export interface StepCodeConfig {
   imageMaxEdgePx?: number;
   /** 当前模型的单图交付字节预算。带入语义同 {@link imageMaxEdgePx}；缺省回退 256KB。 */
   imageBudgetBytes?: number;
+  /** 当前模型的单视频交付字节预算。带入语义同 {@link imageMaxEdgePx}；缺省回退 32MB。 */
+  videoBudgetBytes?: number;
   /**
    * 用户原始选择的模型别名（展开前）。当 config.model 是别名（如 'step37-plan'）时，
    * 此字段保存该别名；config.model 是裸模型 id 时为 undefined。
@@ -543,6 +555,7 @@ interface TomlConfigShape {
   media_keep_recent?: unknown;
   extra_skill_dirs?: unknown;
   disabled_skills?: unknown;
+  skill_listing_budget?: unknown;
   models?: unknown;
   providers?: unknown;
   hooks?: unknown;
@@ -892,17 +905,24 @@ export function resolveMemoryConfig(raw: unknown): MemoryConfig {
 /**
  * 从 [tui] 段解析 TUI 渲染配置。纯函数，便于单测。
  *
- * error_preview_lines 缺省 4，clamp [1, 20]。
+ * error_preview_lines 缺省 4，clamp [1, 20]；terminal_title 缺省 true（不进结果对象）。
  * 未配置或类型非法时键不进结果对象（下游 toEqual 精确断言依赖此形态）。
+ *
+ * 两个字段独立解析：只配了其中一个时另一个保持缺省，段内无任何已知字段才返回 undefined。
+ * 注意别改回「首个字段不存在就整段返回 undefined」的写法：那会让只配了
+ * terminal_title 的 [tui] 段整体失效（2026-08-15 加 terminal_title 时修正）。
  */
 export function resolveTuiConfig(raw: unknown): TuiConfig | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   const t = raw as Record<string, unknown>;
-  if (!('error_preview_lines' in t)) return undefined;
-  const n = asNumber(t['error_preview_lines']);
-  if (n === undefined) return undefined;
-  const errorPreviewLines = clampInt(t['error_preview_lines'], 1, 20, 4);
-  return { errorPreviewLines };
+  const out: TuiConfig = {};
+  if ('error_preview_lines' in t && asNumber(t['error_preview_lines']) !== undefined) {
+    out.errorPreviewLines = clampInt(t['error_preview_lines'], 1, 20, 4);
+  }
+  if ('terminal_title' in t && typeof t['terminal_title'] === 'boolean') {
+    out.terminalTitle = t['terminal_title'];
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 export function resolveThinkingConfig(raw: unknown, maxTokens: number): ThinkingConfig {
@@ -981,6 +1001,8 @@ export function resolveModels(raw: unknown): Record<string, ModelEntry> | undefi
     if (imageMaxEdgePx !== undefined) entry.imageMaxEdgePx = Math.max(256, Math.floor(imageMaxEdgePx));
     const imageBudgetBytes = asNumber(t['image_budget_bytes']);
     if (imageBudgetBytes !== undefined) entry.imageBudgetBytes = Math.max(16 * 1024, Math.floor(imageBudgetBytes));
+    const videoBudgetBytes = asNumber(t['video_budget_bytes']);
+    if (videoBudgetBytes !== undefined) entry.videoBudgetBytes = Math.max(1024 * 1024, Math.floor(videoBudgetBytes));
     const displayName = asString(t['display_name']);
     if (displayName !== undefined) entry.displayName = displayName;
     // capabilities 白名单校验：未知值直接报错，不静默失效。
@@ -998,7 +1020,11 @@ export function resolveModels(raw: unknown): Record<string, ModelEntry> | undefi
         );
       }
       const normalized = (capabilities as string[]).map((c) => c.trim().toLowerCase());
-      const unknown = normalized.filter((c) => !(CAPABILITY_KEYS as readonly string[]).includes(c));
+      // "-" 前缀是显式取负（如 "-image_in"），校验时剥前缀再对白名单；孤立的 "-" 视为未知值
+      const unknown = normalized.filter((c) => {
+        const bare = c.startsWith('-') ? c.slice(1) : c;
+        return !(CAPABILITY_KEYS as readonly string[]).includes(bare);
+      });
       if (unknown.length > 0) {
         throw new Error(
           `[models.${alias}] capabilities 含未知能力名：${unknown.join(', ')}（可用值：${CAPABILITY_KEYS.join(' | ')}）。`,
@@ -1150,6 +1176,8 @@ export function resolveModelEntry(config: StepCodeConfig, name: string): StepCod
     // 图片输入上限同 capabilities 语义：只在命中别名且声明时带入，裸模型/未声明为 undefined
     imageMaxEdgePx: entry.imageMaxEdgePx,
     imageBudgetBytes: entry.imageBudgetBytes,
+    // 视频交付预算同图片上限语义：只在命中别名且声明时带入
+    videoBudgetBytes: entry.videoBudgetBytes,
     // mediaKeepRecent 按别名覆盖，未声明继承顶层（再缺省由工厂/use 点补 10）
     mediaKeepRecentImages: entry.mediaKeepRecent ?? config.mediaKeepRecentImages,
   };
@@ -1247,6 +1275,8 @@ export function loadConfig(
   if (extraSkillDirs !== undefined) cfg.extraSkillDirs = extraSkillDirs;
   const disabledSkills = resolveStringArray(toml.disabled_skills);
   if (disabledSkills !== undefined) cfg.disabledSkills = disabledSkills;
+  const skillListingBudget = asNumber(toml.skill_listing_budget);
+  if (skillListingBudget !== undefined && skillListingBudget > 0) cfg.skillListingBudget = Math.floor(skillListingBudget);
   // 权限模式默认值：未配置时键不进结果对象；非法值抛配置错误（安全相关，不静默吞）
   const permissionMode = resolvePermissionMode(toml.permission_mode);
   if (permissionMode !== undefined) cfg.permissionMode = permissionMode;

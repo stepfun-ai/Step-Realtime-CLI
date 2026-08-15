@@ -43,8 +43,20 @@ const COMPACTION_MAX_RETRIES = 3;
 export const OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
 
 /**
+ * 摘要输入的 tool_use 参数保真预算（字符，超长按头截断）。
+ * 依据：2026-08-13 真实历史+真实端点的序列化方案对照实验——裸 `[调用工具 X]` 标记
+ * 让摘要模型既丢失「确切命令/路径」的素材、又被标记密度诱导模仿（复述闸门的病源）；
+ * 参数截断保留后交接质量实测跃升。
+ */
+export const TOOL_USE_ARGS_BUDGET = 400;
+/** 摘要输入的单条 tool_result 内嵌文本保真预算（字符，超长按头截断）。 */
+export const TOOL_RESULT_BUDGET = 1000;
+
+/**
  * 摘要复述检测正则：匹配 serializeContent() 对 tool_use/tool_result/image/audio/video
  * 的内部标记。注意必须带 /g 且用 match 计数——判定看密度不看有无（见下）。
+ * 2026-08-13 输入保真改造后 tool_use 标记带截断参数，但标记头 `[调用工具 ` 形态不变，
+ * 本正则的匹配面不受影响；裸标记密度已大幅下降，本闸门退居兜底。
  */
 const RECITATION_MARKERS = /\[调用工具 |\[工具结果\]|\[image |\[audio |\[video /g;
 
@@ -281,18 +293,20 @@ function isToolResultMsg(m: StoredMessage): boolean {
 /**
  * 摘要质量校验。不合格抛错，由 fullCompact 的重试循环捕获。
  *
- * 三类不合格：空白、信息量不足（相对被压缩量，见 COMPACTION_SUMMARY_MIN_RATIO）、
+ * 三类不合格：空白、信息量不足（相对当轮摘要输入量，见 COMPACTION_SUMMARY_MIN_RATIO）、
  * 复述内部标记。这是对旧实现「只拦空串」的补足——一条 56 字符的复述片段照样能
  * 替换掉几十万 token 的历史，且静默无告警。
  *
- * 摘要与 olderTokens 都按 estimateTextTokens 口径度量，中英文一致（见常量注释）。
+ * 摘要与 inputTokens 都按 estimateTextTokens 口径度量，中英文一致（见常量注释）。
+ * inputTokens 是当轮实际发给摘要模型的序列化输入的估算（不是原始历史体量——
+ * 摘要模型看到的是 serializeContent 之后的文本，分母必须与模型所见同口径）。
  */
-export function validateSummary(summary: string, olderTokens: number): void {
+export function validateSummary(summary: string, inputTokens: number): void {
   const trimmed = summary.trim();
   if (trimmed === '') throw new Error('compaction summary is empty');
   const minTokens = Math.min(
     COMPACTION_SUMMARY_MIN_TOKENS_CAP,
-    Math.floor(olderTokens * COMPACTION_SUMMARY_MIN_RATIO),
+    Math.floor(inputTokens * COMPACTION_SUMMARY_MIN_RATIO),
   );
   const summaryTokens = estimateTextTokens(trimmed);
   if (summaryTokens < minTokens) {
@@ -700,11 +714,12 @@ export async function fullCompact(
   );
 
   // 摘要生成 + 质量校验 + 重试（按 empty/truncated 重试循环处理）。
-  // 区分三类失败：
-  //   1. context overflow / 413：先尝试剥离媒体块，再按比例收缩历史（[0.7, 0.5, 0.35]），
-  //      而不是直接丢弃消息——因为这类错误往往是大输入导致，收缩比例更可控；
-  //   2. 空返 / truncated：drop 最老消息 + 孤儿 tool_result；
-  //   3. 其他网络 / API 失败：同样 drop 最老消息重试。
+  // 区分失败两类，重试策略不同：
+  //   1. 请求层失败（网络/API/overflow/truncated）：overflow 先剥媒体再按比例收缩历史
+  //      （[0.7, 0.5, 0.35]），其余 drop 最老消息——输入侧的病收缩输入来治；
+  //   2. 闸门层失败（空白/过短/复述）：输出行为问题，**收缩输入只会更短**——
+  //      2026-08-13 实测三次 160/97/106 tokens 单调走低放弃压缩。改走「追加提示 +
+  //      原输入重试」（与反复述同一机制），输入保持不动。
   // 尝试耗尽则**原样返回**（同引用 = 未压缩），把「宁可不压」交给调用方处理，
   // 而不是让垃圾摘要吞掉历史。不抛错是刻意的：loop.ts 调用点无 try/catch，抛错会掀翻整个回合。
   const olderTokens = estimateTokens(older);
@@ -712,14 +727,21 @@ export async function fullCompact(
   let olderForSummary: StoredMessage[] = older;
   let mediaStripAttempted = false;
   let overflowShrinkCount = 0;
-  // 复述拦截后的反复述提示：复述是输出行为问题，丢消息不治本，追加提示原样重试
-  let antiRecitationHint = '';
+  // 闸门提示：闸门拦截是输出行为问题，丢消息不治本，追加提示原样重试
+  let gateHint = '';
   for (let attempt = 1; attempt <= COMPACTION_MAX_RETRIES; attempt++) {
     // 每轮开工前检查：中断可能发生在上一轮请求之后、本轮之前（如收缩历史期间）
     if (aborted()) return messages;
+    const historyText = olderForSummary
+      .map((m) => `${m.message.role}: ${serializeContent(m.message.content)}`)
+      .join('\n');
     const summaryPrompt =
-      `${SUMMARY_INSTRUCTION}${antiRecitationHint}\n\n--- 以下是即将被清空的对话历史 ---\n\n` +
-      olderForSummary.map((m) => `${m.message.role}: ${serializeContent(m.message.content)}`).join('\n');
+      `${SUMMARY_INSTRUCTION}${gateHint}\n\n--- 以下是即将被清空的对话历史 ---\n\n` + historyText;
+    // 闸门分母按当轮实际输入算（不含指令与提示等恒定开销——它们不是摘要要接替的内容，
+    // 小历史里指令体量会压过正文、把及格线抬到错误量级）。摘要模型看到的是 serializeContent
+    // 之后的文本，按原始历史（含 thinking/工具参数全文）估的分母模型从未见过——2026-08-13
+    // 实测 34 万 token 历史骨架化后实收仅 1.9 万，按前者判分恒不及格。逐轮重算，不钉死。
+    const inputTokens = estimateTextTokens(historyText);
 
     let candidate: string;
     try {
@@ -742,6 +764,12 @@ export async function fullCompact(
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
         .map((b) => b.text)
         .join('');
+      // 每次尝试落日志：stop_reason 与输入规模是分型「思考吃预算/截断/模型写薄」的关键证据，
+      // 2026-08-13 的排查只能靠三行闸门日志倒推，此处补齐（含候选头部，供判断退化形态）
+      logError(
+        `[compaction] 摘要返回（第 ${attempt}/${COMPACTION_MAX_RETRIES} 次）：` +
+          `输入约 ${inputTokens} tokens，stop_reason=${final.stop_reason ?? '-'}，候选 ${candidate.length} 字符`,
+      );
     } catch (err) {
       // 用户中断：语义是「放弃压缩」，不是「这次失败换个规模再试」。
       // 必须在所有降级分支之前判定并直接返回，否则按一次 Esc 仍要走完剩余重试。
@@ -777,23 +805,29 @@ export async function fullCompact(
       continue;
     }
 
-    // 质量闸门：不合格就收缩输入重试，绝不拿它替换历史
+    // 质量闸门：三类失败（空白/过短/复述）都是输出行为问题，追加提示原输入重试，不收缩。
     try {
-      validateSummary(candidate, olderTokens);
+      validateSummary(candidate, inputTokens);
       summary = candidate;
       break;
     } catch (gateErr) {
       const reason = (gateErr as Error).message;
-      logError(`[compaction] 摘要质量闸门拦截（第 ${attempt}/${COMPACTION_MAX_RETRIES} 次，候选 ${candidate.length} 字符）：${reason}`);
+      logError(
+        `[compaction] 摘要质量闸门拦截（第 ${attempt}/${COMPACTION_MAX_RETRIES} 次，候选 ${candidate.length} 字符）：${reason}；` +
+          `候选头部：${candidate.trim().slice(0, 100)}`,
+      );
       if (reason.includes('recitation')) {
-        // 复述是输出行为问题，丢消息不治本：追加反复述提示、历史原样重试
-        antiRecitationHint =
+        gateHint =
           '\n\n注意：上一次产出的摘要原样复述了历史里的序列化标记（[调用工具 …]、[工具结果]、[image …] 等），被判不合格。' +
           '那些标记只是历史渲染成文本时的占位形式，不要写进摘要；确需提及时用自己的话转述（如「读取了某张截图」）。';
         continue;
       }
-      if (olderForSummary.length <= 1) return messages;
-      olderForSummary = dropOldestMessageAndLeadingToolResults(olderForSummary);
+      // 空白/过短：材料就在上方历史里，是摘要没写够。点明缺口与篇幅要求，原输入重试。
+      gateHint =
+        `\n\n注意：上一次产出的摘要被判不合格（${reason}）。这份笔记要独自接替上方整段历史：` +
+        '执行过的确切命令、动过的文件路径、返回的关键结果、已定决策与待定问题、前向计划，都必须写实写够，' +
+        '篇幅与历史规模相称，不要只写几句概括。';
+      continue;
     }
   }
   // 尝试耗尽仍无合格摘要 → 放弃压缩，历史完整保留
@@ -855,21 +889,52 @@ function serializeInnerBlock(
   return `[${b.type}]`;
 }
 
+/** 长文本按头截断并标注截断（摘要输入保真用：头部承载命令/路径/结果开头等关键信息）。 */
+function truncateHead(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  return text.slice(0, budget) + '…[截断]';
+}
+
+/**
+ * 把一条 wire 消息的 content 序列化成摘要模型可读的文本。
+ *
+ * 保真口径（2026-08-13 对照实验定稿，勿回退成裸标记）：
+ * - thinking / redacted_thinking：**整块丢弃、不留标记**。它是模型自己的草稿，体量最大、
+ *   对交接价值最低；且 `[thinking]` 这类不透明标记会诱导摘要模型模仿标记、把交接笔记
+ *   写成续聊（实测：保留标记时摘要输出以 [thinking] 开头、仅 192 字符；去掉后产出
+ *   4368 字符的合格交接）。
+ * - tool_use：标记 + 参数 JSON 截断保留——摘要指令要求「确切命令、文件路径」，
+ *   这些内容只存在于参数里，剥光等于让模型写它没见过的东西（实测剥光后摘要退化为
+ *   11 字符的标记复述）。
+ * - tool_result：内嵌文本截断保留（「返回的具体值」是重跑代价最高的信息）。
+ * - image：维持 stepref marker（带 hash，可定位原图）。
+ */
 export function serializeContent(content: Anthropic.MessageParam['content']): string {
   if (typeof content === 'string') return content;
   return content
     .map((b: Anthropic.ContentBlockParam) => {
       if (b.type === 'text') return b.text;
-      if (b.type === 'tool_use') return `[调用工具 ${b.name}]`;
+      if (b.type === 'thinking' || b.type === 'redacted_thinking') return '';
+      if (b.type === 'tool_use') {
+        let args = '';
+        try {
+          args = JSON.stringify(b.input ?? {});
+        } catch {
+          args = '{}';
+        }
+        return `[调用工具 ${b.name}] ${truncateHead(args, TOOL_USE_ARGS_BUDGET)}`;
+      }
       if (b.type === 'tool_result') {
         // 内嵌块数组（read_media 回传的图片等）下钻序列化，内嵌 image 落成 [image ...] 文本
         if (!Array.isArray(b.content)) return `[工具结果]`;
         const inner = b.content.map(serializeInnerBlock).filter((s) => s !== '').join(' ');
-        return inner === '' ? '[工具结果]' : `[工具结果] ${inner}`;
+        if (inner === '') return '[工具结果]';
+        return `[工具结果] ${truncateHead(inner, TOOL_RESULT_BUDGET)}`;
       }
       if (b.type === 'image') return serializeImage(b);
       return `[${b.type}]`;
     })
+    .filter((s) => s !== '')
     .join(' ');
 }
 

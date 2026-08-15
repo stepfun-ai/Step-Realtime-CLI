@@ -242,9 +242,13 @@ export function resolveCapabilitiesOnReload(
 export function resolveImageLimitsOnReload(
   cfg: StepCodeConfig,
   currentAlias: string | null,
-): { imageMaxEdgePx?: number; imageBudgetBytes?: number } {
+): { imageMaxEdgePx?: number; imageBudgetBytes?: number; videoBudgetBytes?: number } {
   const entry = currentAlias === null ? undefined : cfg.models?.[currentAlias];
-  return { imageMaxEdgePx: entry?.imageMaxEdgePx, imageBudgetBytes: entry?.imageBudgetBytes };
+  return {
+    imageMaxEdgePx: entry?.imageMaxEdgePx,
+    imageBudgetBytes: entry?.imageBudgetBytes,
+    videoBudgetBytes: entry?.videoBudgetBytes,
+  };
 }
 
 /** 状态栏展示名：别名路径取 displayName；裸 id 按「别名解析出的真实 id 命中」反查 displayName，无则用真实 id。 */

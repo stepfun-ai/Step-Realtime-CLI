@@ -46,9 +46,12 @@ import type { McpManager } from '../mcp/manager.js';
 import { formatMcpStatus } from '../mcp/status.js';
 import { createProvider } from '../provider/factory.js';
 import type { ChatProvider } from '../provider/types.js';
-import { resolveCompactionBinding } from '../provider/compaction.js';
+import { basename } from 'node:path';
+import { resolveCompactionBinding, type CompactionBinding } from '../provider/compaction.js';
 import { exportDebugBundle } from '../session/debugBundle.js';
-import type { SessionData, SessionStore } from '../session/store.js';
+import { deriveTitle, type SessionData, type SessionStore } from '../session/store.js';
+import { canOverwriteTitle, generateSessionTitle } from '../session/title.js';
+import { TerminalTitleWriter } from '../chat/terminalTitle.js';
 import { aggregateModelUsage } from '../session/usageReport.js';
 import type { WireEvent } from '../agent/wirelog.js';
 import { renderSkillActivation, skillListing, type SkillRegistry } from '../skill/registry.js';
@@ -84,7 +87,7 @@ import {
 } from './commandText.js';
 import { ChatAutocompleteProvider } from './completion.js';
 import { clipboardToolHint, readClipboardImage } from '../chat/clipboardImage.js';
-import { extractImageContent, ImageAttachmentStore } from '../chat/imageAttachment.js';
+import { countHistoryImages, extractImageContent, ImageAttachmentStore } from '../chat/imageAttachment.js';
 import { askLine, modelItems, modelTabs, showPicker, sessionItems, thinkItems, type PickerOverlay } from './pickers.js';
 import { StreamBuffer } from '../chat/streamBuffer.js';
 import { appendText, settleThinking } from '../chat/streamReducer.js';
@@ -223,6 +226,25 @@ export class PiChat {
   private queue: string[] = [];
   private controller: AbortController | null = null;
   private streamBuffer: StreamBuffer;
+  /**
+   * 压缩摘要的 provider 实例缓存（键为别名）。没有这层缓存时每轮 runTurn 与每次 /compact
+   * 都会重解绑定并新建一个 SDK 客户端——迁移时漏了它，pi 版一直在做这份无谓工作。
+   */
+  private readonly compactionProviderCache = new Map<string, ChatProvider>();
+  /**
+   * `/compact-model` 的会话级覆盖：非 undefined 时优先于 `config.compaction.model`。
+   * 不落盘，/new 与重启后回到 config（与 /model 的会话级语义一致）；/reload 重解时保留。
+   */
+  private compactionModelOverride: string | undefined;
+  /** 当前压缩绑定（构造 / reload / compact-model 三处重解，其余地方只读）。 */
+  private compactionBinding: CompactionBinding;
+  /**
+   * 终端 tab 标题写入器（OSC 0）。能力探测只在构造时做一次，不支持的终端后续调用是空操作。
+   * 标题口径与会话列表一致（name ?? title ?? cwd 目录名），退出时清空让终端回落自身默认。
+   */
+  private readonly termTitle: TerminalTitleWriter;
+  /** 已尝试过 AI 标题生成的会话 id：每会话只试一次，失败不重试（生成是锦上添花，不值得重试预算）。 */
+  private readonly titleGenTried = new Set<string>();
   private thinkingAccum = '';
   private baseTokens = 0;
   private exitPrimed = false;
@@ -342,6 +364,14 @@ export class PiChat {
     });
 
     this.streamBuffer = new StreamBuffer((ev) => this.applyEvent(ev));
+    this.compactionBinding = resolveCompactionBinding(deps.config, this.compactionProviderCache);
+    this.termTitle = new TerminalTitleWriter(
+      process.env,
+      process.stdout.isTTY,
+      deps.config.tui?.terminalTitle ?? true,
+      (str) => process.stdout.write(str),
+    );
+    this.syncTerminalTitle();
 
     this.tui.addChild(this.transcript);
     this.tui.addChild(this.activity);
@@ -648,7 +678,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    */
   private onEscape(): boolean {
     if (this.busy) {
-      this.controller?.abort();
+      this.abortTurn();
       return true;
     }
     if (this.queue.length > 0) {
@@ -674,7 +704,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         this.tui.requestRender();
         return true;
       }
-      this.controller?.abort();
+      this.abortTurn();
       return true;
     }
     if (this.exitPrimed) {
@@ -690,11 +720,118 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     return true;
   }
 
+  /**
+   * 同步终端 tab 标题：口径与会话列表一致（name 优先，其次 title），
+   * 两者都没有时用 cwd 文件夹名（新会话的初始标题，AI 标题生成后再覆盖）。
+   * 每个切换会话 / 生成标题 / rename 的挂点都调一次；不支持的终端在 writer 内部空操作。
+   */
+  private syncTerminalTitle(): void {
+    const s = this.session;
+    const display =
+      (s.name !== undefined && s.name.trim() !== '' ? s.name.trim() : undefined) ??
+      (s.title !== undefined && s.title.trim() !== '' ? s.title.trim() : undefined) ??
+      basename(s.cwd);
+    this.termTitle.set(display);
+  }
+
+  /**
+   * 会话标题 AI 生成：第一轮回答后异步触发一次（fire-and-forget，不阻塞回合收尾）。
+   * 覆盖纪律见 session/title.ts——用户 rename 过、或标题被外部改过的会话不动。
+   *
+   * 迁移时整块漏掉了，pi 版此前所有会话的标题都停在 deriveTitle 的首句截断上。
+   */
+  private maybeGenerateTitle(): void {
+    const sess = this.session;
+    if (this.titleGenTried.has(sess.id)) return;
+    if (!canOverwriteTitle(sess, deriveTitle(sess.messages))) return;
+    this.titleGenTried.add(sess.id);
+    void (async () => {
+      const generated = await generateSessionTitle(this.provider, this.history, {});
+      if (generated === undefined) return;
+      // 写回前重新加载再判一次：生成期间用户可能已 rename 或改过标题
+      const latest = this.deps.store.load(sess.cwd, sess.id);
+      if (latest === null) return;
+      if (!canOverwriteTitle(latest, deriveTitle(latest.messages))) return;
+      this.deps.store.updateTitle(sess.cwd, sess.id, generated);
+      // 只在会话未被切走时同步 tab（生成是 fire-and-forget，期间可能 /new 或 /resume）
+      if (this.session.id === sess.id) {
+        this.session.title = generated;
+        this.syncTerminalTitle();
+      }
+    })();
+  }
+
+  /**
+   * `/compact-model`：会话级切换压缩摘要模型。
+   *
+   * 三态：无参查询（只读，busy 时即时分发到这里）、`reset` 清除覆盖、带参切换。
+   * 覆盖不落盘——与 `/model` 同口径，持久化靠 config.toml 加热重载。
+   */
+  private runCompactModel(arg: string): void {
+    if (arg === '') {
+      const configured = this.deps.config.compaction.model;
+      const b = this.compactionBinding;
+      const source =
+        this.compactionModelOverride !== undefined
+          ? t('app.compactModel.sourceOverride', { name: this.compactionModelOverride })
+          : configured !== undefined && configured !== ''
+            ? t('app.compactModel.sourceConfig', { name: configured })
+            : t('app.compactModel.sourceNone');
+      const resolved =
+        b.provider !== undefined
+          ? t('app.compactModel.resolvedAlias', { model: b.model ?? '' })
+          : b.model !== undefined
+            ? t('app.compactModel.resolvedBare', { model: b.model })
+            : t('app.compactModel.resolvedMain');
+      this.push({ kind: 'note', text: `${source}\n${resolved}` });
+      return;
+    }
+    // reset：清除覆盖按 config 重解。缓存不清——键是别名，重解同别名复用实例
+    if (arg === 'reset') {
+      if (this.compactionModelOverride === undefined) {
+        this.push({ kind: 'note', text: t('app.compactModel.noOverride') });
+        return;
+      }
+      this.compactionModelOverride = undefined;
+      this.compactionBinding = resolveCompactionBinding(this.deps.config, this.compactionProviderCache);
+      this.push({ kind: 'note', text: t('app.compactModel.resetDone') });
+      return;
+    }
+    this.compactionModelOverride = arg;
+    const binding = resolveCompactionBinding(this.deps.config, this.compactionProviderCache, arg);
+    this.compactionBinding = binding;
+    if (binding.provider !== undefined) {
+      this.push({ kind: 'note', text: t('app.compactModel.switchedAlias', { name: arg, model: binding.model ?? arg }) });
+    } else if (binding.model !== undefined) {
+      this.push({ kind: 'note', text: t('app.compactModel.switchedBare', { model: binding.model }) });
+    } else {
+      // 别名渠道构造失败 → 空绑定 = 跟随主会话模型，不能说「切换成功」。
+      // 覆盖保留（与 config 里配了坏别名的行为一致），reset 可清除。
+      this.push({ kind: 'note', text: t('app.compactModel.fallback', { name: arg }) });
+    }
+  }
+
+  /**
+   * 中断当前回合。中断的意图是「停」，所以 active goal 一并暂停并丢弃待派发的续接——
+   * 不暂停的话回合收尾点（finishTurn 的 submit-continuation 分支）会把续接又发出去，
+   * 用户按了 Esc 却停不下来（Ink 版 43b92e7 修的反向 bug，pi 版同源）。/goal resume 恢复。
+   */
+  private abortTurn(): void {
+    if (this.goal.get()?.status === 'active') {
+      this.goal.update('paused');
+      this.continuation = null;
+      this.syncGoalBadge();
+    }
+    this.controller?.abort();
+  }
+
   private exit(): void {
     if (this.exitPrimedTimer !== undefined) clearTimeout(this.exitPrimedTimer);
     if (this.ticker !== undefined) clearInterval(this.ticker);
     this.cron.stop();
     this.persist();
+    // tab 标题清空，让终端回落自身默认（不清会残留到用户后续的其它命令上）
+    this.termTitle.reset();
     this.tui.stop();
     this.resolveExit?.({ sessionId: this.session.id, hasContent: this.history.length > 0 });
     this.resolveExit = undefined;
@@ -890,6 +1027,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
 
       case 'reload':
         this.runReload();
+        return;
+
+      case 'compact-model':
+        this.runCompactModel(args.trim());
         return;
 
       case 'history':
@@ -1165,6 +1306,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.deps.ctx.capabilities = undefined;
     this.deps.ctx.imageMaxEdgePx = undefined;
     this.deps.ctx.imageBudgetBytes = undefined;
+    this.deps.ctx.videoBudgetBytes = undefined;
     this.model = nextModel;
     this.modelLabel = nextModel;
     this.syncStatus();
@@ -1202,7 +1344,11 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const limits = resolveImageLimitsOnReload(next, this.currentAlias ?? null);
     this.deps.ctx.imageMaxEdgePx = limits.imageMaxEdgePx;
     this.deps.ctx.imageBudgetBytes = limits.imageBudgetBytes;
+    this.deps.ctx.videoBudgetBytes = limits.videoBudgetBytes;
     this.deps.ctx.searchConfig = next.search;
+    // 压缩绑定按新配置重解；会话级覆盖（/compact-model）保留——它是用户这次会话的显式选择，
+    // 不该被一次 /reload 悄悄抹掉。provider 缓存不清：键是别名，同别名重解直接复用实例。
+    this.compactionBinding = resolveCompactionBinding(next, this.compactionProviderCache, this.compactionModelOverride);
     // provider 重建决策：别名仍在按新配置重建；别名被删或重建失败则沿用旧 provider
     const plan = planProviderReload(prev, next, this.model, this.currentAlias ?? null);
     let providerNote = '';
@@ -1666,6 +1812,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.status.setState({ usedTokens: 0 });
     this.transcript.reset([{ kind: 'note', text: `已开始新会话 ${this.session.id}` }]);
     this.syncStatus();
+    this.syncTerminalTitle();
     this.tui.requestRender();
   }
 
@@ -1697,6 +1844,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       text: `已分叉：${src.id} → ${forked.id}（${this.history.length} 条消息）`,
     });
     this.syncStatus();
+    this.syncTerminalTitle();
   }
 
   /** 后台任务管理器换绑当前会话（任务落盘目录随会话 id 走）。 */
@@ -1735,7 +1883,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.syncStatus();
     this.push({ kind: 'note', text: '正在压缩上下文…' });
     try {
-      const compaction = resolveCompactionBinding(this.deps.config);
+      const compaction = this.compactionBinding;
       const compacted = await fullCompact(
         compaction.provider ?? this.provider,
         this.history,
@@ -1849,7 +1997,13 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // goal 已结束（assemble 返回 null）退化为原始续接文本，对应 Stop hook 的续行兜底。
     const raw = this.continuation ?? '';
     this.continuation = null;
-    const text = goalActive ? assembleGoalInject(this.goal, raw, this.steers.splice(0)) : null;
+    // 计轮落在这里：注入真的发出去了才算一轮（闸门只裁决不记账，见 shouldContinueAfterStop）
+    let text: string | null = null;
+    if (goalActive) {
+      this.goal.incrementTurn();
+      this.syncGoalBadge();
+      text = assembleGoalInject(this.goal, raw, this.steers.splice(0));
+    }
     await this.runTurn(text ?? raw, { silent: true });
   }
 
@@ -1876,6 +2030,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       this.deps.ctx.capabilities = undefined;
       this.deps.ctx.imageMaxEdgePx = undefined;
       this.deps.ctx.imageBudgetBytes = undefined;
+      this.deps.ctx.videoBudgetBytes = undefined;
       this.model = arg;
       this.modelLabel = arg;
       this.syncStatus();
@@ -1894,6 +2049,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.deps.ctx.capabilities = resolved.capabilities;
     this.deps.ctx.imageMaxEdgePx = resolved.imageMaxEdgePx;
     this.deps.ctx.imageBudgetBytes = resolved.imageBudgetBytes;
+    this.deps.ctx.videoBudgetBytes = resolved.videoBudgetBytes;
     this.model = resolved.model;
     this.modelLabel = this.deps.config.models?.[arg]?.displayName ?? resolved.model;
     this.maxContextSize = resolved.maxContextSize;
@@ -1901,6 +2057,12 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.persist();
     persistPointer();
     this.push({ kind: 'note', text: `已切换到 ${arg}（${resolved.model}）` });
+    // 切到显式声明不收图（-image_in）的模型且历史含图时提醒：图片以占位文本投影，
+    // 原图保留，切回多模态模型即恢复（对齐 Ink 版 ed717c6）。
+    if (resolved.capabilities?.includes('-image_in') === true) {
+      const n = countHistoryImages(this.history);
+      if (n > 0) this.push({ kind: 'note', text: t('app.model.noImageInHint', { count: n }) });
+    }
   }
 
   /** 恢复指定会话：重建历史与转录区，模型跟随该会话当初的选择。 */
@@ -1948,6 +2110,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       replay.foldedTurns,
     );
     this.syncStatus();
+    this.syncTerminalTitle();
     this.tui.invalidate();
     this.tui.renderNow(true);
   }
@@ -2068,6 +2231,11 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     if (name !== null && name.trim() !== '') {
       const ok = this.deps.store.rename(this.deps.ctx.cwd, id, name.trim());
       this.push({ kind: 'note', text: ok ? `已重命名为「${name.trim()}」` : `重命名失败：${id}` });
+      // 改的是当前会话时 tab 标题跟着变（name 优先于 title）
+      if (ok && id === this.session.id) {
+        this.session.name = name.trim();
+        this.syncTerminalTitle();
+      }
       overlay.setItems(rebuild());
     }
     this.tui.setFocus(overlay);
@@ -2115,8 +2283,9 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
           });
           return null;
         }
-        this.goal.incrementTurn();
-        this.syncGoalBadge();
+        // 计轮不在这里：闸门只裁决不记账。注入要到 finishTurn 的 submit-continuation
+        // 分支才真的发出去，中途被中断/被队列抢先时若已计轮，turnsUsed 就虚高
+        // （Ink 版 43b92e7 同一修法）。
         return { inject: d.inject };
       },
       authorizeToolCall: async (req) => {
@@ -2220,6 +2389,16 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    * 但仍要作为 user 消息进历史，否则模型看不到续接指令。
    */
   private async runTurn(text: string, opts?: { silent?: boolean }): Promise<void> {
+    // 图片占位符 → image content block。没有图片时 content 就是原文本（走旧路径），
+    // 转录区显示的是折叠掉占位符的正文，不把 base64 摊到屏幕上。
+    const extracted = extractImageContent(text, this.images);
+    // 能力拦截：当前模型显式声明不收图（capabilities 含 -image_in）时带图提交直接拦下——
+    // 防新图被投影层静默占位、用户误以为模型看到了图（对齐 Ink 版 ed717c6）。
+    // 必须在压栈之前拦：拦下后本轮等于没发生，压了栈就会给 /history 留一个空快照。
+    if (extracted.imageCount > 0 && this.deps.ctx.capabilities?.includes('-image_in') === true) {
+      this.push({ kind: 'error', text: t('app.image.modelNoImageIn', { count: extracted.imageCount }) });
+      return;
+    }
     // 附带状态快照：在首次改动 history 之前压栈。silent 注入（goal 续接、cron、技能正文）
     // 不是用户的一轮输入，不压栈——否则 /history 的「撤销 N 轮」与快照栈深度错位。
     if (opts?.silent !== true) {
@@ -2230,9 +2409,6 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         prePlanMode: this.prePlanMode,
       });
     }
-    // 图片占位符 → image content block。没有图片时 content 就是原文本（走旧路径），
-    // 转录区显示的是折叠掉占位符的正文，不把 base64 摊到屏幕上。
-    const extracted = extractImageContent(text, this.images);
     if (opts?.silent !== true) {
       this.push({
         kind: 'user',
@@ -2251,13 +2427,18 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const controller = new AbortController();
     this.controller = controller;
     const hooks = this.buildHooks();
-    const compaction = resolveCompactionBinding(this.deps.config);
+    const compaction = this.compactionBinding;
     const runSubagent = createSubagentRunner({
       provider: this.provider,
       cwd: this.deps.ctx.cwd,
       apiKey: this.deps.ctx.apiKey,
       baseUrl: this.deps.ctx.baseUrl,
       capabilities: this.deps.ctx.capabilities,
+      // 媒体限额随主控透传：迁移时漏了这三项，子 agent 因此一直按内置缺省处理图片/视频，
+      // 主控上调 image_budget_bytes 对子 agent 无效（Ink 版 App.tsx 一直传，pi 版补齐）。
+      imageMaxEdgePx: this.deps.ctx.imageMaxEdgePx,
+      imageBudgetBytes: this.deps.ctx.imageBudgetBytes,
+      videoBudgetBytes: this.deps.ctx.videoBudgetBytes,
       config: this.deps.config,
       hooks,
       maxDepth: this.deps.config.subagent.maxDepth,
@@ -2285,7 +2466,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
 
     const system =
       this.deps.systemPrefix +
-      skillListing(this.deps.skillsRef.current) +
+      skillListing(this.deps.skillsRef.current, this.deps.config.skillListingBudget) +
       subagentListing([...this.deps.subagentRegistry.values()]) +
       (this.deps.agentsMd !== '' ? `\n\n${this.deps.agentsMd}` : '');
 
@@ -2339,6 +2520,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       this.activity.setTip('');
       this.syncStatus();
       this.persist();
+      // 会话标题 AI 生成：首轮回答后触发一次，fire-and-forget 不阻塞收尾
+      this.maybeGenerateTitle();
       this.tui.requestRender();
       // 队列续发：回合收尾后自动发下一条（对齐 Ink 版 drain 语义）。
       // 队列里可能混着排队的斜杠命令（busyRoute 判为 queue 的那些），

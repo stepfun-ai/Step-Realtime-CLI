@@ -105,6 +105,23 @@ describe('loadConfig [models.<别名>] 集成', () => {
     expect('models' in cfg).toBe(false);
   });
 
+  it('capabilities 接受 "-" 前缀取负（-image_in），孤立 "-" 与未知名仍报错', () => {
+    process.env['STEP_CODE_API_KEY'] = 'k';
+    writeToml(
+      [
+        'model = "vl"',
+        '',
+        '[models.vl]',
+        'model = "m1"',
+        'capabilities = ["thinking", "-image_in"]',
+      ].join('\n'),
+    );
+    expect(loadConfig(dir).capabilities).toEqual(['thinking', '-image_in']);
+
+    writeToml(['[models.vl]', 'model = "m1"', 'capabilities = ["-"]'].join('\n'));
+    expect(() => loadConfig(dir)).toThrow('未知能力名');
+  });
+
   it('别名声明 capabilities → 命中别名时带入结果；未命中别名时不带', () => {
     process.env['STEP_CODE_API_KEY'] = 'k';
     writeToml(
