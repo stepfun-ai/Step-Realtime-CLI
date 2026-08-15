@@ -29,7 +29,7 @@ describe('StreamBuffer 流式节流', () => {
     expect(events).toEqual([{ type: 'text', text: '你好，世界' }]);
   });
 
-  it('thinking_delta 合帧，且与 text 分开成两条事件（顺序 text 在前）', () => {
+  it('thinking_delta 与 text 混流：按喂入顺序吐出，同类相邻才合并', () => {
     vi.useFakeTimers();
     const { events, apply } = collector();
     const buf = new StreamBuffer(apply);
@@ -37,9 +37,39 @@ describe('StreamBuffer 流式节流', () => {
     buf.ingest({ type: 'text', text: '正文' });
     buf.ingest({ type: 'thinking_delta', text: '想二' });
     vi.advanceTimersByTime(50);
+    // 段序 = 喂入序。「想一」与「想二」中间隔了 text，不跨段合并
     expect(events).toEqual([
+      { type: 'thinking_delta', text: '想一' },
       { type: 'text', text: '正文' },
-      { type: 'thinking_delta', text: '想一想二' },
+      { type: 'thinking_delta', text: '想二' },
+    ]);
+  });
+
+  it('回归：思考尾巴与正文开头落在同一窗口时，thinking 必须先于 text（think 泄漏根因）', () => {
+    vi.useFakeTimers();
+    const { events, apply } = collector();
+    const buf = new StreamBuffer(apply);
+    // 真实时序：模型思考收尾的同一 50ms 内正文已经开始吐字
+    buf.ingest({ type: 'thinking_delta', text: '现在可以给用户汇报了' });
+    buf.ingest({ type: 'text', text: '两个 README 都写好了' });
+    vi.advanceTimersByTime(50);
+    // 旧实现按「text 先、thinking 后」硬编码吐出，下游据此把思考尾巴落成
+    // 排在正文之后的第二个 thinking 块，正文还会被劈成两段
+    expect(events.map((e) => e.type)).toEqual(['thinking_delta', 'text']);
+  });
+
+  it('相邻同类仍合并为一条（合帧收益不因保序而丢失）', () => {
+    vi.useFakeTimers();
+    const { events, apply } = collector();
+    const buf = new StreamBuffer(apply);
+    buf.ingest({ type: 'thinking_delta', text: '想' });
+    buf.ingest({ type: 'thinking_delta', text: '一想' });
+    buf.ingest({ type: 'text', text: '正' });
+    buf.ingest({ type: 'text', text: '文' });
+    vi.advanceTimersByTime(50);
+    expect(events).toEqual([
+      { type: 'thinking_delta', text: '想一想' },
+      { type: 'text', text: '正文' },
     ]);
   });
 

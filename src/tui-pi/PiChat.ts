@@ -87,6 +87,7 @@ import { clipboardToolHint, readClipboardImage } from '../chat/clipboardImage.js
 import { extractImageContent, ImageAttachmentStore } from '../chat/imageAttachment.js';
 import { askLine, modelItems, modelTabs, showPicker, sessionItems, thinkItems, type PickerOverlay } from './pickers.js';
 import { StreamBuffer } from '../chat/streamBuffer.js';
+import { appendText, settleThinking } from '../chat/streamReducer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { ChatEditor } from './ChatEditor.js';
@@ -2362,13 +2363,17 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       this.tui.requestRender();
       return;
     }
-    // 任何非思考事件到来 = 思考块结束：已累积的思考落成定稿块
-    this.activity.setThinking(false);
-    if (this.thinkingAccum !== '') {
-      const text = this.thinkingAccum;
-      this.thinkingAccum = '';
-      this.transcript.push({ kind: 'thinking', text });
+    // 内容流事件到来 = 思考段结束：已累积的思考落成定稿块，保证 thinking 块永远排在
+    // 同一段正文之前。usage 例外——它是状态数字不是内容流，回合尾部才发，让它切断思考段
+    // 会把一段完整思考劈成前后两块（顺序看着还对，但块数与内容边界都错了）。
+    if (ev.type === 'usage') {
+      this.baseTokens = ev.totalTokens;
+      this.status.setState({ usedTokens: this.baseTokens });
+      this.tui.requestRender();
+      return;
     }
+    this.activity.setThinking(false);
+    if (settleThinking(this.transcript, this.thinkingAccum)) this.thinkingAccum = '';
     if (ev.type === 'thinking_end') {
       this.tui.requestRender();
       return;
@@ -2377,12 +2382,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     switch (ev.type) {
       case 'text': {
         this.activity.addOutputChars(ev.text.length);
-        const last = this.transcript.lastItem();
-        if (last !== undefined && last.kind === 'assistant') {
-          this.transcript.update(-1, { kind: 'assistant', text: last.text + ev.text });
-        } else {
-          this.transcript.push({ kind: 'assistant', text: ev.text });
-        }
+        appendText(this.transcript, ev.text);
         break;
       }
       case 'tool_start':
@@ -2415,10 +2415,6 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         break;
       case 'thinking_recover':
         this.transcript.push({ kind: 'note', text: '模型只输出了思考，正基于前序分析直接作答', boundary: true });
-        break;
-      case 'usage':
-        this.baseTokens = ev.totalTokens;
-        this.status.setState({ usedTokens: this.baseTokens });
         break;
       case 'aborted':
         // steer 残留倒进队列头部：中断后按队列机制续发，用户留言不凭空消失

@@ -13,7 +13,20 @@ import type { AgentEvent } from '../agent/events.js';
  * 正确性三件事：
  * 1. 最后一帧不丢——turn_done / error / drain() 三处强制 flush，循环结束必落屏；
  * 2. 结构事件即时——flushNow 不等 50ms，tool_start 等立即渲染；
- * 3. 顺序不乱——合帧仅合并同类的连续追加型 delta；一旦出现结构事件，先把缓冲吐净再按序消费。
+ * 3. 顺序不乱——合帧仅合并**相邻同类**的追加型 delta，跨类不合并、段间保持喂入顺序；
+ *    一旦出现结构事件，先把缓冲吐净再按序消费。
+ *
+ * 第 3 条曾经是错的，改法见下。原实现用 `textAccum` / `thinkingAccum` 两个独立字符串攒，
+ * flush 时按「text → thinking_delta → usage」的**硬编码次序**吐出。于是同一 50ms 窗口内
+ * 「思考尾巴 + 正文开头」这一最常见的组合被反序：喂入 thinking→text，吐出 text→thinking。
+ * 下游 `PiChat.applyEvent` 以「任何非思考事件 = 思考段结束」判定落定，于是正文先落地、
+ * 迟到的思考尾巴另起一个 thinking 块排在正文**之后**；若之后还有 text，末块已不是 assistant，
+ * 正文还会被劈成两段。这就是 thinking 泄漏到正文附近、块序错乱的根因
+ * （现象与 Ink 版《thinking 泄漏到正文-Static 定稿时序》同族，那边在下游打补丁，这边在源头修）。
+ *
+ * 现在改为**保序段缓冲**：一个 `segments` 数组，相邻同类合并进末段、异类新开一段，
+ * flush 按段序吐出。合帧收益不变（连续 text 仍合并成一条），但顺序由数据结构保证，
+ * 不再依赖下游守卫。usage 仍单独 pending 并排在最后——它是状态数字不是内容流，无序可言。
  *
  * 与 React 的关系：React 18 自动批处理让 flush() 回调里的多次 setState 合并为一次重绘，
  * 因此一个 setTimeout 回调内统一 setState 即达成「50ms 一帧」，无需 unstable_batchedUpdates。
@@ -42,9 +55,8 @@ export class StreamBuffer {
   private lastFlushAt = 0;
   private readonly now: () => number;
 
-  // 追加型缓冲：text / thinking_delta 各攒一份字符串，usage 只留最新一条
-  private textAccum = '';
-  private thinkingAccum = '';
+  // 保序段缓冲：相邻同类 delta 合并进末段，异类新开一段；usage 只留最新一条，flush 时排最后
+  private segments: StreamDeltaEvent[] = [];
   private usagePending: AgentEvent | undefined;
 
   constructor(apply: (ev: AgentEvent) => void, opts: StreamBufferOptions = {}) {
@@ -53,11 +65,13 @@ export class StreamBuffer {
     this.now = opts.now ?? (() => Date.now());
   }
 
-  /** 喂入一条事件：delta 缓冲合帧，其余（结构/边界事件）立即 flush + 立即消费。 */
+  /** 喂入一条事件：delta 按序缓冲合帧，其余（结构/边界事件）立即 flush + 立即消费。 */
   ingest(ev: AgentEvent): void {
     if (isStreamDelta(ev)) {
-      if (ev.type === 'text') this.textAccum += ev.text;
-      else this.thinkingAccum += ev.text;
+      const tail = this.segments[this.segments.length - 1];
+      // 相邻同类才合并；异类新开一段，段序即喂入序
+      if (tail !== undefined && tail.type === ev.type) tail.text += ev.text;
+      else this.segments.push({ type: ev.type, text: ev.text } as StreamDeltaEvent);
       this.scheduleFlush();
       return;
     }
@@ -92,19 +106,17 @@ export class StreamBuffer {
     this.flush();
   }
 
-  /** 把缓冲的内容按「text → thinking_delta → usage」顺序包装成事件交给 apply。 */
+  /** 把缓冲按「喂入顺序的 delta 段 → usage」交给 apply。空段跳过（如 delta 携带空串）。 */
   private flush(): void {
-    if (this.textAccum === '' && this.thinkingAccum === '' && this.usagePending === undefined) return;
+    if (this.segments.length === 0 && this.usagePending === undefined) return;
     this.lastFlushAt = this.now();
-    if (this.textAccum !== '') {
-      const text = this.textAccum;
-      this.textAccum = '';
-      this.apply({ type: 'text', text });
-    }
-    if (this.thinkingAccum !== '') {
-      const text = this.thinkingAccum;
-      this.thinkingAccum = '';
-      this.apply({ type: 'thinking_delta', text });
+    if (this.segments.length > 0) {
+      const segs = this.segments;
+      this.segments = [];
+      for (const seg of segs) {
+        if (seg.text === '') continue;
+        this.apply(seg);
+      }
     }
     if (this.usagePending !== undefined) {
       const u = this.usagePending;
