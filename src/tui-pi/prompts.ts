@@ -9,6 +9,7 @@ import { Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earend
 import type { AskUserQuestion, AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { ChoiceBlock, type Choice } from './ChoiceBlock.js';
 import { c, markdownTheme } from './theme.js';
+import { markdownTransform } from '../chat/markdownPrep.js';
 
 /** 预览折叠行数上限（与 Ink 版 PREVIEW_LIMIT 同口径）。 */
 const PREVIEW_LIMIT = 10;
@@ -188,7 +189,7 @@ export class PlanApproval extends ChoiceBlock<PlanValue> {
       requestRender,
     );
     this.done = done;
-    this.markdown = new Markdown(plan, 0, 0, markdownTheme);
+    this.markdown = new Markdown(plan, 0, 0, markdownTheme, undefined, { transform: markdownTransform });
   }
 
   protected onChoose(value: PlanValue, feedback?: string): void {

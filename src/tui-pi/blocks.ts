@@ -14,6 +14,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { DisplayItem, WelcomeData } from '../chat/types.js';
 import { c, markdownTheme, thinkingMarkdownTheme } from './theme.js';
+import { markdownTransform } from '../chat/markdownPrep.js';
 import { t } from '../i18n.js';
 
 // 顶部 logo：FIGlet "Small" 风格的 S（紧凑双线）。与 Ink 版 WelcomeBox 同字形。
@@ -135,7 +136,7 @@ export class ItemBlock implements Component {
 
   private renderMarkdown(text: string, width: number, dim: boolean): string[] {
     if (this.markdown === undefined) {
-      this.markdown = new Markdown(text, 0, 0, dim ? thinkingMarkdownTheme : markdownTheme);
+      this.markdown = new Markdown(text, 0, 0, dim ? thinkingMarkdownTheme : markdownTheme, undefined, { transform: markdownTransform });
     } else {
       this.markdown.setText(text);
     }
