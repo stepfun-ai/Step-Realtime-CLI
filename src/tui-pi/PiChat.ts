@@ -93,6 +93,7 @@ import { ChatEditor } from './ChatEditor.js';
 import { ActivityLine, StatusLine } from './StatusLine.js';
 import { Transcript } from './Transcript.js';
 import { ChromePanels } from './ChromePanels.js';
+import { TasksOverlay } from './TasksOverlay.js';
 import { allTodosDone } from '../chat/chromePanels.js';
 import { ItemBlock } from './blocks.js';
 import { openExpandViewer } from './ExpandOverlay.js';
@@ -152,6 +153,9 @@ export class PiChat {
   private readonly overlayHost = new Container();
   /** 输入框上方的常驻面板：待办清单 + 发送队列预览（无数据时零行）。 */
   private readonly chrome = new ChromePanels();
+  /** 有 overlay 需要按秒重渲（任务弹层的用时）时置真，由 ticker 读。 */
+  private overlayNeedsTick = false;
+  private overlayTickCount = 0;
 
   private readonly history: StoredMessage[] = [];
   private session: SessionData;
@@ -369,6 +373,12 @@ export class PiChat {
       .catch(() => this.completion.setFiles([]));
     // spinner 与 running 态计时：只在 busy 时真正推进（idle 时 render 返回空行，无写入）
     this.ticker = setInterval(() => {
+      // 任务弹层打开时也要走秒（运行中任务的用时在变），但只需秒级：每 8 拍重渲一次。
+      // 不能靠 busy 分支带动——弹层通常是空闲时手动打开的。
+      if (this.overlayNeedsTick) {
+        this.overlayTickCount += 1;
+        if (this.overlayTickCount % 8 === 0) this.tui.requestRender();
+      }
       if (!this.busy || this.promptActive) return;
       this.activity.tick();
       // goal 徽标的用时要跟着走秒（只在有 goal 时同步，避免每 120ms 白替换一次状态）
@@ -458,6 +468,47 @@ export class PiChat {
       return true;
     }
     return true;
+  }
+
+  /**
+   * 打开 `/tasks` 交互弹层。任务数据每帧现取（运行中任务的用时与输出在变），
+   * 1 秒 tick 靠 PiChat 的 ticker 带动重渲。选中任务按 o/Enter 时把它的完整输出
+   * 送进全屏查看器——那边已经有滚动与键位，不重复实现第二套。
+   */
+  private openTasksOverlay(): void {
+    if (this.promptActive) return;
+    const overlay = new TasksOverlay({
+      getTasks: () => this.background.list(),
+      stopTask: (id) => {
+        const ok = this.background.stop(id);
+        this.push({ kind: 'note', text: ok ? `已终止任务 ${id}` : `任务 ${id} 无法终止（可能已结束）` });
+        this.syncStatus();
+        return ok;
+      },
+      openOutput: (task) => {
+        // 输出全文进转录区：查看器只收集转录区里的条目，这里先落一条 tool 形态的条目
+        // 会污染历史，所以直接推 note——用户要的是「看到全文」，不是「多一条工具卡片」
+        handle.hide();
+        this.overlayNeedsTick = false;
+        this.tui.setFocus(this.editor);
+        this.push({
+          kind: 'note',
+          text: `任务 ${task.id}（${task.status}）输出：
+${task.output === '' ? '（暂无输出）' : task.output}`,
+        });
+      },
+      requestRender: () => this.tui.requestRender(),
+      onClose: () => {
+        handle.hide();
+        this.overlayNeedsTick = false;
+        this.tui.setFocus(this.editor);
+        this.tui.requestRender();
+      },
+    });
+    const handle = this.tui.showOverlay(overlay, { width: '90%', maxHeight: '80%', anchor: 'center' });
+    handle.focus();
+    this.overlayNeedsTick = true;
+    this.tui.requestRender();
   }
 
   /** 持久化。顺序不变量与 Ink 版一致：先 appendFull 再 save（wireSeq 游标一致性）。 */
@@ -696,7 +747,9 @@ export class PiChat {
         return;
 
       case 'tasks':
-        this.push({ kind: 'note', text: formatTaskList(this.background.list(), Date.now()) });
+        // 无参进交互弹层；带参（如 /tasks list）退化为纯文本，脚本化场景仍可用
+        if (args.trim() === '') this.openTasksOverlay();
+        else this.push({ kind: 'note', text: formatTaskList(this.background.list(), Date.now()) });
         return;
 
       case 'memory':

@@ -1,0 +1,164 @@
+/**
+ * `/tasks` 交互弹层：任务列表 + 输出预览 + 停止确认。
+ *
+ * 对应 Ink 版 TasksViewer 的核心交互，形态简化为「上列表 + 下输出预览」的单栏（Ink 是三栏）：
+ * 终端宽度常态 80-120 列，三栏切下来每栏放不下一条命令行，纵向分区信息密度更高。
+ *
+ * 保留的交互：↑↓/jk 选任务、Tab 循环过滤（全部→运行中→已完成→失败）、s 停止（y/n 二次
+ * 确认，防误杀）、o 全屏看输出、r 刷新、Esc/q 关闭。1 秒 tick 由调用方驱动（复用 PiChat
+ * 的 ticker），运行中任务的用时与输出跟着走。
+ */
+import { matchesKey, truncateToWidth, type Component } from '@earendil-works/pi-tui';
+import type { BackgroundTask } from '../agent/background/manager.js';
+import { formatDuration } from '../chat/duration.js';
+import { c } from './theme.js';
+
+/** 过滤档位：Tab 循环。 */
+export type TaskFilter = 'all' | 'running' | 'done' | 'failed';
+const FILTER_ORDER: TaskFilter[] = ['all', 'running', 'done', 'failed'];
+const FILTER_LABEL: Record<TaskFilter, string> = {
+  all: '全部',
+  running: '运行中',
+  done: '已完成',
+  failed: '失败',
+};
+
+/** 输出预览区行数（弹层里固定，全文看走 o 打开查看器）。 */
+const PREVIEW_ROWS = 8;
+
+/** 按过滤档筛选（done 含 completed 与 killed——都是「跑完了」，用户找的是「还在跑吗」）。 */
+export function filterTasks(tasks: readonly BackgroundTask[], filter: TaskFilter): BackgroundTask[] {
+  if (filter === 'all') return [...tasks];
+  if (filter === 'running') return tasks.filter((t) => t.status === 'running');
+  if (filter === 'failed') return tasks.filter((t) => t.status === 'failed');
+  return tasks.filter((t) => t.status === 'completed' || t.status === 'killed');
+}
+
+/** 排序：运行中在前，其余按启动时间倒序（与 formatTaskList 同口径）。 */
+export function sortTasks(tasks: readonly BackgroundTask[]): BackgroundTask[] {
+  const order: Record<string, number> = { running: 0, failed: 1, completed: 2, killed: 3 };
+  return [...tasks].sort((a, b) => {
+    const d = (order[a.status] ?? 9) - (order[b.status] ?? 9);
+    if (d !== 0) return d;
+    return Date.parse(b.startedAt) - Date.parse(a.startedAt);
+  });
+}
+
+/** 单行任务摘要：状态 · id · 用时 · exit code · 命令。 */
+export function taskRow(task: BackgroundTask, now: number, selected: boolean, width: number): string {
+  const started = Date.parse(task.startedAt);
+  const end = task.endedAt !== undefined ? Date.parse(task.endedAt) : now;
+  const dur = Number.isNaN(started) ? '' : formatDuration(Math.max(0, end - started));
+  const code = task.status === 'failed' && task.exitCode !== undefined ? ` exit ${task.exitCode}` : '';
+  const mark =
+    task.status === 'running' ? c.warn('●') : task.status === 'failed' ? c.error('✗') : task.status === 'killed' ? c.dim('⊘') : c.ok('✓');
+  const head = `${selected ? c.toolName('›') : ' '} ${mark} ${task.id} ${c.dim(`${dur}${code}`)}  `;
+  const cmd = selected ? task.command : c.dim(task.command);
+  return truncateToWidth(head + cmd, width);
+}
+
+export class TasksOverlay implements Component {
+  private filter: TaskFilter = 'all';
+  private sel = 0;
+  /** 停止确认态：待确认的任务 id（非空时 y 执行、n/Esc 取消）。 */
+  private confirmStop: string | null = null;
+  private readonly getTasks: () => readonly BackgroundTask[];
+  private readonly stopTask: (id: string) => boolean;
+  private readonly openOutput: (task: BackgroundTask) => void;
+  private readonly requestRender: () => void;
+  private readonly close: () => void;
+  private readonly now: () => number;
+
+  constructor(opts: {
+    getTasks: () => readonly BackgroundTask[];
+    stopTask: (id: string) => boolean;
+    openOutput: (task: BackgroundTask) => void;
+    requestRender: () => void;
+    onClose: () => void;
+    now?: () => number;
+  }) {
+    this.getTasks = opts.getTasks;
+    this.stopTask = opts.stopTask;
+    this.openOutput = opts.openOutput;
+    this.requestRender = opts.requestRender;
+    this.close = opts.onClose;
+    this.now = opts.now ?? ((): number => Date.now());
+  }
+
+  private visible(): BackgroundTask[] {
+    return sortTasks(filterTasks(this.getTasks(), this.filter));
+  }
+
+  private selected(): BackgroundTask | undefined {
+    const list = this.visible();
+    return list[Math.min(this.sel, Math.max(0, list.length - 1))];
+  }
+
+  handleInput(data: string): void {
+    // 停止确认优先吃键：确认态下其它键位一律不生效，防手滑连按误杀
+    if (this.confirmStop !== null) {
+      if (data === 'y' || data === 'Y') {
+        this.stopTask(this.confirmStop);
+        this.confirmStop = null;
+      } else if (data === 'n' || data === 'N' || matchesKey(data, 'escape')) {
+        this.confirmStop = null;
+      }
+      this.requestRender();
+      return;
+    }
+    if (matchesKey(data, 'escape') || data === 'q') {
+      this.close();
+      return;
+    }
+    if (matchesKey(data, 'tab')) {
+      this.filter = FILTER_ORDER[(FILTER_ORDER.indexOf(this.filter) + 1) % FILTER_ORDER.length]!;
+      this.sel = 0;
+    } else if (matchesKey(data, 'up') || data === 'k') {
+      this.sel = Math.max(0, this.sel - 1);
+    } else if (matchesKey(data, 'down') || data === 'j') {
+      this.sel = Math.min(Math.max(0, this.visible().length - 1), this.sel + 1);
+    } else if (data === 's') {
+      const task = this.selected();
+      // 只有运行中的任务能停：对已终态任务提示比静默无反应好
+      if (task !== undefined && task.status === 'running') this.confirmStop = task.id;
+    } else if (data === 'o' || matchesKey(data, 'return')) {
+      const task = this.selected();
+      if (task !== undefined) this.openOutput(task);
+    }
+    this.requestRender();
+  }
+
+  render(width: number): string[] {
+    const list = this.visible();
+    const total = this.getTasks().length;
+    const out: string[] = [
+      c.accent(`后台任务 · ${FILTER_LABEL[this.filter]}（${list.length}/${total}）`),
+    ];
+    if (list.length === 0) {
+      out.push(c.dim(this.filter === 'all' ? '  当前没有后台任务' : `  没有${FILTER_LABEL[this.filter]}的任务`));
+    } else {
+      const now = this.now();
+      const sel = Math.min(this.sel, list.length - 1);
+      for (const [i, task] of list.entries()) {
+        out.push(taskRow(task, now, i === sel, width));
+      }
+    }
+    const task = this.selected();
+    if (task !== undefined) {
+      out.push('');
+      out.push(c.dim(`── 输出（${task.id}）──`));
+      const lines = task.output === '' ? ['（暂无输出）'] : task.output.split('\n');
+      for (const l of lines.slice(-PREVIEW_ROWS)) out.push(c.dim(truncateToWidth(`  ${l}`, width)));
+    }
+    if (this.confirmStop !== null) {
+      out.push(c.warn(`终止任务 ${this.confirmStop}？[y/N]`));
+    } else {
+      out.push(c.dim('↑↓/jk 选择 · Tab 过滤 · o/Enter 看全部输出 · s 终止 · Esc/q 关闭'));
+    }
+    return out;
+  }
+
+  invalidate(): void {
+    // 内容每帧从 getTasks() 现取（运行中任务的用时与输出在变），无缓存
+  }
+}
