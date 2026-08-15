@@ -94,6 +94,7 @@ import { ActivityLine, StatusLine } from './StatusLine.js';
 import { Transcript } from './Transcript.js';
 import { ChromePanels } from './ChromePanels.js';
 import { TasksOverlay } from './TasksOverlay.js';
+import { openProviderManager, runProviderWizard } from './ProviderManager.js';
 import { allTodosDone } from '../chat/chromePanels.js';
 import { ItemBlock, summarizeInput } from './blocks.js';
 import { openExpandViewer } from './ExpandOverlay.js';
@@ -581,6 +582,22 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         return { ...tool, dynamicWorkflow: { ...panel, phases } };
       },
     );
+    this.tui.requestRender();
+  }
+
+  /** `/provider` 无参：渠道管理弹层。选中已有渠道即按它切换（走既有 runProvider 解析路径）。 */
+  private async openProviderManagerOverlay(): Promise<void> {
+    if (this.promptActive) return;
+    const res = await openProviderManager(this.tui, this.deps.config, (text) => this.push({ kind: 'note', text }));
+    this.tui.setFocus(this.editor);
+    if (res.kind === 'switch' && res.target !== undefined) this.runProvider(res.target);
+  }
+
+  /** `/provider add`：新增渠道向导（写盘走 appendProviderConfig，带备份与回滚）。 */
+  private async openProviderWizard(): Promise<void> {
+    if (this.promptActive) return;
+    await runProviderWizard(this.tui, this.deps.config, (text) => this.push({ kind: 'note', text }));
+    this.tui.setFocus(this.editor);
     this.tui.requestRender();
   }
 
@@ -1072,13 +1089,15 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   private runProvider(args: string): void {
     const arg = args.trim();
     if (arg === 'add' || arg.startsWith('add ')) {
-      this.push({
-        kind: 'note',
-        text: '渠道向导（/provider add）在 pi 版尚未接线。手动改 ~/.step-code/config.toml 的 [providers] 段后用 /reload 生效',
-      });
+      void this.openProviderWizard();
       return;
     }
-    if (arg === '' || arg === 'list') {
+    if (arg === '') {
+      // 无参进交互弹层（查看 + 切换 + 删除 + 新增入口）；list 仍走纯文本
+      void this.openProviderManagerOverlay();
+      return;
+    }
+    if (arg === 'list') {
       const providers = this.deps.config.providers ?? {};
       const models = this.deps.config.models ?? {};
       const lines = [`当前服务商：${this.deps.config.provider} · 内置预设：${Object.keys(PROVIDER_PRESETS).join(' / ')}`];

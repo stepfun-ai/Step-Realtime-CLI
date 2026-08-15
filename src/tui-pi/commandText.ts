@@ -70,14 +70,16 @@ export function formatMemoryList(cwd: string, enabled: boolean, now: number): st
  * 先登记进来，用户会看到「pi 版尚未接线」而不是「未知命令」——命令存在与命令
  * 打错是两件事，提示混在一起会让人以为功能被删了。
  *
- * 仍有一处功能缺口不走这里：`/provider add` 的渠道向导（多步表单）没做，
- * 由 runProvider 单独提示改配置文件的替代路径。
+ * 交互形态上仍有一处不对标 Ink：`/provider add` 的向导只做手动录入，没有「目录导入」
+ * 路径（Ink 版会 fetch 远端 catalog 选供应商后批量导入别名）。手动录入对任何渠道都
+ * 走得通，目录导入依赖外部端点可用性且只覆盖少数供应商，记在设计档案的差异清单里。
  */
 export const NOT_WIRED: ReadonlySet<string> = new Set([]);
 
 /** 未接线命令的提示文本。 */
 export function notWiredText(name: string): string {
-  return `/${name} 在 pi 版尚未接线（用不带 --pi 的 Ink 版执行）`;
+  // Ink 版已在 M5 删除，提示不能再让用户「去用 Ink 版」——那条路不存在了
+  return `/${name} 尚未接线`;
 }
 
 /** `/goal` 无参时的状态面板文本（Ink 版是 GoalPanel 圆角框，pi 版给等价文本）。 */
