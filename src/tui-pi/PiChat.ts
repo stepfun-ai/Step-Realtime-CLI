@@ -71,6 +71,7 @@ import { formatUsageReport } from '../chat/usagePanel.js';
 import { parseThinkArgs, THINK_CHOICES, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../chat/thinkCommand.js';
 import { scanFileIndex } from '../chat/fileIndex.js';
 import { applyCtrlB } from '../chat/ctrlB.js';
+import { versionLine } from '../buildInfo.js';
 import {
   collectUndoTurns,
   formatCronJobs,
@@ -331,6 +332,12 @@ export class PiChat {
 
   /** 启动 TUI，返回的 Promise 在退出时 resolve。 */
   start(): Promise<PiChatExit> {
+    // 欢迎框是第一个条目（新建与 resume 都显示，与 Ink 版 WelcomeBox 同语义）：
+    // 放 replayHistory 之前，恢复会话时它也在历史回放之上。
+    this.transcript.push({
+      kind: 'welcome',
+      data: { cwd: this.deps.ctx.cwd, sessionId: this.session.id, model: this.modelLabel, version: versionLine() },
+    });
     this.replayHistory();
     // 恢复会话时 active goal 被降级为 paused（防重启后无人看着就自动续跑）。
     // 这是静默发生的，不明说用户会以为目标还在推进。

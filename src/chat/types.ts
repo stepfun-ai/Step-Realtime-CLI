@@ -5,8 +5,17 @@ export interface SubagentToolEvent {
   status: 'ok' | 'error' | 'running';
 }
 
+/** 启动欢迎框的展示数据。 */
+export interface WelcomeData {
+  cwd: string;
+  sessionId: string;
+  model: string;
+  version: string;
+}
+
 /** UI 展示用的会话条目（独立于回灌给模型的 Anthropic 消息历史）。 */
 export type DisplayItem =
+  | { kind: 'welcome'; data: WelcomeData }
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string }
   /** 思考（推理过程）定稿块：流式期不进历史区（状态行预览），完成后才落成此条目。 */

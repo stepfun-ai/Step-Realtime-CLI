@@ -7,7 +7,7 @@
  * 「有没有发清屏序列」，而不是「屏幕最终长什么样」。
  */
 import { describe, expect, it } from 'vitest';
-import { TuiMainScreen } from '@earendil-works/pi-tui';
+import { TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import { Transcript } from '../../src/tui-pi/Transcript.js';
 import { ItemBlock } from '../../src/tui-pi/blocks.js';
@@ -59,6 +59,22 @@ function plain(lines: readonly string[]): string[] {
 }
 
 describe('ItemBlock 渲染', () => {
+  it('欢迎框：logo + 四行元信息在圆角框内', () => {
+    const w = new ItemBlock({
+      kind: 'welcome',
+      data: { cwd: '/proj/demo', sessionId: 'abc123', model: 'step-3.7', version: '0.1.2' },
+    });
+    const lines = plain(w.render(80));
+    expect(lines[0]).toMatch(/^╭─+╮$/);
+    expect(lines.some((l) => l.includes('│ / __|'))).toBe(true);
+    expect(lines.some((l) => l.includes('Welcome to Step Code!'))).toBe(true);
+    expect(lines.some((l) => l.includes('Directory: /proj/demo'))).toBe(true);
+    expect(lines.some((l) => l.includes('Model:     step-3.7'))).toBe(true);
+    expect(lines[lines.length - 2]).toMatch(/^╰─+╯$/);
+    // 窄终端不爆宽：每行可视宽度 ≤ width
+    for (const l of w.render(30)) expect(visibleWidth(l)).toBeLessThanOrEqual(30);
+  });
+
   it('用户消息带竖线前缀，助手正文走 markdown', () => {
     const user = new ItemBlock({ kind: 'user', text: '帮我改个文件' });
     expect(plain(user.render(40))[0]).toBe('│ 帮我改个文件');

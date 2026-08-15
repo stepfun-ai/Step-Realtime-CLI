@@ -11,9 +11,44 @@
  * 是「取缓存 + 数组拼接」而非重新排版。
  */
 import type { Component } from '@earendil-works/pi-tui';
-import { Markdown, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
-import type { DisplayItem } from '../chat/types.js';
+import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import type { DisplayItem, WelcomeData } from '../chat/types.js';
 import { c, markdownTheme, thinkingMarkdownTheme } from './theme.js';
+import { t } from '../i18n.js';
+
+// 顶部 logo：FIGlet "Small" 风格的 S（紧凑双线）。与 Ink 版 WelcomeBox 同字形。
+const LOGO_LINES = [' ___ ', '/ __|', '\\__ \\', '|___/'];
+
+/**
+ * 启动欢迎框：圆角边框 + 蓝色 logo，右侧标题/帮助提示，下方 Directory/Session/Model/Version
+ * 四行。手绘边框行（pi-tui 没有边框容器；Box 组件只有 padding 和背景色）。
+ * 内容超宽时各值截断到框内，边框随内容宽收缩但不超 width。
+ */
+export function renderWelcome(data: WelcomeData, width: number): string[] {
+  const row = (label: string, value: string): string => `${c.dim(label.padEnd(11))}${value}`;
+  const inner: string[] = [
+    ...LOGO_LINES.map((line, i) => {
+      const right =
+        i === 1 ? `  ${c.bold(t('welcome.title'))}` : i === 2 ? `  ${c.dim(t('welcome.helpHint'))}` : '';
+      return `${c.logo(line)}${right}`;
+    }),
+    '',
+    row('Directory:', data.cwd),
+    row('Session:', data.sessionId),
+    row('Model:', data.model),
+    row('Version:', data.version),
+  ];
+  // 框宽 = min(内容最宽行, width - 4)，内容行截断或补齐到框宽
+  const frameWidth = Math.min(Math.max(...inner.map((l) => visibleWidth(l)), 20), Math.max(20, width - 4));
+  const body = inner.map((l) => {
+    const w = visibleWidth(l);
+    const clipped = w > frameWidth ? truncateToWidth(l, frameWidth) : l + ' '.repeat(frameWidth - w);
+    return `${c.dim('│')} ${clipped} ${c.dim('│')}`;
+  });
+  const top = c.dim(`╭${'─'.repeat(frameWidth + 2)}╮`);
+  const bottom = c.dim(`╰${'─'.repeat(frameWidth + 2)}╯`);
+  return [top, ...body, bottom, ''];
+}
 
 /** 工具结果折叠口径（与 Ink 版 ToolCall.tsx 一致）：错误输出预览行数。 */
 const ERROR_PREVIEW_LINES = 4;
@@ -110,6 +145,8 @@ export class ItemBlock implements Component {
   private renderItem(width: number): string[] {
     const it = this.item;
     switch (it.kind) {
+      case 'welcome':
+        return renderWelcome(it.data, width);
       case 'user': {
         // 用户消息：竖线 + 青色，与助手正文形成视觉分栏
         const body = wrap(it.text, width - 2);

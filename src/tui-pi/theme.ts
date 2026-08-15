@@ -23,6 +23,9 @@ export const c = {
   dim: chalk.gray,
   heading: chalk.bold,
   accent: chalk.magenta,
+  bold: chalk.bold,
+  // logo 蓝：与 Ink 版 WelcomeBox 的 color="blue" 一致。
+  logo: chalk.blue,
   /** 权限模式徽章色：与 Ink 版 StatusBar.modeColor 同口径。 */
   mode: (mode: string) => (mode === 'yolo' ? chalk.red : mode === 'auto' ? chalk.yellow : chalk.green),
 };
