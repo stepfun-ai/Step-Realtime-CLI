@@ -13,12 +13,12 @@
  * 全程只开一个 TuiMainScreen，步骤之间换内容而不是换屏：主屏接管 stdin 与光标，
  * 多个屏并存会争输入。
  */
-import { Container, Editor, ProcessTerminal, TuiMainScreen } from '@earendil-works/pi-tui';
-import type { Component, TUI } from '@earendil-works/pi-tui';
+import { ProcessTerminal, TuiMainScreen } from '@earendil-works/pi-tui';
+import type { TUI } from '@earendil-works/pi-tui';
 import { saveDefaultModel, saveModelAlias, saveProviderKey } from '../config/config.js';
 import { t } from '../i18n.js';
-import { showPicker } from './pickers.js';
-import { c, editorTheme } from './theme.js';
+import { Banner, askLine, showPicker } from './pickers.js';
+import { c } from './theme.js';
 
 export type FirstRunResult =
   | { kind: 'configured'; apiKey: string; provider: string; model: string }
@@ -63,19 +63,6 @@ const CUSTOM_ALIAS = 'custom';
 const DEFAULT_MAX_CONTEXT = 262144;
 
 /** 屏幕上方的静态说明区（标题 + 已选信息）。 */
-class Banner implements Component {
-  private lines: string[] = [];
-  setLines(lines: string[]): void {
-    this.lines = lines;
-  }
-  invalidate(): void {
-    // 无缓存：内容极短，每帧重拼比维护脏标记便宜
-  }
-  render(): string[] {
-    return this.lines;
-  }
-}
-
 /**
  * 跑一遍引导。返回 configured 时配置已落盘，调用方只需重载配置。
  *
@@ -202,40 +189,3 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
  * 用 Editor 而不是 Input：Editor 支持 bracketed paste，而 key 这一步几乎总是粘贴进来的
  * （手打 API key 不现实），Input 对粘贴的处理是逐字符插入，长 key 会明显卡顿。
  */
-function askLine(tui: TUI, hint: string, initial?: string): Promise<string | null> {
-  return new Promise<string | null>((resolve) => {
-    const host = new Container();
-    let settled = false;
-    const finish = (v: string | null): void => {
-      if (settled) return;
-      settled = true;
-      tui.removeChild(host);
-      tui.requestRender();
-      resolve(v);
-    };
-    const hintLine = new Banner();
-    hintLine.setLines([c.dim(hint)]);
-    const editor = new EscEditor(tui, editorTheme);
-    editor.onSubmit = (text) => finish(text);
-    editor.onEscapeKey = () => {
-      finish(null);
-      return true;
-    };
-    if (initial !== undefined) editor.setText(initial);
-    host.addChild(hintLine);
-    host.addChild(editor);
-    tui.addChild(host);
-    tui.setFocus(editor);
-    tui.requestRender();
-  });
-}
-
-/** Editor 子类：把 Esc 交给引导（父类只用它关补全菜单，这里没有补全）。 */
-class EscEditor extends Editor {
-  onEscapeKey?: () => boolean;
-  override handleInput(data: string): void {
-    // \x1b 单字节即 Esc；带后续字节的是方向键等序列，交给父类
-    if (data === '\x1b' && this.onEscapeKey?.() === true) return;
-    super.handleInput(data);
-  }
-}

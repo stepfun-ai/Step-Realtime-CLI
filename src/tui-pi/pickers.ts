@@ -9,10 +9,10 @@
  * 不存在 Ink 的 Static/动态区之分，所以选择器不需要额外的行数预算计算
  * （Ink 版为此维护了 estimateChromeRows / planBoxRows 这类与渲染结构一一对应的公式）。
  */
-import { SelectList, matchesKey, visibleWidth, type Component, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui';
+import { Container, Editor, SelectList, matchesKey, visibleWidth, type Component, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui';
 import type { SessionMeta } from '../session/store.js';
 import type { StepCodeConfig } from '../config/config.js';
-import { c, selectListTheme } from './theme.js';
+import { c, editorTheme, selectListTheme } from './theme.js';
 
 /** 相对时间（与 Ink 版 SessionPicker.relativeTime 同口径）。 */
 export function relativeTime(iso: string, now = Date.now()): string {
@@ -325,5 +325,58 @@ export async function pickSessionStandalone(metas: readonly SessionMeta[]): Prom
     });
   } finally {
     tui.stop();
+  }
+}
+
+/** 极简单行展示组件（提示行）。原在 FirstRun.ts，会话重命名也要用，移到这里共用。 */
+export class Banner implements Component {
+  private lines: string[] = [];
+  setLines(lines: string[]): void {
+    this.lines = lines;
+  }
+  invalidate(): void {
+    // 无缓存：内容极短，每帧重拼比维护脏标记便宜
+  }
+  render(): string[] {
+    return this.lines;
+  }
+}
+
+
+export function askLine(tui: TUI, hint: string, initial?: string): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    const host = new Container();
+    let settled = false;
+    const finish = (v: string | null): void => {
+      if (settled) return;
+      settled = true;
+      tui.removeChild(host);
+      tui.requestRender();
+      resolve(v);
+    };
+    const hintLine = new Banner();
+    hintLine.setLines([c.dim(hint)]);
+    const editor = new EscEditor(tui, editorTheme);
+    editor.onSubmit = (text) => finish(text);
+    editor.onEscapeKey = () => {
+      finish(null);
+      return true;
+    };
+    if (initial !== undefined) editor.setText(initial);
+    host.addChild(hintLine);
+    host.addChild(editor);
+    tui.addChild(host);
+    tui.setFocus(editor);
+    tui.requestRender();
+  });
+}
+
+/** Editor 子类：把 Esc 交给引导（父类只用它关补全菜单，这里没有补全）。 */
+class EscEditor extends Editor {
+  onEscapeKey?: () => boolean;
+  override handleInput(data: string): void {
+    // \x1b 单字节即 Esc；带后续字节的是方向键等序列，交给父类
+    if (data === '\x1b' && this.onEscapeKey?.() === true) return;
+    super.handleInput(data);
   }
 }

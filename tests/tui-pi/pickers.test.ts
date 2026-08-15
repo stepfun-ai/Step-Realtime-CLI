@@ -274,3 +274,50 @@ describe('PickerOverlay 渠道 tab（对标 Ink 版 ModelPicker）', () => {
     expect(before[1]).not.toContain('全部'); // 无 tab 条
   });
 });
+
+describe('PickerOverlay 额外键位与 setItems（会话选择器的删除/重命名基础）', () => {
+  it('onKey 消费自定义键位，未消费的键仍走过滤/列表', () => {
+    const seen: string[] = [];
+    const overlay = new PickerOverlay({
+      title: 't',
+      items: [
+        { value: 's1', label: '会话一', description: '' },
+        { value: 's2', label: '会话二', description: '' },
+      ],
+      requestRender: () => {},
+      onSelect: () => {},
+      onCancel: () => {},
+      onKey: (data, selected) => {
+        if (data === 'd' || data === 'r') {
+          seen.push(`${data}:${selected?.value ?? ''}`);
+          return true;
+        }
+        return false;
+      },
+    });
+    overlay.handleInput('d');
+    expect(seen).toEqual(['d:s1']);
+    // 未被 onKey 消费的可打印字符仍进过滤串
+    overlay.handleInput('会');
+    expect(plain(overlay.render(60))[0]).toContain('过滤：会');
+  });
+
+  it('setItems 换候选后保留当前过滤串', () => {
+    const overlay = new PickerOverlay({
+      title: 't',
+      items: [{ value: 'a', label: 'alpha', description: '' }],
+      requestRender: () => {},
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+    overlay.handleInput('a');
+    overlay.setItems([
+      { value: 'a', label: 'alpha', description: '' },
+      { value: 'b', label: 'beta', description: '' },
+    ]);
+    const lines = plain(overlay.render(60));
+    expect(lines[0]).toContain('过滤：a');
+    expect(lines.join('\n')).toContain('alpha');
+    expect(lines.join('\n')).not.toContain('beta');
+  });
+});

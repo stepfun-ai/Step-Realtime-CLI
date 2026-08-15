@@ -12,7 +12,7 @@
  * 审批的完整形态（计划确认、ask_user 多选）在 M2，选择器在 M3，命令全量在 M4。
  */
 import { Container, ProcessTerminal, TuiMainScreen, matchesKey } from '@earendil-works/pi-tui';
-import type { Component } from '@earendil-works/pi-tui';
+import type { Component, SelectItem } from '@earendil-works/pi-tui';
 import type { AgentEvent } from '../agent/events.js';
 import type { LoopHooks } from '../agent/hooks.js';
 import { composeLoopHooks, type HookEngine } from '../agent/hooks/engine.js';
@@ -85,7 +85,7 @@ import {
 import { ChatAutocompleteProvider } from './completion.js';
 import { clipboardToolHint, readClipboardImage } from '../chat/clipboardImage.js';
 import { extractImageContent, ImageAttachmentStore } from '../chat/imageAttachment.js';
-import { modelItems, modelTabs, showPicker, sessionItems, thinkItems } from './pickers.js';
+import { askLine, modelItems, modelTabs, showPicker, sessionItems, thinkItems, type PickerOverlay } from './pickers.js';
 import { StreamBuffer } from '../chat/streamBuffer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
@@ -1888,18 +1888,104 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     if (picked !== null) this.applyModel(picked);
   }
 
+  /**
+   * 会话选择器。除恢复之外还有三件事（对标 Ink 版 SessionPicker）：
+   * d 删除（二次确认，当前会话不可删）、r 重命名（行内单行输入）、
+   * 子 agent 会话作为只读分组列在末尾——它们不能被恢复成主会话，选中只提示。
+   */
   private async pickSession(): Promise<void> {
-    const metas = this.deps.store.list(this.deps.ctx.cwd).filter((m) => m.parentId === undefined);
-    if (metas.length === 0) {
+    const all = this.deps.store.list(this.deps.ctx.cwd);
+    const mains = all.filter((m) => m.parentId === undefined);
+    const subs = all.filter((m) => m.parentId !== undefined);
+    if (mains.length === 0 && subs.length === 0) {
       this.push({ kind: 'note', text: '本目录还没有历史会话' });
       return;
     }
+    const buildItems = (): SelectItem[] => {
+      const metas = this.deps.store.list(this.deps.ctx.cwd);
+      const m = metas.filter((x) => x.parentId === undefined);
+      const sub = metas.filter((x) => x.parentId !== undefined);
+      const items = sessionItems(m).map((it) => ({
+        ...it,
+        label: it.value === this.session.id ? `${it.label} ${'（当前）'}` : it.label,
+      }));
+      if (sub.length > 0) {
+        // 只读分组：子 agent 会话不是可恢复的主会话，加前缀标出来，选中时给提示
+        items.push({ value: '__sub_header__', label: '── 子 agent 会话（只读）──', description: '' });
+        for (const it of sessionItems(sub)) items.push({ ...it, value: `sub:${it.value}`, label: `  ${it.label}` });
+      }
+      return items;
+    };
+
     const picked = await showPicker(this.tui, {
       title: '恢复会话',
-      items: sessionItems(metas),
-      hint: '↑↓ 选择 · Enter 恢复 · 输入过滤 · Esc 取消',
+      items: buildItems(),
+      hint: '↑↓ 选择 · Enter 恢复 · d 删除 · r 重命名 · 输入过滤 · Esc 取消',
+      onKey: (data, selected, overlay) => {
+        if (selected === null) return false;
+        const id = selected.value;
+        if (id === '__sub_header__') return data === 'd' || data === 'r'; // 分组标题上按键无动作
+        if (id.startsWith('sub:')) {
+          // 子 agent 会话只读：删除与重命名都不放行，避免破坏父会话的溯源链
+          return data === 'd' || data === 'r';
+        }
+        if (data === 'd') {
+          if (id === this.session.id) {
+            this.push({ kind: 'note', text: '不能删除当前会话（先 /new 或切到别的会话）' });
+            return true;
+          }
+          void this.confirmDeleteSession(id, overlay, buildItems);
+          return true;
+        }
+        if (data === 'r') {
+          void this.renameSessionInline(id, overlay, buildItems);
+          return true;
+        }
+        return false;
+      },
     });
-    if (picked !== null) this.resumeSession(picked);
+    if (picked === null) return;
+    if (picked === '__sub_header__') return;
+    if (picked.startsWith('sub:')) {
+      this.push({
+        kind: 'note',
+        text: `${picked.slice(4)} 是子 agent 会话，不能恢复成主会话（用 /agents 查看它的产出）`,
+      });
+      return;
+    }
+    this.resumeSession(picked);
+  }
+
+  /** 删除会话：先问一句再删（删除不可逆，且列表里相邻两行差一个字符很容易点错）。 */
+  private async confirmDeleteSession(
+    id: string,
+    overlay: PickerOverlay,
+    rebuild: () => SelectItem[],
+  ): Promise<void> {
+    const answer = await askLine(this.tui, `删除会话 ${id}？输入 y 确认（其它任意键取消）`);
+    if (answer !== null && answer.trim().toLowerCase() === 'y') {
+      const ok = this.deps.store.delete(this.deps.ctx.cwd, id);
+      this.push({ kind: 'note', text: ok ? `已删除会话 ${id}` : `删除失败：${id}` });
+      overlay.setItems(rebuild());
+    }
+    this.tui.setFocus(overlay);
+    this.tui.requestRender();
+  }
+
+  /** 重命名会话：行内单行输入，空串视为取消（清名字请用 store 层，不在这里给隐式语义）。 */
+  private async renameSessionInline(
+    id: string,
+    overlay: PickerOverlay,
+    rebuild: () => SelectItem[],
+  ): Promise<void> {
+    const name = await askLine(this.tui, `会话 ${id} 的新名字（Esc 取消）`);
+    if (name !== null && name.trim() !== '') {
+      const ok = this.deps.store.rename(this.deps.ctx.cwd, id, name.trim());
+      this.push({ kind: 'note', text: ok ? `已重命名为「${name.trim()}」` : `重命名失败：${id}` });
+      overlay.setItems(rebuild());
+    }
+    this.tui.setFocus(overlay);
+    this.tui.requestRender();
   }
 
   private async pickThink(): Promise<void> {
