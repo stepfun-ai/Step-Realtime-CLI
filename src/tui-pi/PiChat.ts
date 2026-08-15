@@ -13,7 +13,7 @@
  */
 import { Container, ProcessTerminal, TuiMainScreen, matchesKey } from '@earendil-works/pi-tui';
 import type { Component, SelectItem } from '@earendil-works/pi-tui';
-import type { AgentEvent } from '../agent/events.js';
+import type { AgentEvent, SubagentProgressEvent, WorkflowStepEvent } from '../agent/events.js';
 import type { LoopHooks } from '../agent/hooks.js';
 import { composeLoopHooks, type HookEngine } from '../agent/hooks/engine.js';
 import { runAgent } from '../agent/loop.js';
@@ -95,7 +95,7 @@ import { Transcript } from './Transcript.js';
 import { ChromePanels } from './ChromePanels.js';
 import { TasksOverlay } from './TasksOverlay.js';
 import { allTodosDone } from '../chat/chromePanels.js';
-import { ItemBlock } from './blocks.js';
+import { ItemBlock, summarizeInput } from './blocks.js';
 import { openExpandViewer } from './ExpandOverlay.js';
 import { c, editorTheme } from './theme.js';
 
@@ -515,6 +515,72 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const handle = this.tui.showOverlay(overlay, { width: '90%', maxHeight: '80%', anchor: 'center' });
     handle.focus();
     this.overlayNeedsTick = true;
+    this.tui.requestRender();
+  }
+
+  /**
+   * 把子 agent 进度写进最近一条运行中的 spawn_agent 条目。
+   *
+   * 只找「运行中」的那条：同一轮可能并行派多个子 agent，但 runner 的 onEvent 不带
+   * 工具调用 id（只有 session id），无法精确路由。取最近一条运行中的条目是与 Ink 版
+   * 相同的近似——并行时进度会挤在最后一条上，这一点如实记在设计档案的差异清单里。
+   */
+  private applySubagentProgress(ev: SubagentProgressEvent): void {
+    const patch = (
+      apply: (it: Extract<DisplayItem, { kind: 'tool' }>) => Extract<DisplayItem, { kind: 'tool' }>,
+    ): void => {
+      this.transcript.updateLastWhere(
+        (it) => it.kind === 'tool' && it.name === 'spawn_agent' && it.status === 'running',
+        (it) => apply(it as Extract<DisplayItem, { kind: 'tool' }>),
+      );
+      this.tui.requestRender();
+    };
+    if (ev.kind === 'tool') {
+      patch((it) => ({ ...it, subagentToolEvents: [...(it.subagentToolEvents ?? []), { name: ev.name, status: 'running' }] }));
+      return;
+    }
+    if (ev.kind === 'tool_end') {
+      patch((it) => {
+        const events = [...(it.subagentToolEvents ?? [])];
+        // 从后往前找同名的运行中项收尾（同一工具可能被连续调用多次）
+        for (let i = events.length - 1; i >= 0; i--) {
+          if (events[i]!.name === ev.name && events[i]!.status === 'running') {
+            events[i] = { name: ev.name, status: ev.isError ? 'error' : 'ok' };
+            break;
+          }
+        }
+        return { ...it, subagentToolEvents: events };
+      });
+      return;
+    }
+    if (ev.kind === 'usage') {
+      patch((it) => ({ ...it, subagentTokens: ev.tokens }));
+      return;
+    }
+    if (ev.kind === 'end') {
+      patch((it) => ({ ...it, subagentToolUses: ev.toolUses, subagentDurationMs: ev.durationMs }));
+    }
+  }
+
+  /**
+   * dynamic_workflow 阶段进度写进最近一条运行中的 dynamic_workflow 条目。
+   * phase 事件只有 title（index 为哨兵 -1），所以按 title 追加：新 title 追加一个阶段，
+   * 同时把前一个阶段标 done——脚本里 phase() 是顺序推进的，后一个开始即前一个结束。
+   */
+  private applyWorkflowStep(info: WorkflowStepEvent): void {
+    if (info.kind !== 'phase' || info.title === undefined || info.title === '') return;
+    const title = info.title;
+    this.transcript.updateLastWhere(
+      (it) => it.kind === 'tool' && it.name === 'dynamic_workflow' && it.status === 'running',
+      (it) => {
+        const tool = it as Extract<DisplayItem, { kind: 'tool' }>;
+        const panel = tool.dynamicWorkflow ?? { name: summarizeInput(tool.input) || 'workflow', phases: [] };
+        if (panel.phases.some((ph) => ph.title === title)) return tool;
+        const phases = panel.phases.map((ph) => (ph.status === 'running' ? { ...ph, status: 'done' as const } : ph));
+        phases.push({ title, status: 'running' });
+        return { ...tool, dynamicWorkflow: { ...panel, phases } };
+      },
+    );
     this.tui.requestRender();
   }
 
@@ -2187,9 +2253,13 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       parentSessionId: this.session.id,
       skills: this.deps.skillsRef.current,
       subagentStore: this.deps.subagentStore,
+      // 子 agent 进度回填到 spawn_agent 条目上：Ink 版为此维护了一个独立的 AgentGroup
+      // 面板，pi 这边直接把进度写进那条工具卡片——差分渲染下条目内嵌就是实时面板，
+      // 不需要第二个组件（也就不需要「终态后撤下面板」那套生命周期）。
       onEvent: (_id, ev) => {
         if (ev.kind === 'start') this.activity.setTip(`子 agent ${ev.subagentType}：${ev.description}`);
         if (ev.kind === 'end') this.activity.setTip('');
+        this.applySubagentProgress(ev);
       },
     });
 
@@ -2209,6 +2279,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
           signal: controller.signal,
           depth: 0,
           runSubagent,
+          // dynamic_workflow 的阶段进度：phase 事件按 title 追加（index 是哨兵 -1，
+          // 阶段在运行时才知道，不能按 index 定位）。Ink 版为此有独立面板，
+          // 这里同样挂在工具卡片上。
+          onWorkflowStep: (info) => this.applyWorkflowStep(info),
           todos: this.todos,
           background: this.background,
           goal: this.goal,

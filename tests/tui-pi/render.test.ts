@@ -13,6 +13,7 @@ import type { Terminal } from '@earendil-works/pi-tui';
 import { Transcript } from '../../src/tui-pi/Transcript.js';
 import { ItemBlock } from '../../src/tui-pi/blocks.js';
 import { ActivityLine, StatusLine, formatCount, shortenPath } from '../../src/tui-pi/StatusLine.js';
+import { subagentStats } from '../../src/tui-pi/blocks.js';
 import { ChatEditor } from '../../src/tui-pi/ChatEditor.js';
 import type { DisplayItem } from '../../src/chat/types.js';
 
@@ -494,5 +495,93 @@ describe('差分渲染不清 scrollback（迁移核心验证）', () => {
     tui.renderNow();
     expect(term.allOutput()).toContain(CLEAR_SCROLLBACK);
     expect(tui.fullRedraws).toBeGreaterThan(0);
+  });
+});
+
+describe('子 agent 进度（对标 Ink 版 AgentGroup，改为条目内嵌）', () => {
+  const spawn = (over: Record<string, unknown> = {}): DisplayItem =>
+    ({
+      kind: 'tool',
+      id: 's1',
+      name: 'spawn_agent',
+      input: { description: '查文档' },
+      status: 'running',
+      startedAt: 1_000,
+      subagentType: 'explore',
+      description: '查文档',
+      ...over,
+    }) as DisplayItem;
+
+  it('统计段：tools 计数 · 时长 · tok（tok 为 0 时不显示）', () => {
+    const s = subagentStats(spawn({ subagentToolEvents: [{ name: 'grep', status: 'ok' }, { name: 'read_file', status: 'running' }] }) as never, 4_000);
+    expect(s).toContain('2 tools');
+    expect(s).toContain('3s');
+    expect(s).not.toContain('tok');
+    const withTok = subagentStats(spawn({ subagentTokens: 12_345 }) as never, 2_000);
+    expect(withTok).toContain('12.3k tok');
+  });
+
+  it('终态用 runner 回传的定格值，不再现算', () => {
+    const s = subagentStats(
+      spawn({ status: 'ok', subagentToolUses: 7, subagentDurationMs: 65_000, startedAt: 1_000 }) as never,
+      999_999,
+    );
+    expect(s).toContain('7 tools');
+    expect(s).toContain('1m 5s'); // formatDuration 的分秒之间有空格（与 formatElapsed 不同口径）
+  });
+
+  it('非 spawn_agent 工具没有统计段', () => {
+    expect(subagentStats({ kind: 'tool', id: 'b', name: 'bash', input: {}, status: 'ok' } as never)).toBe('');
+  });
+
+  it('运行中渲染最近 3 条子工具，终态折叠成计数', () => {
+    const events = [
+      { name: 'grep', status: 'ok' as const },
+      { name: 'read_file', status: 'ok' as const },
+      { name: 'glob', status: 'ok' as const },
+      { name: 'web_fetch', status: 'running' as const },
+    ];
+    const running = plain(new ItemBlock(spawn({ subagentToolEvents: events })).render(70));
+    expect(running.join('\n')).toContain('web_fetch');
+    expect(running.join('\n')).not.toContain('grep'); // 只留最近 3 条
+    const done = plain(new ItemBlock(spawn({ status: 'ok', subagentToolEvents: events })).render(70));
+    expect(done.join('\n')).toContain('4 个子工具调用');
+  });
+});
+
+describe('dynamic_workflow 阶段渲染', () => {
+  const wf = (phases: { title: string; status: 'running' | 'done' }[], status: 'running' | 'ok' = 'running'): DisplayItem =>
+    ({
+      kind: 'tool',
+      id: 'w1',
+      name: 'dynamic_workflow',
+      input: { description: '批量调研' },
+      status,
+      dynamicWorkflow: { name: '批量调研', phases },
+    }) as DisplayItem;
+
+  it('运行中逐个列出阶段：● 当前 / ✓ 已完成', () => {
+    const lines = plain(
+      new ItemBlock(wf([
+        { title: '收集资料', status: 'done' },
+        { title: '交叉验证', status: 'running' },
+      ])).render(70),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('✓ 收集资料');
+    expect(text).toContain('● 交叉验证');
+  });
+
+  it('终态坍缩成一行阶段计数', () => {
+    const lines = plain(
+      new ItemBlock(wf([{ title: 'a', status: 'done' }, { title: 'b', status: 'done' }], 'ok')).render(70),
+    );
+    expect(lines.join('\n')).toContain('2 个阶段');
+    expect(lines.join('\n')).not.toContain('✓ a');
+  });
+
+  it('无阶段数据时不占行', () => {
+    const bare = plain(new ItemBlock({ kind: 'tool', id: 'w2', name: 'dynamic_workflow', input: {}, status: 'running' } as DisplayItem).render(70));
+    expect(bare.join('\n')).not.toContain('阶段');
   });
 });

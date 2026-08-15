@@ -16,6 +16,8 @@ import type { DisplayItem, WelcomeData } from '../chat/types.js';
 import { THINKING_FOLD_LINES } from '../chat/expandable.js';
 import { c, markdownTheme, thinkingMarkdownTheme } from './theme.js';
 import { markdownTransform } from '../chat/markdownPrep.js';
+import { formatDuration } from '../chat/duration.js';
+import { formatCount } from './StatusLine.js';
 import { t } from '../i18n.js';
 
 // 顶部 logo：FIGlet "Small" 风格的 S（紧凑双线）。与 Ink 版 WelcomeBox 同字形。
@@ -98,6 +100,23 @@ function indent(lines: readonly string[], prefix: string): string[] {
 function hanging(lines: readonly string[], prefix: string, plainWidth: number): string[] {
   const pad = ' '.repeat(plainWidth);
   return lines.map((l, i) => (i === 0 ? prefix : pad) + l);
+}
+
+/**
+ * 子 agent 统计段：`N tools · 时长[ · X tok]`（对齐 Ink 版 AgentGroup 的行内统计）。
+ * 运行中用现算时长（startedAt），终态用 runner 回传的定格值（subagentDurationMs）。
+ * tok 为 0 或缺省时不显示——开头一片「0 tok」只是噪音。
+ */
+export function subagentStats(it: Extract<DisplayItem, { kind: 'tool' }>, now = Date.now()): string {
+  if (it.name !== 'spawn_agent') return '';
+  const toolCount = it.subagentToolUses ?? it.subagentToolEvents?.length;
+  const durMs =
+    it.subagentDurationMs ?? (it.status === 'running' && it.startedAt !== undefined ? Math.max(0, now - it.startedAt) : undefined);
+  const parts: string[] = [];
+  if (toolCount !== undefined && toolCount > 0) parts.push(`${toolCount} tools`);
+  if (durMs !== undefined) parts.push(formatDuration(durMs));
+  if (it.subagentTokens !== undefined && it.subagentTokens > 0) parts.push(`${formatCount(it.subagentTokens)} tok`);
+  return parts.join(' · ');
 }
 
 /** 单条 DisplayItem 的渲染组件。 */
@@ -208,7 +227,24 @@ export class ItemBlock implements Component {
     const head = `${mark} ${c.toolName(it.name)}${arg !== '' ? ` ${c.toolArg(arg)}` : ''}${subagent}${elapsed}`;
     const out = visibleWidth(head) > width ? wrap(head, width) : [head];
 
-    // 子 agent 嵌套工具事件：运行中显示最近 3 条，完成后折叠计数（对齐 Ink 版）
+    // dynamic_workflow 阶段：运行中逐个列出（● 当前 / ✓ 已完成），终态坍缩成一行计数
+    const wf = it.dynamicWorkflow;
+    if (wf !== undefined && wf.phases.length > 0) {
+      if (it.status === 'running') {
+        for (const ph of wf.phases) {
+          const m = ph.status === 'running' ? c.warn('●') : c.ok('✓');
+          out.push(c.dim(`    ${m} ${ph.title}`));
+        }
+      } else {
+        out.push(c.dim(`    ↳ ${wf.phases.length} 个阶段`));
+      }
+    }
+
+    // 子 agent 进度：统计段 + 嵌套工具事件（运行中显示最近 3 条，完成后折叠计数）。
+    // Ink 版把这些放在独立的 AgentGroup 面板里（还要处理「终态后撤下面板」的生命周期），
+    // 这里直接挂在工具卡片上——差分渲染下条目内嵌就是实时面板。
+    const stats = subagentStats(it);
+    if (stats !== '') out.push(c.dim(`    ${stats}`));
     const sub = it.subagentToolEvents;
     if (sub !== undefined && sub.length > 0) {
       if (it.status === 'running') {

@@ -37,6 +37,11 @@ export type DisplayItem =
       description?: string;
       /** 嵌套子工具调用事件（仅 spawn_agent 工具使用，由 runner 的 onEvent 实时回传）。 */
       subagentToolEvents?: SubagentToolEvent[];
+      /** 子 agent 累计计费 token（runner 已逐轮累加，这里只赋值）。0/缺省不显示。 */
+      subagentTokens?: number;
+      /** 子 agent 终态统计：工具调用次数与墙钟耗时（end 事件带回）。 */
+      subagentToolUses?: number;
+      subagentDurationMs?: number;
     }
   | {
       kind: 'note';
