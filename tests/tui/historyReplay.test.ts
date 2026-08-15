@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import type { MessageOriginKind, StoredMessage } from '../../src/agent/message.js';
-import { historyToDisplayItems } from '../../src/tui/historyReplay.js';
+import { historyToDisplayItems } from '../../src/chat/historyReplay.js';
 
 function m(
   message: Anthropic.MessageParam,

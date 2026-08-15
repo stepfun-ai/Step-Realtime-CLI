@@ -2,8 +2,8 @@ import { Text, Box } from 'ink';
 import { marked, type Token, type Tokens } from 'marked';
 import { highlight } from 'cli-highlight';
 import type React from 'react';
-import { displayWidth, wrappedRows } from './liveBudget.js';
-import { link as hyperlink, supportsHyperlinks } from './hyperlink.js';
+import { displayWidth, wrappedRows } from '../chat/liveBudget.js';
+import { link as hyperlink, supportsHyperlinks } from '../chat/hyperlink.js';
 
 /**
  * markdown 终端渲染（marked lexer + cli-highlight + chalk/Ink 样式）。

@@ -7,7 +7,7 @@ import {
   thinkStatusLabel,
   thinkStreamParam,
   thinkingAvailable,
-} from '../../src/tui/thinkCommand.js';
+} from '../../src/chat/thinkCommand.js';
 
 const LEVELS = { low: 1024, medium: 4096, high: 32000 };
 

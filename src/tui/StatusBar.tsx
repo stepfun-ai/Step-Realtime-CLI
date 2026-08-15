@@ -2,8 +2,8 @@ import { homedir } from 'node:os';
 import { Box, Text } from 'ink';
 import type { PermissionMode } from '../agent/permission/mode.js';
 import type { GoalStatus } from '../agent/goal/mode.js';
-import { formatElapsed } from './elapsed.js';
-import { formatCount } from './duration.js';
+import { formatElapsed } from '../chat/elapsed.js';
+import { formatCount } from '../chat/duration.js';
 
 /**
  * 路径缩短：home 前缀替换为 ~；段数 > 3 时只保留尾部 3 段并加 …/ 前缀；

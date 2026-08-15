@@ -12,7 +12,7 @@
  * 安全阀（默认 2000 轮），只有跑到那个量级才接受一次清屏。
  */
 import type { Component } from '@earendil-works/pi-tui';
-import type { DisplayItem } from '../tui/types.js';
+import type { DisplayItem } from '../chat/types.js';
 import { ItemBlock } from './blocks.js';
 import { c } from './theme.js';
 

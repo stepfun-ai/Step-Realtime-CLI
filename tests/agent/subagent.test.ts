@@ -11,7 +11,7 @@ import { createSubagentRunner, type SubagentRunnerDeps } from '../../src/agent/s
 import { SubagentStore } from '../../src/agent/subagent/store.js';
 import type { SubagentResult } from '../../src/agent/subagent/types.js';
 import { BackgroundManager, type BackgroundTask } from '../../src/agent/background/manager.js';
-import { applyCtrlB } from '../../src/tui/ctrlB.js';
+import { applyCtrlB } from '../../src/chat/ctrlB.js';
 import { stored, type StoredMessage } from '../../src/agent/message.js';
 import { parseSkillMd, type SkillRegistry } from '../../src/skill/registry.js';
 import { SessionStore } from '../../src/session/store.js';

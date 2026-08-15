@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BackgroundTask } from '../../src/agent/background/manager.js';
-import { applyCtrlB, type ForegroundDetachSource } from '../../src/tui/ctrlB.js';
+import { applyCtrlB, type ForegroundDetachSource } from '../../src/chat/ctrlB.js';
 
 function fakeTask(id: string): BackgroundTask {
   return { id, command: `cmd ${id}`, status: 'running', startedAt: new Date().toISOString(), output: '' };

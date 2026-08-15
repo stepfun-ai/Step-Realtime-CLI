@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeLiveBudget, displayWidth, type ChromeBlocks } from '../../src/tui/liveBudget.js';
+import { computeLiveBudget, displayWidth, type ChromeBlocks } from '../../src/chat/liveBudget.js';
 import { computePromptRows, matchSlashCommands } from '../../src/tui/PromptInput.js';
 
 describe('computeLiveBudget 动态区高度预算', () => {

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { scanFileIndex } from '../../src/tui/fileIndex.js';
+import { scanFileIndex } from '../../src/chat/fileIndex.js';
 
 let dir: string;
 

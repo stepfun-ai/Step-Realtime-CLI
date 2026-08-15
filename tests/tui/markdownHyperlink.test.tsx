@@ -3,7 +3,7 @@ import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 
 // mock hyperlink 模块：supportsHyperlinks 默认返回 false
-vi.mock('../../src/tui/hyperlink.js', () => ({
+vi.mock('../../src/chat/hyperlink.js', () => ({
   link: (text: string, url: string) => `\x1b]8;;${url}\x07${text}\x1b]8;;\x07`,
   supportsHyperlinks: () => false,
 }));
@@ -21,7 +21,7 @@ describe('Markdown 行内链接 OSC 8', () => {
   });
 
   it('支持 OSC 8 时渲染蓝色下划线文本，不含灰色 (url) 后缀', async () => {
-    const mod = await import('../../src/tui/hyperlink.js');
+    const mod = await import('../../src/chat/hyperlink.js');
     vi.spyOn(mod, 'supportsHyperlinks').mockReturnValue(true);
     const { lastFrame } = render(
       React.createElement(Markdown, { text: '[pi-tui](https://github.com/xxx/pi-tui)', width: 80 }),

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MessageList } from '../../src/tui/MessageList.js';
 import { computeLiveMaxRows, INPUT_AREA_ROWS, STATUS_BAR_ROWS } from '../../src/tui/LiveViewport.js';
 import { setLocale } from '../../src/i18n.js';
-import type { DisplayItem } from '../../src/tui/types.js';
+import type { DisplayItem } from '../../src/chat/types.js';
 
 const assistant = (text: string): DisplayItem => ({ kind: 'assistant', text });
 const note = (text: string): DisplayItem => ({ kind: 'note', text });

@@ -44,7 +44,7 @@ import { loadConfig, resolveModelEntry, TomlParseError, type ConfigLoadDiagnosti
 import { runDoctorConfig } from './config/doctor.js';
 import { collectConfigWarnings } from './config/diagnostics.js';
 import { configureWebResultCache } from './tools/webCache.js';
-import { renderConfigDiagnostics } from './tui/configWarningText.js';
+import { renderConfigDiagnostics } from './chat/configWarningText.js';
 import { FirstRunSetup, type FirstRunResult } from './tui/FirstRunSetup.js';
 import { setLocale, t } from './i18n.js';
 import { discoverPlugins, defaultPluginsDir } from './plugin/manager.js';

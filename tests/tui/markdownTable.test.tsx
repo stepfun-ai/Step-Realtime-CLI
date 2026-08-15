@@ -2,7 +2,7 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { Markdown } from '../../src/tui/Markdown.js';
-import { displayWidth } from '../../src/tui/liveBudget.js';
+import { displayWidth } from '../../src/chat/liveBudget.js';
 
 /** 去掉 ANSI 颜色码，便于对纯文本内容断言。 */
 function stripAnsi(s: string): string {

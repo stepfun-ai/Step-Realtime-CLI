@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { busyRoute, helpText, parseSlash, SLASH_COMMANDS } from '../../src/tui/commands.js';
+import { busyRoute, helpText, parseSlash, SLASH_COMMANDS } from '../../src/chat/commands.js';
 
 describe('parseSlash', () => {
   it('非斜杠输入返回 null', () => {

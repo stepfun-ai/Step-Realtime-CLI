@@ -15,7 +15,7 @@ import {
   wordLeft,
   wordRight,
   type PromptEditState,
-} from '../../src/tui/promptEdit.js';
+} from '../../src/chat/promptEdit.js';
 
 const s = (text: string, cursor?: number): PromptEditState => ({ text, cursor: cursor ?? Array.from(text).length });
 

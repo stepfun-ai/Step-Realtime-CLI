@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import type { DisplayItem, SubagentToolEvent } from './types.js';
+import type { DisplayItem, SubagentToolEvent } from '../chat/types.js';
 import { useSpinnerFrame, BRAILLE_FRAMES } from './useSpinnerFrame.js';
 import { DynamicWorkflowPanel } from './DynamicWorkflowPanel.js';
 import { t } from '../i18n.js';

@@ -2,7 +2,7 @@ import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
 import type { StoredMessage } from '../agent/message.js';
 import { t } from '../i18n.js';
-import { extractUserText } from './backtrack.js';
+import { extractUserText } from '../chat/backtrack.js';
 import { relativeTime } from './SessionPicker.js';
 
 /** /history 面板的单条候选项：本会话里的一条真人用户输入。 */

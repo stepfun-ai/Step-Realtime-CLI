@@ -12,7 +12,7 @@ vi.mock('node:os', async (importOriginal) => {
 
 import { getLocale, I18N_TABLES, setLocale, t } from '../src/i18n.js';
 import { resolveLanguage, saveDefaultModel, saveDefaultProvider, saveDefaultThinkingLevel, saveLanguage } from '../src/config/config.js';
-import { SLASH_COMMANDS } from '../src/tui/commands.js';
+import { SLASH_COMMANDS } from '../src/chat/commands.js';
 
 afterEach(() => {
   setLocale('zh');

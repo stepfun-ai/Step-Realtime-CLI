@@ -1,8 +1,8 @@
 import { Box, Text } from 'ink';
 import { useRef } from 'react';
 import { useSpinnerFrame, BRAILLE_FRAMES } from './useSpinnerFrame.js';
-import { pickWorkingVerb, pickRandomTip } from './workingTips.js';
-import { formatElapsed } from './elapsed.js';
+import { pickWorkingVerb, pickRandomTip } from '../chat/workingTips.js';
+import { formatElapsed } from '../chat/elapsed.js';
 import { t } from '../i18n.js';
 
 /**

@@ -1,3 +1,4 @@
+import type { GoalStatus } from '../agent/goal/mode.js';
 /** 嵌套子 agent 的工具调用事件（由 runner onEvent 实时回传，挂到父 spawn_agent 条目下）。 */
 export interface SubagentToolEvent {
   name: string;
@@ -20,7 +21,7 @@ export type DisplayItem =
       /** 工具开始时间戳（tool_start 时埋入），用于 running 态显示已运行秒数。 */
       startedAt?: number;
       /** dynamic_workflow 的动态阶段面板状态（tool_start 时造空序列，phase 事件逐个追加阶段）。 */
-      dynamicWorkflow?: import('./DynamicWorkflowPanel.js').DynamicWorkflowPanelState;
+      dynamicWorkflow?: DynamicWorkflowPanelState;
       /** spawn_agent 角色名（tool_start 时从 ev.input.subagent_type 提取）。 */
       subagentType?: string;
       /** spawn_agent 任务简述（tool_start 时从 ev.input.description 提取）。 */
@@ -39,5 +40,39 @@ export type DisplayItem =
       boundary?: boolean;
     }
   | { kind: 'error'; text: string }
-  | { kind: 'goalPanel'; data: import('./GoalPanel.js').GoalPanelData }
-  | { kind: 'cron'; data: import('./CronCard.js').CronCardData };
+  | { kind: 'goalPanel'; data: GoalPanelData }
+  | { kind: 'cron'; data: CronCardData };
+
+/** dynamic_workflow 的阶段面板状态（原住 DynamicWorkflowPanel.tsx，与渲染无关，迁移时下沉到这里）。 */
+export interface DynamicWorkflowPanelState {
+  name: string;
+  phases: DynamicPhase[];
+}
+
+/** 一个编排阶段（tool_start 时造空序列，phase 事件逐个追加）。 */
+export interface DynamicPhase {
+  title: string;
+  status: 'running' | 'done';
+}
+
+/** goal 状态面板的展示数据。 */
+export interface GoalPanelData {
+  objective: string;
+  completionCriterion?: string;
+  status: GoalStatus;
+  turnsUsed: number;
+  turnBudget?: number;
+  tokensUsed?: number;
+  tokenBudget?: number;
+  terminalReason?: string;
+  elapsedMs: number;
+}
+
+/** cron 触发卡片的展示数据。 */
+export interface CronCardData {
+  id: string;
+  cron: string;
+  prompt: string;
+  recurring: boolean;
+  coalesced: number;
+}

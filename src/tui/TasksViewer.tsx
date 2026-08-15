@@ -2,7 +2,7 @@ import { Box, Text, useInput, useStdout } from 'ink';
 import { useEffect, useState } from 'react';
 import type { BackgroundTask, TaskStatus } from '../agent/background/manager.js';
 import { t } from '../i18n.js';
-import { formatDuration } from './duration.js';
+import { formatDuration } from '../chat/duration.js';
 import { OffsetViewport } from './OffsetViewport.js';
 
 /** 打开期间重读 background.list() 的轮询间隔（数据本地，成本可忽略）。 */

@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
-import { displayWidth, padEndByWidth } from './liveBudget.js';
+import { displayWidth, padEndByWidth } from '../chat/liveBudget.js';
 import { t } from '../i18n.js';
 
 /** 思考深度选择器的单条候选项（由 App 从档位表装配；off 固定追加在尾部）。 */

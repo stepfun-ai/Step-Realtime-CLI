@@ -12,7 +12,7 @@
  */
 import type { Component } from '@earendil-works/pi-tui';
 import { Markdown, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
-import type { DisplayItem } from '../tui/types.js';
+import type { DisplayItem } from '../chat/types.js';
 import { c, markdownTheme, thinkingMarkdownTheme } from './theme.js';
 
 /** 工具结果折叠口径（与 Ink 版 ToolCall.tsx 一致）：错误输出预览行数。 */

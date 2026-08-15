@@ -2,7 +2,7 @@ import { Box, Text, useInput } from 'ink';
 import { useMemo, useState } from 'react';
 import type { SessionMeta } from '../session/store.js';
 import { t } from '../i18n.js';
-import { displayWidth } from './liveBudget.js';
+import { displayWidth } from '../chat/liveBudget.js';
 import { TextEditField, type TextEditValue } from './TextEditField.js';
 
 /** 空编辑值（清词用）。 */

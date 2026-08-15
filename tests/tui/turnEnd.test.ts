@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planTurnEnd } from '../../src/tui/turnEnd.js';
+import { planTurnEnd } from '../../src/chat/turnEnd.js';
 
 describe('planTurnEnd 回合收尾决策', () => {
   it('队列优先于 goal 续接：queue 非空时先 submit-queue', () => {

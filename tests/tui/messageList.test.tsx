@@ -4,7 +4,7 @@ import { Box, Static, Text } from 'ink';
 import { render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MessageItem, MessageList, ThinkingPreview, appendStreamText, countSettledItems, removePartialAssistant } from '../../src/tui/MessageList.js';
-import type { DisplayItem } from '../../src/tui/types.js';
+import type { DisplayItem } from '../../src/chat/types.js';
 import type { DynamicWorkflowPanelState } from '../../src/tui/DynamicWorkflowPanel.js';
 
 const user = (text: string): DisplayItem => ({ kind: 'user', text });

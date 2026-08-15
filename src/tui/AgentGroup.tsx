@@ -1,6 +1,6 @@
 import { Box, Text } from 'ink';
 import { t } from '../i18n.js';
-import { formatCount, formatDuration } from './duration.js';
+import { formatCount, formatDuration } from '../chat/duration.js';
 import { useNowTick } from './useSpinnerFrame.js';
 
 /** 面板最多显示的子 agent 条数（超出折叠）。 */

@@ -3,7 +3,7 @@ import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 import { PromptInput } from '../../src/tui/PromptInput.js';
 import { PasteStore } from '../../src/tui/pasteStore.js';
-import { SLASH_COMMANDS } from '../../src/tui/commands.js';
+import { SLASH_COMMANDS } from '../../src/chat/commands.js';
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 

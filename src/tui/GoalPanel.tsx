@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import { t } from '../i18n.js';
 import type { GoalStatus } from '../agent/goal/mode.js';
-import { formatElapsed } from './elapsed.js';
+import { formatElapsed } from '../chat/elapsed.js';
 
 /** /goal 面板的一次性展示数据（DisplayItem 持有，渲染时不再回查 GoalMode）。 */
 export interface GoalPanelData {

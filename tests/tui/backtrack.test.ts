@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { stored, type StoredMessage } from '../../src/agent/message.js';
-import { computeBacktrack, extractUserText, truncateItemsAtLastUser } from '../../src/tui/backtrack.js';
-import type { DisplayItem } from '../../src/tui/types.js';
+import { computeBacktrack, extractUserText, truncateItemsAtLastUser } from '../../src/chat/backtrack.js';
+import type { DisplayItem } from '../../src/chat/types.js';
 
 describe('extractUserText 抽回用户文本', () => {
   it('纯字符串 content 原样返回', () => {

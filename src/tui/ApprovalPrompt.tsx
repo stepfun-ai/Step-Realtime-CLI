@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from 'ink';
 import { useState } from 'react';
 import { t } from '../i18n.js';
-import { wrappedRows } from './liveBudget.js';
+import { wrappedRows } from '../chat/liveBudget.js';
 
 export interface ApprovalRequest {
   name: string;

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { link, supportsHyperlinks } from '../../src/tui/hyperlink.js';
+import { link, supportsHyperlinks } from '../../src/chat/hyperlink.js';
 
 describe('supportsHyperlinks', () => {
   const origEnv = process.env;

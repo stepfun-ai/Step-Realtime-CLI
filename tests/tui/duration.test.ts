@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCount, formatDuration } from '../../src/tui/duration.js';
+import { formatCount, formatDuration } from '../../src/chat/duration.js';
 
 describe('formatDuration（子 agent 卡片时长口径）', () => {
   it('秒级：<60s → "45s"', () => {

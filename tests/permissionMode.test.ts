@@ -18,7 +18,7 @@ vi.mock('node:os', async (importOriginal) => {
 import { loadConfig, resolvePermissionMode, type StepCodeConfig } from '../src/config/config.js';
 import { runDoctorConfig } from '../src/config/doctor.js';
 import { resolveStartupMode } from '../src/agent/permission/mode.js';
-import { diffConfig } from '../src/tui/reload.js';
+import { diffConfig } from '../src/chat/reload.js';
 
 const ENV_KEYS = ['STEPFUN_API_KEY', 'STEP_CODE_API_KEY', 'STEP_CODE_PROVIDER', 'STEP_CODE_BASE_URL', 'STEP_CODE_MODEL'];
 let saved: Record<string, string | undefined>;

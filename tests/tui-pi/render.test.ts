@@ -13,7 +13,7 @@ import { Transcript } from '../../src/tui-pi/Transcript.js';
 import { ItemBlock } from '../../src/tui-pi/blocks.js';
 import { ActivityLine, StatusLine, formatCount, shortenPath } from '../../src/tui-pi/StatusLine.js';
 import { ChatEditor } from '../../src/tui-pi/ChatEditor.js';
-import type { DisplayItem } from '../../src/tui/types.js';
+import type { DisplayItem } from '../../src/chat/types.js';
 
 /** 清 scrollback 的序列：CSI 3J。差分渲染的全量重绘路径才会发它。 */
 const CLEAR_SCROLLBACK = '\x1b[3J';

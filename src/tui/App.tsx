@@ -8,7 +8,7 @@ import { runReflect, REFLECT_EMPTY_HISTORY, REFLECT_NO_FINDINGS } from '../agent
 import type { LoopHooks } from '../agent/hooks.js';
 import { composeLoopHooks, type HookEngine } from '../agent/hooks/engine.js';
 import { stored, type StoredMessage } from '../agent/message.js';
-import { historyToDisplayItems } from './historyReplay.js';
+import { historyToDisplayItems } from '../chat/historyReplay.js';
 import { decide, planModeDenyReason, type PermissionMode } from '../agent/permission/mode.js';
 import { BackgroundManager, type BackgroundTask } from '../agent/background/manager.js';
 import { buildSettleMessage, decideNotifyRoute, type NotifiableTask } from '../agent/background/notify.js';
@@ -42,7 +42,7 @@ import { createProvider } from '../provider/factory.js';
 import { resolveCompactionBinding } from '../provider/compaction.js';
 import { isAbortError } from '../provider/retry.js';
 import type { ChatProvider } from '../provider/types.js';
-import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from './reload.js';
+import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from '../chat/reload.js';
 import type { ToolContext } from '../tools/types.js';
 import type { TodoItem } from '../tools/types.js';
 import { clearDynamicTools } from '../tools/index.js';
@@ -58,23 +58,23 @@ import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { readClipboardImage, clipboardToolHint } from './clipboardImage.js';
 import { ImageAttachmentStore, extractImageContent } from './imageAttachment.js';
 import { PasteStore } from './pasteStore.js';
-import { busyRoute, helpText, parseSlash } from './commands.js';
-import { runPluginCommand } from './pluginCommand.js';
-import { planTurnEnd } from './turnEnd.js';
-import { decideCtrlC } from './ctrlC.js';
-import { applyCtrlB } from './ctrlB.js';
+import { busyRoute, helpText, parseSlash } from '../chat/commands.js';
+import { runPluginCommand } from '../chat/pluginCommand.js';
+import { planTurnEnd } from '../chat/turnEnd.js';
+import { decideCtrlC } from '../chat/ctrlC.js';
+import { applyCtrlB } from '../chat/ctrlB.js';
 import { expandPluginCommand, type PluginCommand } from '../plugin/manager.js';
 import { formatMcpStatus } from '../mcp/status.js';
 import type { McpManager } from '../mcp/manager.js';
-import { formatElapsed } from './elapsed.js';
+import { formatElapsed } from '../chat/elapsed.js';
 import { STATUS_BAR_ROWS } from './LiveViewport.js';
-import { computeLiveBudget, logRenderBudget, displayWidth, wrappedRows } from './liveBudget.js';
+import { computeLiveBudget, logRenderBudget, displayWidth, wrappedRows } from '../chat/liveBudget.js';
 import { MessageItem, MessageList, ThinkingPreview, THINKING_PREVIEW_LINES, appendStreamText, countSettledItems, removePartialAssistant } from './MessageList.js';
 import { buildModelPickerItems, ModelPicker, type ModelPickerItem } from './ModelPicker.js';
-import { StreamBuffer } from './streamBuffer.js';
+import { StreamBuffer } from '../chat/streamBuffer.js';
 import { ProviderWizard, type ProviderWizardResult } from './ProviderWizard.js';
 import { ProviderManager, type ProviderManagerRow } from './ProviderManager.js';
-import { resolveProviderTarget } from './providerSwitch.js';
+import { resolveProviderTarget } from '../chat/providerSwitch.js';
 import { removeProviderConfig } from '../config/tomlAppend.js';
 import { SessionPicker, resolveVisibleRows, subagentSectionRows } from './SessionPicker.js';
 import { ThinkPicker, type ThinkPickerItem } from './ThinkPicker.js';
@@ -87,7 +87,7 @@ import {
   pushUndoSnapshot,
   truncateItemsAtTurns,
   type UndoSnapshot,
-} from './undo.js';
+} from '../chat/undo.js';
 import {
   parseThinkArgs,
   THINK_CHOICES,
@@ -97,12 +97,12 @@ import {
   thinkStreamParam,
   thinkingAvailable,
   type ThinkOverride,
-} from './thinkCommand.js';
+} from '../chat/thinkCommand.js';
 import { PromptInput, computePromptRows } from './PromptInput.js';
-import { scanFileIndex } from './fileIndex.js';
-import type { CompletionContext } from './completions.js';
+import { scanFileIndex } from '../chat/fileIndex.js';
+import type { CompletionContext } from '../chat/completions.js';
 import { QueuePreview } from './QueuePreview.js';
-import { computeBacktrack, truncateItemsAtLastUser } from './backtrack.js';
+import { computeBacktrack, truncateItemsAtLastUser } from '../chat/backtrack.js';
 import { StatusBar } from './StatusBar.js';
 import { TodoPanel, allTodosDone } from './TodoPanel.js';
 import { WorkingStatus } from './WorkingStatus.js';
@@ -113,9 +113,9 @@ import { canOverwriteTitle, generateSessionTitle } from '../session/title.js';
 import type { SessionData, SessionMeta, SessionStore } from '../session/store.js';
 import { exportDebugBundle } from '../session/debugBundle.js';
 import { aggregateModelUsage } from '../session/usageReport.js';
-import { formatUsageReport } from './usagePanel.js';
+import { formatUsageReport } from '../chat/usagePanel.js';
 import { InputHistoryStore } from '../session/inputHistory.js';
-import type { DisplayItem } from './types.js';
+import type { DisplayItem } from '../chat/types.js';
 import { versionLine } from '../buildInfo.js';
 
 /** 待确认的计划（exit_plan_mode 提交）。 */
@@ -2948,7 +2948,7 @@ export function App({
               // 嵌套子工具事件挂到父 spawn_agent 条目
               const parentToolId = spawnAgentSidMapRef.current.get(sid);
               if (parentToolId !== undefined) {
-                const toolEv: import('./types.js').SubagentToolEvent = { name: ev.name, status: 'running' };
+                const toolEv: import('../chat/types.js').SubagentToolEvent = { name: ev.name, status: 'running' };
                 setItems((prevItems) =>
                   prevItems.map((it) =>
                     it.kind === 'tool' && it.id === parentToolId
@@ -2961,7 +2961,7 @@ export function App({
               updated[idx] = { ...a, toolCount: a.toolCount, activity: ev.name };
               const parentToolId = spawnAgentSidMapRef.current.get(sid);
               if (parentToolId !== undefined) {
-                const toolEv: import('./types.js').SubagentToolEvent = {
+                const toolEv: import('../chat/types.js').SubagentToolEvent = {
                   name: ev.name,
                   status: ev.isError ? 'error' : 'ok',
                 };

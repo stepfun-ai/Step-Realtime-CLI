@@ -2,7 +2,7 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { ToolCall } from '../../src/tui/ToolCall.js';
-import type { DisplayItem } from '../../src/tui/types.js';
+import type { DisplayItem } from '../../src/chat/types.js';
 
 function toolItem(over: Partial<Extract<DisplayItem, { kind: 'tool' }>>): Extract<
   DisplayItem,

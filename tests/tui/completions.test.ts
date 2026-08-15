@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeCompletions, matchCommandNames } from '../../src/tui/completions.js';
+import { computeCompletions, matchCommandNames } from '../../src/chat/completions.js';
 
 const baseCtx = {
   models: {

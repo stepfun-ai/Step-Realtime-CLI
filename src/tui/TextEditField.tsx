@@ -1,6 +1,6 @@
 import { Text, useInput, usePaste } from 'ink';
 import { useRef } from 'react';
-import { insertText, normalizePastedText, resolveEditAction, type PromptEditState } from './promptEdit.js';
+import { insertText, normalizePastedText, resolveEditAction, type PromptEditState } from '../chat/promptEdit.js';
 
 /**
  * 统一单行文本编辑字段（除主输入框 PromptInput 外，全仓单行输入一律用本组件——

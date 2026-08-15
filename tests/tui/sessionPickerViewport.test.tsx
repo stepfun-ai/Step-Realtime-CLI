@@ -9,7 +9,7 @@ import {
   resolveVisibleRows,
   subagentSectionRows,
 } from '../../src/tui/SessionPicker.js';
-import { computeLiveBudget } from '../../src/tui/liveBudget.js';
+import { computeLiveBudget } from '../../src/chat/liveBudget.js';
 import { STATUS_BAR_ROWS } from '../../src/tui/LiveViewport.js';
 import type { SessionMeta } from '../../src/session/store.js';
 

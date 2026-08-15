@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StepCodeConfig } from '../../src/config/config.js';
-import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload } from '../../src/tui/reload.js';
+import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload } from '../../src/chat/reload.js';
 
 /** 构造一个最小合法配置（默认值对齐 config.ts 内置默认），用 overrides 覆盖差异字段。 */
 function makeCfg(overrides: Partial<StepCodeConfig> = {}): StepCodeConfig {

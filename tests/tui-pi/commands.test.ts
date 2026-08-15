@@ -8,7 +8,7 @@
  * 2. `commandText.ts` 的文本生成。
  */
 import { describe, expect, it } from 'vitest';
-import { busyRoute, parseSlash } from '../../src/tui/commands.js';
+import { busyRoute, parseSlash } from '../../src/chat/commands.js';
 import { formatTaskList, notWiredText, NOT_WIRED } from '../../src/tui-pi/commandText.js';
 import type { BackgroundTask } from '../../src/agent/background/manager.js';
 

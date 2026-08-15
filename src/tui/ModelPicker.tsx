@@ -1,6 +1,6 @@
 import { Box, Text, useInput, useStdout } from 'ink';
 import { useMemo, useState } from 'react';
-import { displayWidth, padEndByWidth } from './liveBudget.js';
+import { displayWidth, padEndByWidth } from '../chat/liveBudget.js';
 import { TextEditField, type TextEditValue } from './TextEditField.js';
 import { t } from '../i18n.js';
 

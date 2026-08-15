@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageOriginKind, StoredMessage } from '../../src/agent/message.js';
-import type { DisplayItem } from '../../src/tui/types.js';
+import type { DisplayItem } from '../../src/chat/types.js';
 import {
   clearUndoSnapshots,
   computeUndo,
@@ -8,7 +8,7 @@ import {
   pushUndoSnapshot,
   truncateItemsAtTurns,
   type UndoSnapshot,
-} from '../../src/tui/undo.js';
+} from '../../src/chat/undo.js';
 
 function msg(
   role: 'user' | 'assistant',

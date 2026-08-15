@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { WORKING_TIPS, pickRandomTip } from '../../src/tui/workingTips.js';
+import { WORKING_TIPS, pickRandomTip } from '../../src/chat/workingTips.js';
 
 // 保存原始内容，每个用例后还原（pickRandomTip 直接读模块级 WORKING_TIPS）。
 const ORIGINAL = [...WORKING_TIPS];

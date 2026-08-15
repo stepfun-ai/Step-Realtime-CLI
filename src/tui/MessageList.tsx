@@ -5,7 +5,7 @@ import { Markdown } from './Markdown.js';
 import { ToolCall } from './ToolCall.js';
 import { GoalPanel } from './GoalPanel.js';
 import { CronCard } from './CronCard.js';
-import type { DisplayItem } from './types.js';
+import type { DisplayItem } from '../chat/types.js';
 
 /** thinking 定稿块最多展示的行数，超出折叠为「…（共 N 行）」（不做交互式展开器）。 */
 export const THINKING_MAX_LINES = 2;

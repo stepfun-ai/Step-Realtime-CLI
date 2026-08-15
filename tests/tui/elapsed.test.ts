@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatElapsed } from '../../src/tui/elapsed.js';
+import { formatElapsed } from '../../src/chat/elapsed.js';
 
 describe('formatElapsed', () => {
   it('60 秒内显示秒', () => {

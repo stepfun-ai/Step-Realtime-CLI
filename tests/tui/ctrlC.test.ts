@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { decideCtrlC } from '../../src/tui/ctrlC.js';
+import { decideCtrlC } from '../../src/chat/ctrlC.js';
 
 describe('decideCtrlC（Ctrl+C 决策）', () => {
   it('busy + 输入框有内容 → 只清空输入框，不中断回合', () => {

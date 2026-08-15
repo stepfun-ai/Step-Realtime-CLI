@@ -54,22 +54,22 @@ import type { WireEvent } from '../agent/wirelog.js';
 import { renderSkillActivation, skillListing, type SkillRegistry } from '../skill/registry.js';
 import { REFLECT_EMPTY_HISTORY, REFLECT_NO_FINDINGS, runReflect } from '../agent/reflect.js';
 import { expandPluginCommand, type PluginCommand } from '../plugin/manager.js';
-import { runPluginCommand } from '../tui/pluginCommand.js';
+import { runPluginCommand } from '../chat/pluginCommand.js';
 import { restoreFile } from '../tools/checkpoint.js';
 import { resolvePath } from '../tools/fsutil.js';
 import type { ToolContext } from '../tools/types.js';
-import type { DisplayItem } from '../tui/types.js';
-import { busyRoute, helpText, parseSlash } from '../tui/commands.js';
-import { resolveProviderTarget } from '../tui/providerSwitch.js';
-import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from '../tui/reload.js';
-import { extractUserText } from '../tui/backtrack.js';
-import { computeUndo } from '../tui/undo.js';
-import { historyToDisplayItems } from '../tui/historyReplay.js';
-import { planTurnEnd } from '../tui/turnEnd.js';
-import { formatDuration } from '../tui/duration.js';
-import { formatUsageReport } from '../tui/usagePanel.js';
-import { parseThinkArgs, THINK_CHOICES, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../tui/thinkCommand.js';
-import { scanFileIndex } from '../tui/fileIndex.js';
+import type { DisplayItem } from '../chat/types.js';
+import { busyRoute, helpText, parseSlash } from '../chat/commands.js';
+import { resolveProviderTarget } from '../chat/providerSwitch.js';
+import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from '../chat/reload.js';
+import { extractUserText } from '../chat/backtrack.js';
+import { computeUndo } from '../chat/undo.js';
+import { historyToDisplayItems } from '../chat/historyReplay.js';
+import { planTurnEnd } from '../chat/turnEnd.js';
+import { formatDuration } from '../chat/duration.js';
+import { formatUsageReport } from '../chat/usagePanel.js';
+import { parseThinkArgs, THINK_CHOICES, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../chat/thinkCommand.js';
+import { scanFileIndex } from '../chat/fileIndex.js';
 import {
   collectUndoTurns,
   formatCronJobs,
@@ -82,7 +82,7 @@ import {
 } from './commandText.js';
 import { ChatAutocompleteProvider } from './completion.js';
 import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
-import { StreamBuffer } from '../tui/streamBuffer.js';
+import { StreamBuffer } from '../chat/streamBuffer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { ChatEditor } from './ChatEditor.js';

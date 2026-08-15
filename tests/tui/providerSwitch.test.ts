@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StepCodeConfig } from '../../src/config/config.js';
-import { firstAliasOf, resolveProviderTarget } from '../../src/tui/providerSwitch.js';
+import { firstAliasOf, resolveProviderTarget } from '../../src/chat/providerSwitch.js';
 
 /** 最小可用的 StepCodeConfig 夹具（解析只读 providers/models 两表）。 */
 function cfg(overrides: Partial<StepCodeConfig> = {}): StepCodeConfig {

@@ -1,10 +1,10 @@
 import { Box, Text, useInput, usePaste } from 'ink';
 import { useRef, useState } from 'react';
-import { type SlashCommand } from './commands.js';
-import { computeCompletions, matchCommandNames, type CompletionContext } from './completions.js';
-import { displayWidth } from './liveBudget.js';
+import { type SlashCommand } from '../chat/commands.js';
+import { computeCompletions, matchCommandNames, type CompletionContext } from '../chat/completions.js';
+import { displayWidth } from '../chat/liveBudget.js';
 import { initialNavState, navigateHistory } from '../session/inputHistory.js';
-import { insertText, normalizePastedText, resolveEditAction } from './promptEdit.js';
+import { insertText, normalizePastedText, resolveEditAction } from '../chat/promptEdit.js';
 import { shouldFoldPaste, type PasteStore } from './pasteStore.js';
 import { t } from '../i18n.js';
 

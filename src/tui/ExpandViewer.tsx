@@ -4,7 +4,7 @@ import { t } from '../i18n.js';
 import { MessageItem, THINKING_MAX_LINES } from './MessageList.js';
 import { OffsetViewport } from './OffsetViewport.js';
 import { hasCollapsedBody } from './ToolCall.js';
-import type { DisplayItem } from './types.js';
+import type { DisplayItem } from '../chat/types.js';
 
 /** 查看器最多回看的可展开条目数（再多翻页成本盖过收益，保最新）。 */
 const MAX_ITEMS = 10;

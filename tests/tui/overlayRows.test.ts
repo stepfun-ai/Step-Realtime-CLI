@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { estimateChromeRows as estimateQuestionRows } from '../../src/tui/QuestionPrompt.js';
 import { estimateChromeRows as estimateApprovalRows } from '../../src/tui/ApprovalPrompt.js';
-import { displayWidth, wrappedRows } from '../../src/tui/liveBudget.js';
+import { displayWidth, wrappedRows } from '../../src/chat/liveBudget.js';
 import type { AskUserRequest } from '../../src/tools/askUser.js';
 
 describe('wrappedRows / displayWidth（预算层折行原语）', () => {

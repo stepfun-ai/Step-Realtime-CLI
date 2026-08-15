@@ -10,9 +10,9 @@
 import type { BackgroundTask } from '../agent/background/manager.js';
 import type { GoalState } from '../agent/goal/mode.js';
 import type { StoredMessage } from '../agent/message.js';
-import { extractUserText } from '../tui/backtrack.js';
+import { extractUserText } from '../chat/backtrack.js';
 import { formatMemoryEntryLine, measureMemoryIndex, MEMORY_INDEX_BUDGET, scanMemory } from '../agent/memory.js';
-import { formatCount, formatDuration } from '../tui/duration.js';
+import { formatCount, formatDuration } from '../chat/duration.js';
 
 /** `/tasks` 的文本清单（Ink 版是 TasksViewer 弹层，pi 版先给只读文本）。 */
 export function formatTaskList(tasks: readonly BackgroundTask[], now: number): string {

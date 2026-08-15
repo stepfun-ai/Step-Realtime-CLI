@@ -11,7 +11,7 @@
  */
 import type { AutocompleteItem, AutocompleteProvider, AutocompleteSuggestions } from '@earendil-works/pi-tui';
 import { t } from '../i18n.js';
-import { computeCompletions, type CompletionContext, type CompletionItem } from '../tui/completions.js';
+import { computeCompletions, type CompletionContext, type CompletionItem } from '../chat/completions.js';
 
 /** 光标所在行取到光标处的文本：补全只看当前行的左半部分（与 Ink 版单行输入等价）。 */
 function currentToken(lines: string[], cursorLine: number, cursorCol: number): string {

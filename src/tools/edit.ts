@@ -4,7 +4,7 @@ import { backupBeforeWrite } from './checkpoint.js';
 import { z } from 'zod';
 import { resolvePath } from './fsutil.js';
 import { fail, ok, type ToolDef } from './types.js';
-import { renderDiffClustered } from '../tui/diffView.js';
+import { renderDiffClustered } from '../chat/diffView.js';
 
 /** edit 结果预览的 diff 主体最大行数（折叠上限，超出附「N more changes hidden」）。 */
 const EDIT_DIFF_MAX_LINES = 40;

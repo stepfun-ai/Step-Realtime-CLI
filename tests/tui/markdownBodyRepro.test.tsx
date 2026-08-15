@@ -4,7 +4,7 @@ import { render } from 'ink-testing-library';
 import { describe, expect, it } from 'vitest';
 import { Markdown } from '../../src/tui/Markdown.js';
 import { MessageItem, MessageList, countSettledItems } from '../../src/tui/MessageList.js';
-import type { DisplayItem } from '../../src/tui/types.js';
+import type { DisplayItem } from '../../src/chat/types.js';
 
 /** 去掉 ANSI 颜色码，便于对纯文本内容断言。 */
 function stripAnsi(s: string): string {

@@ -2,7 +2,7 @@ import { Box, Text, useInput } from 'ink';
 import { useRef, useState } from 'react';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { t } from '../i18n.js';
-import { wrappedRows } from './liveBudget.js';
+import { wrappedRows } from '../chat/liveBudget.js';
 import { TextEditField } from './TextEditField.js';
 
 /**

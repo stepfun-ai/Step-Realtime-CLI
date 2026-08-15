@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { I18N_TABLES, setLocale } from '../../src/i18n.js';
-import { SLASH_COMMANDS, busyRoute } from '../../src/tui/commands.js';
+import { SLASH_COMMANDS, busyRoute } from '../../src/chat/commands.js';
 import type { ModelUsageStats, UsageReport } from '../../src/session/usageReport.js';
 import { TOTAL_ROW_NAME } from '../../src/session/usageReport.js';
 import {
@@ -8,7 +8,7 @@ import {
   lowHitModels,
   LOW_HIT_INPUT_FLOOR,
   LOW_HIT_RATE_CEIL,
-} from '../../src/tui/usagePanel.js';
+} from '../../src/chat/usagePanel.js';
 
 afterEach(() => {
   setLocale('zh');

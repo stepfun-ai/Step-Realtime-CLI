@@ -4,7 +4,7 @@ import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 import { ExpandViewer, collectExpandable } from '../../src/tui/ExpandViewer.js';
 import { hasCollapsedBody } from '../../src/tui/ToolCall.js';
-import type { DisplayItem } from '../../src/tui/types.js';
+import type { DisplayItem } from '../../src/chat/types.js';
 
 const delay = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
 /** 等测量 effect 落盘（组高/自然高在 commit 后量，标题与位置指示晚一拍刷新）。 */

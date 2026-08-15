@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { AgentEvent } from '../../src/agent/events.js';
-import { StreamBuffer } from '../../src/tui/streamBuffer.js';
+import { StreamBuffer } from '../../src/chat/streamBuffer.js';
 
 /** 收集 apply 到的事件。 */
 function collector(): { events: AgentEvent[]; apply: (ev: AgentEvent) => void } {

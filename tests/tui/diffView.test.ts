@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeDiffLines, renderDiffClustered } from '../../src/tui/diffView.js';
+import { computeDiffLines, renderDiffClustered } from '../../src/chat/diffView.js';
 
 describe('computeDiffLines', () => {
   it('纯新增', () => {
