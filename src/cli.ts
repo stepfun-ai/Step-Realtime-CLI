@@ -1,29 +1,24 @@
 #!/usr/bin/env node
 // TUI / headless 的真实入口。**本文件不得设置 `NODE_ENV`，也不得 import 任何设置它的模块。**
 //
-// 这条禁令的方向是反直觉的（曾经这里有一行 `import './env.js'` 当兜底，实测证明它净有害）：
-// tsc 的 JSX transform 会在编译产物顶部注入 `import 'react/jsx-runtime'`，排在本文件所有
-// 源码 import 之前，而它内部的 `require('react')` 会让 **react 主包**在那一刻就按当时的
-// `NODE_ENV` 完成 development / production 分流。之后才轮到源码 import 里的 ink 拉起
-// react-reconciler 分流。于是在本文件里设 `NODE_ENV` 只够得到 reconciler、够不到 react，
-// 恰好制造出 **react(development) + reconciler(production)** 的错配——而错配的后果是
-// reconciler 调度静默失效：`render()` 正常返回、根组件一次都没被调用、stdout 零字节、
-// 不抛任何异常，表现为「启动即卡死在空白屏」。
+// 唯一的设置点是 bin 引导文件 `./main.ts`：它不含静态 import，先设 `NODE_ENV` 再
+// `await import` 本模块，保证赋值发生在任何模块求值之前；bundle 形态另由 esbuild
+// `define` 把 `process.env.NODE_ENV` 静态折叠为 production。
 //
-// 2026-08-03 实测，唯一变量是本文件是否设置 NODE_ENV（外部一律 `env -u NODE_ENV`）：
-//   本文件有 `import './env.js'`  → react=dev / reconciler=prod → stdout **0 字节**（空白屏）
-//   改为 NODE_ENV=development     → react=dev / reconciler=dev  → stdout 2000+ 字节（正常）
-// 也就是说那道「兜底」唯一真正生效的场合，就是把一个能正常工作的 dev 环境变成静默卡死；
-// 在 bin 与 bundle 两条路径上它都只是 no-op（那两条各有自己的机制，见下）。
+// 这条禁令来自 Ink 时代的一次静默事故：曾经这里有一行 `import './env.js'` 当兜底，而 tsc 的
+// JSX transform 会在编译产物顶部注入 `import 'react/jsx-runtime'`，排在本文件所有源码
+// import 之前，让 react 主包先按当时的 `NODE_ENV` 分流；本文件里的赋值只够得到随后由 ink
+// 拉起的 react-reconciler，恰好制造 react(dev) + reconciler(prod) 的错配，后果是 reconciler
+// 调度静默失效（render() 正常返回、根组件一次没被调用、stdout 零字节、不抛异常）。
+// 2026-08-03 实测：有那行 → 0 字节；令两包一致 → 2000+ 字节。
 //
-// 正确的落点是 bin 引导文件 `./main.ts`：不含 JSX、无任何静态 import，先设 `NODE_ENV`
-// 再 `await import` 本模块，保证 react 与 reconciler 都在赋值之后才求值。bundle 形态另有
-// esbuild `define` 把 `process.env.NODE_ENV` 静态折叠为 production。回归护栏见 tests/env.test.ts。
+// M5 删掉 Ink 与 react 之后（本文件也随之由 .tsx 改回 .ts），那个具体错配不再可能，但
+// 「设置点唯一、且在引导层」这条结构约束保留：它使分发形态与开发形态拿到一致的默认值。
+// 回归护栏见 tests/env.test.ts。
 import { copyFileSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
-import { render } from 'ink';
 import { runAgent } from './agent/loop.js';
 import { estimateTokens, microCompact } from './agent/compaction/compact.js';
 import { runReflect } from './agent/reflect.js';
@@ -45,7 +40,7 @@ import { runDoctorConfig } from './config/doctor.js';
 import { collectConfigWarnings } from './config/diagnostics.js';
 import { configureWebResultCache } from './tools/webCache.js';
 import { renderConfigDiagnostics } from './chat/configWarningText.js';
-import { FirstRunSetup, type FirstRunResult } from './tui/FirstRunSetup.js';
+import { runFirstRunPi, type FirstRunResult } from './tui-pi/FirstRun.js';
 import { setLocale, t } from './i18n.js';
 import { discoverPlugins, defaultPluginsDir } from './plugin/manager.js';
 import { pluginsStatePath, readPluginsState } from './plugin/manage.js';
@@ -67,8 +62,7 @@ import {
   resultEvent,
 } from './session/streamJson.js';
 import { runExportDebugZip } from './session/debugCli.js';
-import { App } from './tui/App.js';
-import { SessionPicker, relativeTime } from './tui/SessionPicker.js';
+import { pickSessionStandalone, relativeTime } from './tui-pi/pickers.js';
 import type { ToolContext } from './tools/types.js';
 import { configureLogger, logError } from './utils/logger.js';
 import { versionLine } from './buildInfo.js';
@@ -380,16 +374,7 @@ try {
  * 返回 FirstRunResult，调用方按 kind 分支。
  */
 async function runFirstRunSetup(): Promise<FirstRunResult> {
-  return new Promise((resolve) => {
-    const { unmount } = render(
-      <FirstRunSetup
-        onDone={(result) => {
-          unmount();
-          resolve(result);
-        }}
-      />,
-    );
-  });
+  return await runFirstRunPi();
 }
 
 /**
@@ -473,7 +458,7 @@ const reloadSkills = (force = false): SkillRegistryDiff | null => {
 const agentsMdBudget = config.agentsMdMaxBytes ?? DEFAULT_AGENTS_MD_BUDGET_BYTES;
 const agentsMdResult = loadAgentsMd(cwd, undefined, config.agentsPaths, agentsMdBudget);
 const agentsMd = agentsMdResult.text;
-// 子 agent 注册表按 cwd 构建一次（cli.tsx 非交互分支），用于注入运行时可见的自定义角色
+// 子 agent 注册表按 cwd 构建一次（cli.ts 非交互分支），用于注入运行时可见的自定义角色
 const subagentRegistry = buildAgentRegistry(cwd);
 // -p 模式下使用纯净模式：不包含 skill 路由指引，避免模型把所有输入都理解成「配置问题」
 const systemPrefix = buildSystemPrompt(cwd, { pureMode: opts.print !== undefined });
@@ -556,19 +541,9 @@ ctx.attachments = store.attachments;
 async function pickSession(): Promise<string | null> {
   const sessions = store.list(cwd);
   if (sessions.length === 0) return null;
-  return await new Promise<string | null>((resolve) => {
-    // Ink 同一时刻只能有一个 render：选择器 unmount 后再 render App。
-    let instance: ReturnType<typeof render> | undefined;
-    instance = render(
-      <SessionPicker
-        sessions={sessions.slice(0, 200)}
-        onSelect={(id) => {
-          instance?.unmount();
-          resolve(id);
-        }}
-      />,
-    );
-  });
+  // 选择器自己起一个 pi-tui 主屏并在结束时停掉，屏幕随后让给 PiChat。
+  // 上限 200 条与 Ink 版一致：更早的会话只能按 id 恢复。
+  return await pickSessionStandalone(sessions.slice(0, 200));
 }
 
 /**
@@ -1127,9 +1102,9 @@ if (opts.reflect === true) {
   }
   await runPrint(prompt);
   await mcpManager.closeAll();
-} else if (opts.pi === true) {
-  // pi-tui 实验前端：与 Ink 分支并列，共用同一套装配好的依赖（provider/ctx/store/session 等）。
-  // 平行接线而非替换，是为了 M1-M4 期间随时能用同一个二进制对照两版渲染。
+} else {
+  // 交互 TUI（pi-tui）：独占终端，日志只进文件与环形缓冲，绝不写 stderr/stdout。
+  // `--pi` 开关在 M5 之后不再有意义（只剩这一个前端），保留为 no-op 是为了老命令行不报错。
   configureLogger({ mode: 'tui' });
   const { PiChat } = await import('./tui-pi/PiChat.js');
   const chat = new PiChat({
@@ -1158,51 +1133,10 @@ if (opts.reflect === true) {
   await mcpManager.closeAll();
   if (info.hasContent) {
     process.stderr.write(`\n${resumeHintText(info.sessionId)}\n`);
-  }
-} else {
-  // 交互 TUI：Ink 独占终端，日志只进文件 + 环形缓冲，绝不写 stderr/stdout。
-  configureLogger({ mode: 'tui' });
-  // 退出后打印 resume 提示：App unmount 时上抛当前会话信息
-  let exitInfo: { id: string; hasContent: boolean } | undefined;
-  const tui = render(
-    <App
-      provider={provider}
-      systemPrefix={systemPrefix}
-      agentsMd={agentsMd}
-      agentsMdTruncated={agentsMdResult.truncated}
-      agentsMdMaxBytes={agentsMdBudget}
-      skillsRef={skillsRef}
-      subagentRegistry={subagentRegistry}
-      reloadSkills={reloadSkills}
-      ctx={ctx}
-      model={providerModel}
-      config={config}
-      initialMode={initialMode}
-      store={store}
-      session={session}
-      resumeDelivered={resumeDelivered}
-      resumeHit={resumeHit}
-      maxContextSize={sessionMaxContextSize}
-      mcp={mcpManager}
-      hookEngineRef={hookEngineRef}
-      reloadConfig={reloadConfig}
-      pluginCommands={plugins.flatMap((p) => p.commands)}
-      pluginIds={plugins.map((p) => p.id)}
-      configStartupNotice={renderConfigDiagnostics(configWarnings, ignoredBadConfig)}
-      onExitInfo={(id, hasContent) => {
-        exitInfo = { id, hasContent };
-      }}
-    />,
-    // 关掉 Ink 默认的 Ctrl+C 即退：Ctrl+C 语义由 App 接管（busy 中断 / 空闲清输入 + 双击退出）
-    { exitOnCtrlC: false },
-  );
-  await tui.waitUntilExit();
-  if (exitInfo?.hasContent === true) {
-    process.stderr.write(`\n${resumeHintText(exitInfo.id)}\n`);
     // 退出时打印本场 token 汇总（一行）：读 wire 事件聚合 model.usage，
-    // 让用户不跑 /usage 也能看到本场消耗与缓存命中率。无任何 model.usage 时不打印。
+    // 不跑 /usage 也能看到本场消耗与缓存命中率。无任何 model.usage 时不打印。
     try {
-      const report = aggregateModelUsage(store.loadWire(cwd, exitInfo.id));
+      const report = aggregateModelUsage(store.loadWire(cwd, info.sessionId));
       if (report.total.turns > 0) {
         const hit = cacheHitRate(report.total);
         const hitText = hit !== null ? ` · 缓存命中 ${Math.round(hit * 100)}%` : '';
@@ -1215,3 +1149,4 @@ if (opts.reflect === true) {
     }
   }
 }
+

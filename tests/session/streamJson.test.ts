@@ -14,7 +14,7 @@ import type { SubagentProgressEvent } from '../../src/agent/events.js';
 
 /**
  * 回归依据：2026-08-02 发现 `-p --output-format stream-json` 下子 agent 事件全部丢失
- * （cli.tsx onEvent 无条件写 stderr、丢弃 id、只处理 5 种 kind 中的 2 种）。
+ * （cli.ts onEvent 无条件写 stderr、丢弃 id、只处理 5 种 kind 中的 2 种）。
  * 本文件钉死修复后的三条契约：五种事件全覆盖、id 保留、信封判别式统一为顶层 type。
  */
 describe('streamJson 子 agent 事件信封', () => {

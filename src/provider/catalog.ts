@@ -15,7 +15,7 @@
  * - status 为 deprecated / alpha 的模型过滤掉；过滤后无模型的供应商整条剔除。
  *
  * 网络：走全局 fetch（启动时 NODE_USE_ENV_PROXY=1 已默认开启，HTTPS_PROXY /
- * config proxy 注入后自动生效，见 cli.tsx 的代理注入），本模块不处理代理细节。
+ * config proxy 注入后自动生效，见 cli.ts 的代理注入），本模块不处理代理细节。
  */
 import { existsSync, readFileSync } from 'node:fs';
 

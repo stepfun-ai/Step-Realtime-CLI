@@ -9,10 +9,10 @@ let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'fileindex-'));
   // 构造一个小型目录树
-  mkdirSync(join(dir, 'src/tui'), { recursive: true });
+  mkdirSync(join(dir, 'src/chat'), { recursive: true });
   mkdirSync(join(dir, 'node_modules/pkg'), { recursive: true });
   mkdirSync(join(dir, '.git/objects'), { recursive: true });
-  writeFileSync(join(dir, 'src/tui/App.tsx'), '');
+  writeFileSync(join(dir, 'src/chat/history.ts'), '');
   writeFileSync(join(dir, 'src/agent.ts'), '');
   writeFileSync(join(dir, 'package.json'), '');
   writeFileSync(join(dir, 'node_modules/pkg/index.js'), '');
@@ -26,7 +26,7 @@ afterEach(() => {
 describe('scanFileIndex 文件索引', () => {
   it('递归收集相对路径，posix 分隔', async () => {
     const files = await scanFileIndex(dir);
-    expect(files).toContain('src/tui/App.tsx');
+    expect(files).toContain('src/chat/history.ts');
     expect(files).toContain('src/agent.ts');
     expect(files).toContain('package.json');
     // 不含反斜杠

@@ -13,6 +13,8 @@ import type { Component } from '@earendil-works/pi-tui';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { PermissionMode } from '../agent/permission/mode.js';
 import { c } from './theme.js';
+import { pickRandomTip, pickWorkingVerb } from '../chat/workingTips.js';
+import { t } from '../i18n.js';
 
 /** 路径缩短：逻辑同 Ink 版 StatusBar.shortenPath（home → ~，段数 > 3 只留尾部 3 段）。 */
 export function shortenPath(p: string, max = 48): string {
@@ -123,14 +125,23 @@ export class ActivityLine implements Component {
   private thinkingPreview = '';
   private frame = 0;
   private tip = '';
+  /** 本轮的状态动词与操作提示：busy 上升沿各取一次、整轮固定（不随帧刷新而跳字）。 */
+  private verb = '';
+  private hint = '';
 
   invalidate(): void {
     // 无缓存
   }
 
   setBusy(busy: boolean, startedAt = Date.now()): void {
+    const rising = busy && !this.busy;
     this.busy = busy;
     this.startedAt = startedAt;
+    if (rising) {
+      // 整轮固定：随机只在进入 busy 时发生，render 每 100ms 调用一次，不能在里面取随机
+      this.verb = pickWorkingVerb();
+      this.hint = pickRandomTip(this.hint);
+    }
     if (!busy) {
       this.thinkingActive = false;
       this.thinkingPreview = '';
@@ -161,7 +172,7 @@ export class ActivityLine implements Component {
     const spin = c.warn(SPINNER[this.frame]!);
     const elapsed = formatElapsed(Date.now() - this.startedAt);
     const tok = this.outputChars > 0 ? ` · ↓ ${formatCount(Math.round(this.outputChars / 4))} tok` : '';
-    const state = this.thinkingActive ? '思考中' : this.tip !== '' ? this.tip : '运行中';
+    const state = this.thinkingActive ? '思考中' : this.tip !== '' ? this.tip : this.verb !== '' ? this.verb : '运行中';
     const head = `${spin} ${c.dim(`${state} · ${elapsed}${tok} · Esc 中断`)}`;
     const out = [truncateToWidth(head, width)];
     if (this.thinkingActive && this.thinkingPreview !== '') {
@@ -169,6 +180,9 @@ export class ActivityLine implements Component {
       const flat = this.thinkingPreview.replace(/\s+/g, ' ').trimEnd();
       const tail = flat.slice(-Math.max(0, width - 4));
       out.push(c.thinking(`  ${truncateToWidth(tail, width - 2)}`));
+    } else if (this.hint !== '') {
+      // 思考预览与操作提示互斥占第二行：预览是本轮实时信息，优先级高于常驻提示
+      out.push(c.dim(truncateToWidth(t('input.tipPrefix', { tip: this.hint }), width)));
     }
     return out;
   }

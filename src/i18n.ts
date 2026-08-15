@@ -4,7 +4,7 @@
  * 只覆盖给人看的 UI 文案（TUI 组件、App 提示、CLI 输出）；
  * 给模型看的文案（工具 describe、system prompt、deny reason、tool_result）恒中文，不进本表。
  *
- * 文案生产者一大半在 React 树外（commands.ts、workingTips.ts、agent/loop.ts、cli.tsx），
+ * 文案生产者一大半在 React 树外（commands.ts、workingTips.ts、agent/loop.ts、cli.ts），
  * React context 覆盖不到，故用模块级变量而非 context（ink 单进程单实例，无并发问题）。
  *
  * key 用点分命名（如 `approval.title`），插值用 `{name}` 占位。
@@ -471,7 +471,7 @@ const zh = {
   'app.usage.cacheCreateNote': '注：{detail} 有缓存写入（cache_creation），已计入命中率分母。',
   'app.usage.lowHit': '⚠ {model} 缓存命中率偏低（{rate}）。前缀稳定性正常时多为服务端缓存行为所致，可用 /usage --all 对比其他模型。',
 
-  // --- App /sessions /resume（cli.tsx sessions 子命令复用 app.sessions.none / app.sessions.untitled / app.resume.notFound）---
+  // --- App /sessions /resume（cli.ts sessions 子命令复用 app.sessions.none / app.sessions.untitled / app.resume.notFound）---
   'app.sessions.none': '本工作目录暂无历史会话。',
   'app.agents.none': '当前会话没有派生过子 agent。',
   'app.sessions.untitled': '(无标题)',
@@ -603,7 +603,7 @@ const zh = {
   'cmd.helpText.aliasSuffix': '（/{aliases}）',
   'cmd.helpText.line': '/{name}{alias} — {describe}',
 
-  // --- cli.tsx CLI 输出（sessions 子命令 / mcp / 非交互 / reflect）---
+  // --- cli.ts CLI 输出（sessions 子命令 / mcp / 非交互 / reflect）---
   'cli.sessions.line': '{id}  {title}  {updated}  {count} 条',
   'cli.sessions.showUsage': '用法：step sessions show <id>',
   'cli.sessions.label.title': '标题: ',
@@ -696,7 +696,7 @@ const zh = {
   'error.emptyStream.notBudgetHint': '  输出只用掉预算的一小部分（{used}/{limit} tokens），且服务端报的是正常结束——这不是预算问题，降低思考档位或调大 max_tokens 都不会改变它。这类多是模型侧的偶发行为，直接重试一次往往就能拿到正常回复；同一处反复出现时用 /model 换个模型。',
   'error.emptyStream.budgetHint': '  思考已消耗输出预算而正文为空。两个办法：用 /think low 降低思考档位（实测低档思考量可降约 85%），或在 config.toml 调大 max_tokens。重发无用——同样的档位与预算会再次耗尽。',
 
-  // --- provider 工厂（cli.tsx 在 setLocale 之后调用，翻得到）---
+  // --- provider 工厂（cli.ts 在 setLocale 之后调用，翻得到）---
   'factory.unknownProvider': "未知服务商 provider='{provider}'。当前支持：{list}。",
   'factory.missingApiKey':
     '缺少 API key（provider={provider}）。请设置环境变量 STEP_CODE_API_KEY、该服务商的惯例环境变量（anthropic→ANTHROPIC_API_KEY、openai→OPENAI_API_KEY），或在 ~/.step-code/config.toml 的 [providers] 渠道 / [models] 别名下写入 api_key（也可用 api_key_env 指定环境变量名）。',

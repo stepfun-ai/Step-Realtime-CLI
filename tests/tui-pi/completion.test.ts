@@ -12,7 +12,7 @@ function mk(): ChatAutocompleteProvider {
   return new ChatAutocompleteProvider({
     models: { step35: { model: 'step-3.5-flash', displayName: 'Step 3.5' } },
     thinkChoices: ['high', 'medium', 'low', 'off'],
-    files: ['src/cli.tsx', 'src/tui-pi/PiChat.ts'],
+    files: ['src/cli.ts', 'src/tui-pi/PiChat.ts'],
   });
 }
 
@@ -49,7 +49,7 @@ describe('ChatAutocompleteProvider.getSuggestions', () => {
   it('普通文本与句中斜杠不触发', async () => {
     const p = mk();
     expect(await p.getSuggestions(['hello'], 0, 5)).toBeNull();
-    expect(await p.getSuggestions(['看 src/cli.tsx'], 0, 13)).toBeNull();
+    expect(await p.getSuggestions(['看 src/cli.ts'], 0, 13)).toBeNull();
     expect(await p.getSuggestions(['日期 2026/08/14'], 0, 13)).toBeNull();
   });
 

@@ -8,6 +8,19 @@ import { Agent, fetch as undiciFetch, interceptors } from 'undici';
 import { fail, ok, type ToolDef } from './types.js';
 import { webResultCache } from './webCache.js';
 
+/**
+ * `Document` 占位类型：Readability 的构造签名要求 lib.dom 的 `Document`，而本项目
+ * tsconfig 的 `lib` 只有 ES2022（服务端进程，没有浏览器全局）。linkedom 产出的
+ * document 与它结构不同，调用点本来就走 `as unknown as Document` 断言穿透。
+ *
+ * 这个占位此前由 `@types/react/global.d.ts` 顺带提供（它为无 DOM 环境声明了一批空
+ * interface）。M5 删掉 Ink 与 react 依赖后那份声明随之消失，故在此显式补上——
+ * 它只用于让断言有个具名目标，不承载任何结构约束，不要往里加成员。
+ */
+interface Document {
+  readonly __domDocumentPlaceholder?: never;
+}
+
 const schema = z.object({
   url: z.string().url().describe('要抓取的网页 URL。'),
 });

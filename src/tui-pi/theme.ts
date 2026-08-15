@@ -9,7 +9,7 @@ import chalk from 'chalk';
 import { highlight, supportsLanguage } from 'cli-highlight';
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from '@earendil-works/pi-tui';
 
-/** 语义色：与 Ink 版 src/tui/ 的用色保持一致，迁移前后观感不跳。 */
+/** 语义色：与已删除的 Ink 版用色保持一致，迁移前后观感不跳。 */
 export const c = {
   user: chalk.cyan,
   assistant: (s: string) => s,

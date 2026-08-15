@@ -41,7 +41,7 @@ import {
   saveMemoryEnabled,
   type StepCodeConfig,
 } from '../config/config.js';
-import { getLocale, setLocale } from '../i18n.js';
+import { getLocale, setLocale, t } from '../i18n.js';
 import type { McpManager } from '../mcp/manager.js';
 import { formatMcpStatus } from '../mcp/status.js';
 import { createProvider } from '../provider/factory.js';
@@ -70,6 +70,7 @@ import { formatDuration } from '../chat/duration.js';
 import { formatUsageReport } from '../chat/usagePanel.js';
 import { parseThinkArgs, THINK_CHOICES, thinkLevelsOf, thinkStreamParam, type ThinkOverride } from '../chat/thinkCommand.js';
 import { scanFileIndex } from '../chat/fileIndex.js';
+import { applyCtrlB } from '../chat/ctrlB.js';
 import {
   collectUndoTurns,
   formatCronJobs,
@@ -81,8 +82,8 @@ import {
   notWiredText,
 } from './commandText.js';
 import { ChatAutocompleteProvider } from './completion.js';
-import { clipboardToolHint, readClipboardImage } from '../tui/clipboardImage.js';
-import { extractImageContent, ImageAttachmentStore } from '../tui/imageAttachment.js';
+import { clipboardToolHint, readClipboardImage } from '../chat/clipboardImage.js';
+import { extractImageContent, ImageAttachmentStore } from '../chat/imageAttachment.js';
 import { modelItems, showPicker, sessionItems, thinkItems } from './pickers.js';
 import { StreamBuffer } from '../chat/streamBuffer.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
@@ -264,6 +265,17 @@ export class PiChat {
     // （提交走排队路径，drain 时统一展开成图）。
     this.editor.onCtrlV = () => {
       void this.attachClipboardImage();
+      return true;
+    };
+    // Ctrl+B 转后台：busy 且有前台任务时全部 detach（进程继续跑、终态自动通知）；
+    // 空闲或无前台任务时返回 null → 不消费按键，交回编辑器。
+    this.editor.onCtrlB = () => {
+      const detached = applyCtrlB(this.busy, this.background);
+      if (detached === null) return false;
+      if (detached > 0) {
+        this.push({ kind: 'note', text: t('background.detached', { count: detached }) });
+        this.syncStatus();
+      }
       return true;
     };
 
@@ -512,7 +524,7 @@ export class PiChat {
   /**
    * 斜杠命令入口：解析 → busy 分流 → 执行。
    *
-   * 命令名与别名表直接复用 Ink 版的 `SLASH_COMMANDS`（`src/tui/commands.ts` 是纯逻辑，
+   * 命令名与别名表直接复用 Ink 版的 `SLASH_COMMANDS`（`src/chat/commands.ts` 是纯逻辑，
    * 不 import react），两版共用一张表，命令集与别名不会漂移。`busyRoute` 决定回合
    * 进行中是即时执行还是排队到回合边界，判据是该命令是否改动当前 turn 依赖的状态。
    */

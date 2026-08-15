@@ -20,7 +20,7 @@ const ERROR_PREVIEW_LINES = 4;
 /** diff 结果完整展示的行数上限，超出截断（与 Ink 版 EXPANDED_MAX_LINES 同口径）。 */
 const DIFF_MAX_LINES = 200;
 
-/** 工具入参的单行摘要。逻辑抄自 src/tui/ToolCall.tsx 的 summarizeInput（那边带 JSX，不能直接引）。 */
+/** 工具入参的单行摘要。逻辑抄自 Ink 版 ToolCall.tsx 的 summarizeInput（那边带 JSX，不能直接引）。 */
 export function summarizeInput(input: unknown): string {
   if (input === null || typeof input !== 'object') return '';
   const obj = input as Record<string, unknown>;

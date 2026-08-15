@@ -34,7 +34,7 @@ export type MessageOriginKind =
  * false/缺省 = 在既有回合中途注入，不单独开轮。
  * 由通知生产点按 decideNotifyRoute 的分流结果填写（busy 中途注入=false，idle 直投=true）。
  *
- * **当前状态：只写不读。** 生产代码里所有引用都是写入点（notify.ts / loop.ts / App.tsx / cli.tsx），
+ * **当前状态：只写不读。** 生产代码里所有引用都是写入点（notify.ts / loop.ts / PiChat.ts / cli.ts），
  * 没有任何消费方据此改变行为——轮次计数走 turns.ts 的 `kind === 'user'`，与本字段无关。
  * 保留它是因为语义明确且已有测试锁定：将来若要让「唤醒型注入」参与轮次统计或 prompt 配额，
  * 判据就在这里。新增消费方时请一并更新本段说明。

@@ -4,7 +4,7 @@ import {
   ImageAttachmentStore,
   extractImageContent,
   formatPlaceholder,
-} from '../../src/tui/imageAttachment.js';
+} from '../../src/chat/imageAttachment.js';
 
 describe('formatPlaceholder', () => {
   it('生成固定英文占位符', () => {

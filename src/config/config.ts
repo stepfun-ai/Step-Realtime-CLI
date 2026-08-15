@@ -579,7 +579,7 @@ export interface ConfigLoadDiagnostics {
   ignoredBadFile?: IgnoredBadConfigFile;
 }
 
-/** 诊断出口：由调用方（cli.tsx）决定往哪条通道呈现。 */
+/** 诊断出口：由调用方（cli.ts）决定往哪条通道呈现。 */
 export type ConfigDiagnosticsSink = (diagnostics: ConfigLoadDiagnostics) => void;
 
 /**

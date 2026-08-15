@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseWinOutput, readClipboardImage } from '../../src/tui/clipboardImage.js';
+import { parseWinOutput, readClipboardImage } from '../../src/chat/clipboardImage.js';
 
 describe('Windows PowerShell 输出解析（parseWinOutput）', () => {
   it('IMG: 前缀 + base64 → 图片字节（输出含换行/空白要剥掉）', () => {

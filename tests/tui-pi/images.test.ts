@@ -2,11 +2,11 @@
  * 图片附件在 pi 侧的提交路径测试。
  *
  * 这里测的是「占位符文本 → image content block」这一段：附件池与展开逻辑是共用的
- * 纯逻辑（src/tui/imageAttachment.ts），pi 侧新增的是接线，所以断言集中在
+ * 纯逻辑（src/chat/imageAttachment.ts），pi 侧新增的是接线，所以断言集中在
  * extractImageContent 的契约上——写坏了表现为图片被当普通文本发出去，模型看不到图。
  */
 import { describe, expect, it } from 'vitest';
-import { extractImageContent, ImageAttachmentStore } from '../../src/tui/imageAttachment.js';
+import { extractImageContent, ImageAttachmentStore } from '../../src/chat/imageAttachment.js';
 
 const PNG = 'iVBORw0KGgo=';
 

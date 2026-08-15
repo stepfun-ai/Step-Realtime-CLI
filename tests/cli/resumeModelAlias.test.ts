@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveModelEntry, type StepCodeConfig } from '../../src/config/config.js';
 
 /**
- * 模拟 cli.tsx 恢复会话时的 model 别名展开逻辑。
+ * 模拟 cli.ts 恢复会话时的 model 别名展开逻辑。
  * 核心断言：session.model 保留别名（用于 resolveStartupModelAlias 反查与持久化），
  * providerModel 承载真实 id（给 provider.stream）。两者分离，避免 session.model
  * 存真实 id 时被 resolveStartupModelAlias 误反查到同名别名。
@@ -29,7 +29,7 @@ describe('cli 恢复路径：session.model 保留别名，providerModel 承载�
     const session = { model: 'explore' } as { model: string };
     let providerModel = config.model;
 
-    // 还原 cli.tsx 恢复分支
+    // 还原 cli.ts 恢复分支
     if (session.model !== '' && session.model !== config.model) {
       const resolved = resolveModelEntry(config, session.model);
       if (resolved !== null) {
@@ -107,7 +107,7 @@ describe('cli 恢复路径：session.model 保留别名，providerModel 承载�
     config.model = 'kimi-for-coding';
     config.modelAlias = 'song';
 
-    // 模拟 cli.tsx 新建会话路径
+    // 模拟 cli.ts 新建会话路径
     const session = { model: '' } as { model: string };
     let providerModel = config.model;
     if (session.model === '' || session.model === undefined) {

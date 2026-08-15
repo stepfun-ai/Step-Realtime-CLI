@@ -3,7 +3,7 @@
  *
  * 三者共用 ChoiceBlock 的选项列表交互，各自只提供正文与结果语义。
  * 危险命令模式表、diff/写入预览这些纯逻辑从 Ink 版 ApprovalPrompt.tsx 搬过来
- * （那边带 JSX，不能直接 import；M5 删除 src/tui/ 后这里就是唯一实现）。
+ * （Ink 版带 JSX 无法直接引用；Ink 层已于 M5 删除，这里是唯一实现）。
  */
 import { Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { AskUserQuestion, AskUserRequest, QuestionAnswers } from '../tools/askUser.js';

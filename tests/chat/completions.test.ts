@@ -7,7 +7,7 @@ const baseCtx = {
     'step-flash': { model: 'step-3.7-flash' },
   },
   thinkChoices: ['low', 'medium', 'high'],
-  files: ['src/tui/App.tsx', 'src/tui/PromptInput.tsx', 'src/agent/loop.ts', 'package.json'],
+  files: ['src/chat/history.ts', 'src/chat/prompt.ts', 'src/agent/loop.ts', 'package.json'],
 };
 
 describe('matchCommandNames（命令名匹配，与 matchSlashCommands 同语义）', () => {
@@ -51,10 +51,10 @@ describe('computeCompletions 三类补全', () => {
   });
 
   it('@<partial> → 文件引用（子串匹配、命中位置优先）', () => {
-    const items = computeCompletions('@App', baseCtx);
+    const items = computeCompletions('@hist', baseCtx);
     expect(items.length).toBeGreaterThan(0);
     expect(items[0]!.kind).toBe('file');
-    expect(items[0]!.insertText).toBe('@src/tui/App.tsx ');
+    expect(items[0]!.insertText).toBe('@src/chat/history.ts ');
   });
 
   it('@<partial> 无命中 → 空', () => {
@@ -66,7 +66,7 @@ describe('computeCompletions 三类补全', () => {
   });
 
   it('无 files 索引 → @ 不补全', () => {
-    expect(computeCompletions('@App', {})).toEqual([]);
+    expect(computeCompletions('@hist', {})).toEqual([]);
   });
 
   it('普通文本 → 空', () => {

@@ -202,7 +202,7 @@ describe('终态任务公开视图', () => {
 });
 
 /**
- * 会话切换换绑 tasksDir 的语义验证（对应 App.tsx /new、/fork、/resume 的换绑路径）。
+ * 会话切换换绑 tasksDir 的语义验证（对应 PiChat 的 /new、/fork、/resume 换绑路径）。
  *
  * BackgroundManager 的 tasksDir 在构造时绑定，切换会话时通过创建新实例换绑（不复用旧实例）。
  * 本组测试验证：换绑后旧目录的任务不再被新管理器纳入、新任务落到新目录、对账仅扫描当前目录。

@@ -191,3 +191,24 @@ export function showPicker(
     tui.requestRender();
   });
 }
+
+/**
+ * 启动期的会话选择器（`--resume` 不带 id 时用）。
+ *
+ * 与 PiChat 里的 `/resume` 是同一套候选构造，区别只在这里要自己起一个 TuiMainScreen：
+ * 此时 PiChat 还没创建，没有可复用的主屏。选完即 stop，屏幕让给随后启动的 PiChat。
+ */
+export async function pickSessionStandalone(metas: readonly SessionMeta[]): Promise<string | null> {
+  const { ProcessTerminal, TuiMainScreen } = await import('@earendil-works/pi-tui');
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  tui.start();
+  try {
+    return await showPicker(tui, {
+      title: '恢复会话',
+      items: sessionItems(metas),
+      hint: '↑↓ 选择 · Enter 恢复 · 输入过滤 · Esc 放弃（开新会话）',
+    });
+  } finally {
+    tui.stop();
+  }
+}

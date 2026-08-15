@@ -6,7 +6,7 @@
  * 是这两个入口文案要求不同的必然结果。code 与 i18n key 的对应由
  * tests/config/diagnostics.test.ts 双向钉住，漏加文案会变红。
  *
- * cli.tsx（非交互，写 stderr）与 App.tsx（交互，转录区 note）共用本模块，避免两条通道
+ * cli.ts（非交互，写 stderr）与 PiChat.ts（交互，转录区 note）共用本模块，避免两条通道
  * 各写一份渲染逻辑后漂移。
  */
 import type { IgnoredBadConfigFile } from '../config/config.js';

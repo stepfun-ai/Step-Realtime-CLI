@@ -1,0 +1,241 @@
+/**
+ * 首次运行引导（pi-tui 版）。
+ *
+ * 与 Ink 版 `FirstRunSetup.tsx` 同一流程与同一落盘语义：
+ * 选接入方式 → （自定义时）输 base_url → 粘贴 key → 选默认模型 → 完成。
+ *
+ * 落盘动作逐条对齐 Ink 版，这里不重新设计：
+ * - key 步骤确认时写 `[providers.<渠道>]` 的 base_url 与 api_key；
+ * - model 步骤确认时写 `[models.<别名>]` 并把顶层 model 设成该别名。
+ *   第二步不能省：顶层 model 是别名，别名必须指向 [models.*] 段，否则会出现
+ *   「配了 A 渠道但默认模型走 B 渠道」。
+ *
+ * 全程只开一个 TuiMainScreen，步骤之间换内容而不是换屏：主屏接管 stdin 与光标，
+ * 多个屏并存会争输入。
+ */
+import { Container, Editor, ProcessTerminal, TuiMainScreen } from '@earendil-works/pi-tui';
+import type { Component, TUI } from '@earendil-works/pi-tui';
+import { saveDefaultModel, saveModelAlias, saveProviderKey } from '../config/config.js';
+import { t } from '../i18n.js';
+import { showPicker } from './pickers.js';
+import { c, editorTheme } from './theme.js';
+
+export type FirstRunResult =
+  | { kind: 'configured'; apiKey: string; provider: string; model: string }
+  | { kind: 'cancel' };
+
+interface ProviderOption {
+  /** 写进 [providers.<name>] 的渠道名。 */
+  name: string;
+  /** 显示名的 i18n key。存 key 而非文案：模块级常量在 import 时求值会把语言固化。 */
+  labelKey: string;
+  baseUrl: string;
+  models: { alias: string; modelId: string; displayName: string }[];
+}
+
+const PROVIDER_OPTIONS: ProviderOption[] = [
+  {
+    name: 'stepfun-plan',
+    labelKey: 'firstRun.optionPlan',
+    baseUrl: 'https://api.stepfun.com/step_plan/v1',
+    models: [
+      { alias: 'router', modelId: 'step-router-v1', displayName: 'Step Router V1' },
+      { alias: 'step37', modelId: 'step-3.7-flash', displayName: 'Step 3.7 Flash' },
+    ],
+  },
+  {
+    name: 'stepfun',
+    labelKey: 'firstRun.optionApi',
+    baseUrl: 'https://api.stepfun.com/v1',
+    models: [
+      { alias: 'step37', modelId: 'step-3.7-flash', displayName: 'Step 3.7 Flash' },
+      { alias: 'step35', modelId: 'step-3.5-flash-2603', displayName: 'Step 3.5 Flash 2603' },
+    ],
+  },
+  { name: 'custom', labelKey: 'firstRun.optionCustom', baseUrl: 'https://', models: [] },
+];
+
+const DOCS_VALUE = '__docs__';
+const DOCS_URL =
+  'https://github.com/li-xiu-qi/Step-Realtime-CLI/blob/step-code-explore/docs/zh/quickstart.md#2-%E9%85%8D%E7%BD%AE-api-key';
+/** 自定义渠道的模型别名与默认上下文窗口（与 Ink 版同值）。 */
+const CUSTOM_ALIAS = 'custom';
+const DEFAULT_MAX_CONTEXT = 262144;
+
+/** 屏幕上方的静态说明区（标题 + 已选信息）。 */
+class Banner implements Component {
+  private lines: string[] = [];
+  setLines(lines: string[]): void {
+    this.lines = lines;
+  }
+  invalidate(): void {
+    // 无缓存：内容极短，每帧重拼比维护脏标记便宜
+  }
+  render(): string[] {
+    return this.lines;
+  }
+}
+
+/**
+ * 跑一遍引导。返回 configured 时配置已落盘，调用方只需重载配置。
+ *
+ * 步骤流转用循环而不是递归：Esc 回退是常态路径（用户想改上一步的选择），
+ * 递归实现会让回退变成栈增长。
+ */
+export async function runFirstRunPi(): Promise<FirstRunResult> {
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  const banner = new Banner();
+  banner.setLines([c.accent(t('firstRun.title')), '']);
+  tui.addChild(banner);
+  tui.start();
+  tui.requestRender();
+  try {
+    return await wizard(tui, banner);
+  } finally {
+    tui.stop();
+  }
+}
+
+async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
+  let chosen: ProviderOption | null = null;
+  let apiKey = '';
+  let step: 'select' | 'baseUrl' | 'key' | 'model' = 'select';
+
+  const setBanner = (...extra: string[]): void => {
+    banner.setLines([c.accent(t('firstRun.title')), ...extra, '']);
+    tui.requestRender();
+  };
+
+  for (;;) {
+    if (step === 'select') {
+      setBanner();
+      const picked = await showPicker(tui, {
+        title: t('firstRun.title'),
+        hint: t('firstRun.selectHint'),
+        items: [
+          ...PROVIDER_OPTIONS.map((o) => ({ value: o.name, label: t(o.labelKey), description: o.baseUrl })),
+          { value: DOCS_VALUE, label: t('firstRun.optionDocs'), description: DOCS_URL },
+        ],
+      });
+      if (picked === null) return { kind: 'cancel' };
+      if (picked === DOCS_VALUE) {
+        // 文档出口：不落盘，退出后由 cli 打印提示（stderr 在 tui.stop 之后才可靠）
+        return { kind: 'cancel' };
+      }
+      chosen = { ...PROVIDER_OPTIONS.find((o) => o.name === picked)! };
+      step = chosen.name === 'custom' ? 'baseUrl' : 'key';
+      continue;
+    }
+
+    if (step === 'baseUrl') {
+      setBanner(c.dim(`渠道：${chosen!.name}`));
+      const url = await askLine(tui, t('firstRun.baseUrlHint'), 'https://');
+      if (url === null) {
+        step = 'select';
+        continue;
+      }
+      if (url.trim() === '') continue;
+      chosen = { ...chosen!, baseUrl: url.trim() };
+      step = 'key';
+      continue;
+    }
+
+    if (step === 'key') {
+      setBanner(c.dim(`渠道：${chosen!.name} · ${chosen!.baseUrl}`));
+      const key = await askLine(tui, t('firstRun.keyHint'));
+      if (key === null) {
+        step = chosen!.name === 'custom' ? 'baseUrl' : 'select';
+        continue;
+      }
+      if (key.trim() === '') continue;
+      apiKey = key.trim();
+      // 渠道段先落盘（与 Ink 版同顺序）：模型别名在下一步写
+      saveProviderKey(chosen!.name, 'base_url', chosen!.baseUrl);
+      saveProviderKey(chosen!.name, 'api_key', apiKey);
+      step = 'model';
+      continue;
+    }
+
+    // step === 'model'
+    setBanner(c.dim(`渠道：${chosen!.name} · key 已写入配置`));
+    if (chosen!.models.length === 0) {
+      const modelId = await askLine(tui, t('firstRun.modelCustomHint'));
+      if (modelId === null) {
+        step = 'key';
+        continue;
+      }
+      if (modelId.trim() === '') continue;
+      saveModelAlias(CUSTOM_ALIAS, {
+        provider: chosen!.name,
+        model: modelId.trim(),
+        max_context_size: DEFAULT_MAX_CONTEXT,
+        display_name: modelId.trim(),
+      });
+      saveDefaultModel(CUSTOM_ALIAS);
+      return { kind: 'configured', apiKey, provider: chosen!.name, model: CUSTOM_ALIAS };
+    }
+    const picked = await showPicker(tui, {
+      title: t('firstRun.modelTitle'),
+      hint: t('firstRun.modelHint'),
+      items: chosen!.models.map((m) => ({ value: m.alias, label: m.displayName, description: m.modelId })),
+    });
+    if (picked === null) {
+      step = 'key';
+      continue;
+    }
+    const model = chosen!.models.find((m) => m.alias === picked)!;
+    // 把模型与刚配的渠道显式绑定，并把顶层 model 指向这个别名
+    saveModelAlias(model.alias, {
+      provider: chosen!.name,
+      model: model.modelId,
+      max_context_size: DEFAULT_MAX_CONTEXT,
+      display_name: model.displayName,
+    });
+    saveDefaultModel(model.alias);
+    return { kind: 'configured', apiKey, provider: chosen!.name, model: model.alias };
+  }
+}
+
+/**
+ * 单行输入。Enter 提交，Esc 返回 null（调用方决定回退到哪一步）。
+ *
+ * 用 Editor 而不是 Input：Editor 支持 bracketed paste，而 key 这一步几乎总是粘贴进来的
+ * （手打 API key 不现实），Input 对粘贴的处理是逐字符插入，长 key 会明显卡顿。
+ */
+function askLine(tui: TUI, hint: string, initial?: string): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    const host = new Container();
+    let settled = false;
+    const finish = (v: string | null): void => {
+      if (settled) return;
+      settled = true;
+      tui.removeChild(host);
+      tui.requestRender();
+      resolve(v);
+    };
+    const hintLine = new Banner();
+    hintLine.setLines([c.dim(hint)]);
+    const editor = new EscEditor(tui, editorTheme);
+    editor.onSubmit = (text) => finish(text);
+    editor.onEscapeKey = () => {
+      finish(null);
+      return true;
+    };
+    if (initial !== undefined) editor.setText(initial);
+    host.addChild(hintLine);
+    host.addChild(editor);
+    tui.addChild(host);
+    tui.setFocus(editor);
+    tui.requestRender();
+  });
+}
+
+/** Editor 子类：把 Esc 交给引导（父类只用它关补全菜单，这里没有补全）。 */
+class EscEditor extends Editor {
+  onEscapeKey?: () => boolean;
+  override handleInput(data: string): void {
+    // \x1b 单字节即 Esc；带后续字节的是方向键等序列，交给父类
+    if (data === '\x1b' && this.onEscapeKey?.() === true) return;
+    super.handleInput(data);
+  }
+}

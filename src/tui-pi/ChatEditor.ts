@@ -25,6 +25,11 @@ export class ChatEditor extends Editor {
    */
   onCtrlV?: () => boolean;
   /**
+   * Ctrl+B：把前台工具任务转后台（释放等待，进程继续跑）。返回 true 表示已消费。
+   * Editor 父类不用这个键位，接住它不破坏编辑语义。
+   */
+  onCtrlB?: () => boolean;
+  /**
    * 自动补全菜单是否打开。Editor 的补全状态是私有字段，外部读不到；M4 接补全时由
    * provider 侧回填这个标记，M1 阶段没有 provider，恒为 false。
    */
@@ -44,6 +49,9 @@ export class ChatEditor extends Editor {
     }
     if (matchesKey(data, 'ctrl+v')) {
       if (this.onCtrlV?.() === true) return;
+    }
+    if (matchesKey(data, 'ctrl+b')) {
+      if (this.onCtrlB?.() === true) return;
     }
     super.handleInput(data);
   }

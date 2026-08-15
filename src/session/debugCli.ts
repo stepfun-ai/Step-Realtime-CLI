@@ -4,7 +4,7 @@
  * 与 TUI 斜杠命令 `/export-debug-zip` 共用底层 exportDebugBundle，但这条路径纯 Node：
  * 不 import 任何 Ink/React，只构造 SessionStore、定位会话、打包，返回结构化结果。
  * 把「返回结果」与「进程退出/流写入」拆开，是为了让选中最近会话的逻辑可被单测覆盖
- * （cli.tsx 里的调用点只负责把结果落到 stdout/stderr + process.exit）。
+ * （cli.ts 里的调用点只负责把结果落到 stdout/stderr + process.exit）。
  */
 import { exportDebugBundle } from './debugBundle.js';
 import type { SessionStore } from './store.js';

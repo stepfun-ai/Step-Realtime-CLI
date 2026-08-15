@@ -1,32 +1,22 @@
 #!/usr/bin/env node
 /**
- * bin 引导入口。**本文件不得使用 JSX、不得 import 任何会拉起 react 的模块。**
+ * bin 引导入口。**本文件不得有任何静态 import。**
  *
- * `react` 与 `react-reconciler` 的 CJS 入口在 require 那一刻按 `NODE_ENV` 分流
- * （production / development 两套构建），两者必须落在同一套，错配时 reconciler
- * 的调度静默失效：ink 的 render() 正常返回、根组件从未被调用、终端零输出、
- * 无任何异常——TUI 表现为「启动即卡死在空白屏」。
+ * 职责只有一件：在任何应用模块求值之前把 `NODE_ENV` 设好，然后动态加载真实入口
+ * `./cli.js`。之所以要单独一个文件来做，是因为静态 import（以及 Ink 时代 tsc JSX
+ * transform 自动注入的 `react/jsx-runtime`）都会排在模块体之前执行——赋值写在 cli 里
+ * 就已经晚了。
  *
- * 为什么这层兜底不能放在 cli.tsx 里：tsc 的 JSX transform 会在编译产物顶部
- * 自动注入 `import { jsx } from 'react/jsx-runtime'`，排在任何源码 import 之前，
- * 于是 react 在模块体执行前已按 development 分流完毕，`./env.js` 的赋值只来得及
- * 影响 ink 拉起的 react-reconciler——恰好造成 react(dev) + reconciler(prod) 的
- * 错配。只有把设置放进一个完全不含 JSX 的引导文件、再动态加载主模块，才能保证
- * react 与 reconciler 都在 NODE_ENV 就位之后才求值。
- *
- * 所以：bin 指向本文件的编译产物（dist/main.js）；TUI/headless 的真实入口在 ./cli.tsx。
- *
- * **cli.tsx 里不再有任何 NODE_ENV 兜底，这是刻意的。** 曾经它的首个 import 是
- * `./env.js`（只做 `process.env.NODE_ENV ??= 'production'`），2026-08-03 实测证明那道
- * 兜底净有害：它在本引导路径与 bundle 路径上都是 no-op，唯一真正生效的场合是有人直跑
- * `tsx src/cli.tsx` / `node dist/cli.js`——而在那里它只够得到 reconciler、够不到已被
- * jsx-runtime 抢跑分流的 react，于是把「两包一致走 dev、能正常工作」变成「错配、静默
- * 卡死」。实测（外部一律 `env -u NODE_ENV`）：有该 import 时 stdout **0 字节**；令两包
- * 一致（NODE_ENV=development）时 stdout 2000+ 字节。故已删除 `src/env.ts` 并改为在
- * cli.tsx 顶部写明禁令。
+ * 历史：Ink 时代 `react` 与 `react-reconciler` 按 require 时的 `NODE_ENV` 分流成两套
+ * 构建，错配时 reconciler 调度静默失效（终端零字节、不抛异常，功能测试全绿）。
+ * 2026-08-03 因此确立本引导结构并删除了 `src/env.ts`。M5 移除 Ink 与 react 后那个具体
+ * 故障不再可能，结构保留的理由变成「设置点唯一 + 早于一切模块」：依赖里按 NODE_ENV
+ * 分支的代码在分发形态下一律走 production，与 bundle 的 esbuild define 折叠一致。
  *
  * 三条分发路径各自的保障：bin（本文件引导）→ 运行时先赋值再动态 import；bundle →
- * esbuild `define` 静态折叠；直跑 cli.tsx（仅开发调试）→ 不设即两包一致走 dev，可用。
+ * esbuild `define` 静态折叠；直跑 `tsx src/cli.ts`（仅开发调试）→ 不设即默认 development。
+ *
+ * 回归护栏见 tests/env.test.ts（静态断言：本文件无静态 import、先赋值后加载、cli 不设）。
  */
 
 // 不覆盖显式设置：NODE_ENV=development 运行（含 pnpm dev）仍然生效。
@@ -39,11 +29,11 @@
 // 该警告在 `scripts/build-bundle.mjs` 里被显式静音，那里记录了完整理由与实测结论。
 // **不要为消除警告改写这行的语法**：2026-08-03 实测 `process.env['NODE_ENV']`（方括号）
 // 同样被 define 匹配、警告照旧；改用 `const e = process.env; e['NODE_ENV'] ??= ...`
-// 虽能消警告，但会让 `tests/env.test.ts` 里防「cli.tsx 设置 NODE_ENV」的静态断言失效
+// 虽能消警告，但会让 `tests/env.test.ts` 里防「cli.ts 设置 NODE_ENV」的静态断言失效
 // （别名赋值无法可靠地静态识别），等于用一个真实的回归缺口换一条日志的干净。
 process.env.NODE_ENV ??= 'production';
 
-// 用 .then/catch 而非顶层 await import：cli.tsx 是顶层 await 模块，其内部任何
+// 用 .then/catch 而非顶层 await import：cli.ts 是顶层 await 模块，其内部任何
 // process.exit（如首次运行引导里用户按 Esc 取消）都发生在模块执行中途。若此处
 // 顶层 await，进程退出时 main 的 await 仍未 settle，Node 24 打
 // 「Detected unsettled top-level await」警告。改为 .then 后本模块立即执行完、
