@@ -14,6 +14,7 @@ import type { TUI } from '@earendil-works/pi-tui';
 import { PROVIDER_PRESETS, type StepCodeConfig } from '../config/config.js';
 import { appendProviderConfig, removeProviderConfig, type ModelDraft, type ProviderDraft } from '../config/tomlAppend.js';
 import { askLine, showPicker } from './pickers.js';
+import { t } from '../i18n.js';
 
 /** 列表项：自定义渠道 + 内置预设 + 新增入口。 */
 export function providerItems(config: StepCodeConfig): { value: string; label: string; description: string }[] {
@@ -26,14 +27,18 @@ export function providerItems(config: StepCodeConfig): { value: string; label: s
     items.push({
       value: `custom:${id}`,
       label: `${current}${id}`,
-      description: `${ch.type} · ${ch.baseUrl ?? '默认地址'} · ${aliases} 个别名`,
+      description: t('providerManager.itemDescription', {
+        type: ch.type,
+        baseUrl: ch.baseUrl ?? t('providerManager.defaultAddress'),
+        count: aliases,
+      }),
     });
   }
   for (const name of Object.keys(PROVIDER_PRESETS)) {
     // 预设不可删（它们不在 config.toml 里），标出来避免用户对着预设按 d
-    items.push({ value: `preset:${name}`, label: name, description: '内置预设（不可删除）' });
+    items.push({ value: `preset:${name}`, label: name, description: t('providerManager.builtinDesc') });
   }
-  items.push({ value: '__add__', label: '+ 新增渠道', description: '手动录入 id / 协议 / 地址 / 密钥 / 模型' });
+  items.push({ value: '__add__', label: t('providerManager.cta'), description: t('providerManager.addDescription') });
   return items;
 }
 
@@ -56,24 +61,24 @@ export async function openProviderManager(
   notify: (text: string) => void,
 ): Promise<ProviderPickResult> {
   const picked = await showPicker(tui, {
-    title: '渠道管理',
+    title: t('providerManager.title'),
     items: providerItems(config),
-    hint: '↑↓ 选择 · Enter 切换 · d 删除自定义渠道 · Esc 取消',
+    hint: t('providerManager.hint'),
     onKey: (data, selected, overlay) => {
       if (data !== 'd' || selected === null) return false;
       if (!selected.value.startsWith('custom:')) {
-        notify('内置预设不在 config.toml 里，删不了（要停用就切到别的渠道）');
+        notify(t('providerManager.cannotDeleteBuiltin'));
         return true;
       }
       const id = selected.value.slice(7);
       void (async () => {
-        const answer = await askLine(tui, `删除渠道 ${id} 及其模型别名？输入 y 确认`);
+        const answer = await askLine(tui, t('providerManager.deleteConfirm', { id }));
         if (answer !== null && answer.trim().toLowerCase() === 'y') {
           try {
             const res = await removeProviderConfig(id);
-            notify(`已删除渠道 ${id}（备份：${res.backupPath ?? '无'}），用 /reload 让改动生效`);
+            notify(t('providerManager.deleted', { id, backup: res.backupPath ?? t('app.provider.noBaseUrl') }));
           } catch (e) {
-            notify(`删除失败：${(e as Error).message}`);
+            notify(t('app.provider.deleteFailed', { message: (e as Error).message }));
           }
         }
         tui.setFocus(overlay);
@@ -97,31 +102,31 @@ export async function runProviderWizard(
   config: StepCodeConfig,
   notify: (text: string) => void,
 ): Promise<ProviderPickResult> {
-  const id = await askLine(tui, '渠道 id（用于 [providers.<id>]，如 my-openai）');
+  const id = await askLine(tui, t('providerWizard.ask.id'));
   if (id === null || id.trim() === '') return { kind: 'cancelled' };
   if ((config.providers ?? {})[id.trim()] !== undefined) {
-    notify(`渠道 ${id.trim()} 已存在（要改配置请直接编辑 config.toml）`);
+    notify(t('providerWizard.err.idExists', { id: id.trim() }));
     return { kind: 'cancelled' };
   }
   const type = await showPicker(tui, {
-    title: '协议类型',
+    title: t('providerWizard.ask.type'),
     items: Object.keys(PROVIDER_PRESETS).map((name) => ({
       value: name,
       label: name,
-      description: `按 ${name} 预设的协议与默认地址`,
+      description: t('providerWizard.type.presetDesc', { name }),
     })),
-    hint: '↑↓ 选择 · Enter 确认 · Esc 取消',
+    hint: t('providerWizard.hint.select'),
   });
   if (type === null) return { kind: 'cancelled' };
-  const baseUrl = await askLine(tui, 'base_url（留空用该协议的默认地址）', 'https://');
+  const baseUrl = await askLine(tui, t('providerWizard.ask.baseUrl'), 'https://');
   if (baseUrl === null) return { kind: 'cancelled' };
-  const apiKey = await askLine(tui, 'API key（直接粘贴；留空则稍后自己填 config.toml）');
+  const apiKey = await askLine(tui, t('providerWizard.ask.apiKey'));
   if (apiKey === null) return { kind: 'cancelled' };
-  const model = await askLine(tui, '模型 id（真实模型名，如 gpt-4o）');
+  const model = await askLine(tui, t('providerWizard.ask.modelId'));
   if (model === null || model.trim() === '') return { kind: 'cancelled' };
-  const alias = await askLine(tui, `别名（/model 里显示的名字，留空用 ${model.trim()}）`);
+  const alias = await askLine(tui, t('providerWizard.ask.displayName', { model: model.trim() }));
   if (alias === null) return { kind: 'cancelled' };
-  const ctxText = await askLine(tui, '上下文窗口大小（token 数，留空不声明）');
+  const ctxText = await askLine(tui, t('providerWizard.ask.maxContext'));
   if (ctxText === null) return { kind: 'cancelled' };
 
   const provider: ProviderDraft = {
@@ -138,14 +143,18 @@ export async function runProviderWizard(
   };
   try {
     const res = await appendProviderConfig({ provider, models: [draft] });
+    const backupSuffix = res.backupPath !== undefined ? t('providerManager.addedBackup', { backup: res.backupPath }) : '';
     notify(
-      `已写入渠道 ${provider.id}（别名：${res.aliases.join(', ')}）到 ${res.configPath}` +
-        (res.backupPath !== undefined ? `，备份 ${res.backupPath}` : '') +
-        '。用 /reload 让它生效',
+      t('providerManager.added', {
+        id: provider.id,
+        aliases: res.aliases.join(', '),
+        configPath: res.configPath,
+        backup: backupSuffix,
+      }),
     );
     return { kind: 'added', aliases: res.aliases };
   } catch (e) {
-    notify(`写入失败，配置未改动：${(e as Error).message}`);
+    notify(t('providerManager.addFailed', { message: (e as Error).message }));
     return { kind: 'cancelled' };
   }
 }
