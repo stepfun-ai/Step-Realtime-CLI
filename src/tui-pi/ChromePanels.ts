@@ -20,6 +20,7 @@ import {
   selectVisibleTodos,
 } from '../chat/chromePanels.js';
 import { c } from './theme.js';
+import { t } from '../i18n.js';
 
 export class ChromePanels implements Component {
   private todos: readonly TodoItem[] = [];
@@ -49,7 +50,7 @@ export class ChromePanels implements Component {
 export function renderTodos(todos: readonly TodoItem[], width: number): string[] {
   if (todos.length === 0) return [];
   const visible = selectVisibleTodos(todos);
-  const out = [c.toolName('待办')];
+  const out = [c.toolName(t('panel.todo.title'))];
   for (const td of visible) {
     const mark = td.status === 'done' ? c.ok('✓') : td.status === 'in_progress' ? c.toolName('●') : c.dim('○');
     const title = td.status === 'done' ? c.dim(td.title) : td.status === 'in_progress' ? td.title : c.dim(td.title);
@@ -59,10 +60,10 @@ export function renderTodos(todos: readonly TodoItem[], width: number): string[]
   const hidden = hiddenTodoCounts(todos, visible);
   if (hidden.total > 0) {
     const parts: string[] = [];
-    if (hidden.inProgress > 0) parts.push(`${hidden.inProgress} 进行中`);
-    if (hidden.pending > 0) parts.push(`${hidden.pending} 待办`);
-    if (hidden.done > 0) parts.push(`${hidden.done} 已完成`);
-    out.push(c.dim(truncateToWidth(`  … 还有 ${hidden.total} 条（${parts.join(' · ')}）`, width)));
+    if (hidden.inProgress > 0) parts.push(t('panel.todo.inProgress', { count: hidden.inProgress }));
+    if (hidden.pending > 0) parts.push(t('panel.todo.pending', { count: hidden.pending }));
+    if (hidden.done > 0) parts.push(t('panel.todo.done', { count: hidden.done }));
+    out.push(c.dim(truncateToWidth(t('panel.todo.more', { count: hidden.total, parts: parts.join(' · ') }), width)));
   }
   return out;
 }
@@ -72,15 +73,15 @@ export function renderQueue(queue: readonly string[], width: number): string[] {
   if (queue.length === 0) return [];
   const shown = queue.slice(0, QUEUE_MAX_ITEMS);
   const rest = queue.length - shown.length;
-  const out = [c.dim(`发送队列（${queue.length} 条，回合结束后按序发送）`)];
+  const out = [c.dim(t('panel.queue.title', { count: queue.length }))];
   for (const q of shown) {
     const lines = previewQueueEntry(q).split('\n');
     lines.forEach((line, j) => {
       out.push(c.dim(truncateToWidth(`${j === 0 ? '  ↳ ' : '    '}${line}`, width)));
     });
   }
-  if (rest > 0) out.push(c.dim(`  … 还有 ${rest} 条`));
+  if (rest > 0) out.push(c.dim(t('panel.queue.more', { count: rest })));
   // 取回键位是 Esc（pi 版语义：busy 时 Esc 中断，空闲时 Esc 把队列合并回输入框）
-  out.push(c.dim('  Esc 取回到输入框'));
+  out.push(c.dim(t('panel.queue.recall')));
   return out;
 }
