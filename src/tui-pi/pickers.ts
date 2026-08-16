@@ -364,6 +364,39 @@ export class Banner implements Component {
  * 键位提示放输入框下方而不是拼进 hint：位置与主界面输入框的 footer 提示同口径，
  * 用户找键位提示时看的是同一个地方。
  */
+/**
+ * 带校验的单行输入：非法值当场报错重问，不推进流程。
+ *
+ * 语义对齐 Ink 版 ProviderWizard 的 `submitText`——**校验失败只置行内错误，不清输入现场**。
+ * pi 版的 askLine 是一次性 Promise，所以循环里把上次输入回填成 initial 来还原现场，
+ * 否则用户填错一个字符要整条重打。
+ *
+ * 没有这层时，新增渠道向导的行为是：非法值静默接受（base_url 少了 http:// 也照写盘），
+ * 或者按 Esc 取消掉整个七步流程（填到最后一步才发现填错，前六步全白填）。
+ *
+ * @param validate 返回错误文案表示不通过，返回 null 表示放行。收到的是 trim 后的值。
+ */
+export async function askValidated(
+  tui: TUI,
+  hint: string,
+  validate: (value: string) => string | null,
+  opts: { initial?: string; keyHint?: string } = {},
+): Promise<string | null> {
+  let initial = opts.initial;
+  let error: string | undefined;
+  for (;;) {
+    // 错误占的是键位提示那一行：位置与主界面输入框的 footer 提示同口径，用户找反馈看同一处
+    const footer = error !== undefined ? c.error(error) : (opts.keyHint ?? t('providerWizard.hint.text'));
+    const raw = await askLine(tui, hint, initial, footer);
+    if (raw === null) return null;
+    const value = raw.trim();
+    const msg = validate(value);
+    if (msg === null) return value;
+    error = msg;
+    initial = raw;
+  }
+}
+
 export function askLine(tui: TUI, hint: string, initial?: string, keyHint?: string): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     const host = new Container();

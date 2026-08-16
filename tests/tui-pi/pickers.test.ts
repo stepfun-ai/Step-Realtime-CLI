@@ -6,7 +6,9 @@
  */
 import chalk from 'chalk';
 import { describe, expect, it } from 'vitest';
-import { PickerOverlay, modelItems, relativeTime, sessionItems, thinkItems } from '../../src/tui-pi/pickers.js';
+import { TuiMainScreen } from '@earendil-works/pi-tui';
+import type { Terminal } from '@earendil-works/pi-tui';
+import { PickerOverlay, askValidated, modelItems, relativeTime, sessionItems, thinkItems } from '../../src/tui-pi/pickers.js';
 import type { SessionMeta } from '../../src/session/store.js';
 import type { StepCodeConfig } from '../../src/config/config.js';
 
@@ -342,5 +344,101 @@ describe('PickerOverlay 额外键位与 setItems（会话选择器的删除/重�
     expect(lines[0]).toContain('过滤：a');
     expect(lines.join('\n')).toContain('alpha');
     expect(lines.join('\n')).not.toContain('beta');
+  });
+});
+
+/** 驱动 askValidated 需要一个能收输出、能喂输入的终端。 */
+class FakeTerminal implements Terminal {
+  columns = 80;
+  rows = 24;
+  readonly writes: string[] = [];
+  kittyProtocolActive = false;
+  private onInput: ((data: string) => void) | undefined;
+
+  start(onInput: (data: string) => void): void {
+    this.onInput = onInput;
+  }
+  stop(): void {}
+  async drainInput(): Promise<void> {}
+  write(data: string): void {
+    this.writes.push(data);
+  }
+  moveBy(): void {}
+  hideCursor(): void {}
+  showCursor(): void {}
+  clearLine(): void {}
+  clearFromCursor(): void {}
+  clearScreen(): void {}
+  setTitle(): void {}
+  setProgress(): void {}
+  send(data: string): void {
+    this.onInput?.(data);
+  }
+  allOutput(): string {
+    return this.writes.join('');
+  }
+  reset(): void {
+    this.writes.length = 0;
+  }
+}
+
+describe('askValidated（带校验的单行输入）', () => {
+  function mk(): { term: FakeTerminal; tui: TuiMainScreen } {
+    const term = new FakeTerminal();
+    const tui = new TuiMainScreen(term);
+    tui.start();
+    return { term, tui };
+  }
+  /** 等一个宏任务，让 askLine 内部的 Promise 与渲染跑完。 */
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+  it('合法值直接返回（trim 后）', async () => {
+    const { term, tui } = mk();
+    const p = askValidated(tui, '渠道 id', () => null);
+    await tick();
+    term.send('  my-gw  ');
+    term.send(ENTER);
+    await expect(p).resolves.toBe('my-gw');
+  });
+
+  /**
+   * 这条是本函数存在的理由：非法值不能推进流程，也不能清掉用户已经打的内容。
+   * Ink 版 ProviderWizard 的 submitText 就是「只置行内错误、不清输入现场」，
+   * pi 版的 askLine 是一次性 Promise，靠回填 initial 还原现场。
+   */
+  it('非法值：报错并重问，且保留上次输入（不用整条重打）', async () => {
+    const { term, tui } = mk();
+    const seen: string[] = [];
+    const p = askValidated(tui, 'base_url', (v) => {
+      seen.push(v);
+      return /^https?:\/\//.test(v) ? null : 'base_url 需以 http:// 或 https:// 开头';
+    });
+    await tick();
+    term.send('ftp://x');
+    term.send(ENTER);
+    await tick();
+    // 错误已经画出来
+    expect(term.allOutput()).toContain('需以 http://');
+    // 现场还在：上次输入被回填，只补前缀即可
+    expect(term.allOutput()).toContain('ftp://x');
+    term.reset();
+    // 第二次输入合法 → 返回
+    term.send('\x15'); // Ctrl+U 清行，模拟用户改写
+    term.send('https://ok.example');
+    term.send(ENTER);
+    await expect(p).resolves.toBe('https://ok.example');
+    // validate 被调用两次，说明第一次真的没放行
+    expect(seen).toEqual(['ftp://x', 'https://ok.example']);
+  });
+
+  it('Esc 返回 null（校验循环不吞取消）', async () => {
+    const { term, tui } = mk();
+    const p = askValidated(tui, '渠道 id', () => '永远不合法');
+    await tick();
+    term.send('whatever');
+    term.send(ENTER);
+    await tick();
+    term.send(ESC);
+    await expect(p).resolves.toBeNull();
   });
 });

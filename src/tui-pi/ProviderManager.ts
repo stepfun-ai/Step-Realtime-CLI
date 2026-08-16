@@ -13,7 +13,7 @@
 import type { TUI } from '@earendil-works/pi-tui';
 import { PROVIDER_PRESETS, type StepCodeConfig } from '../config/config.js';
 import { appendProviderConfig, removeProviderConfig, type ModelDraft, type ProviderDraft } from '../config/tomlAppend.js';
-import { askLine, showPicker } from './pickers.js';
+import { askLine, askValidated, showPicker } from './pickers.js';
 import { t } from '../i18n.js';
 
 /** 列表项：自定义渠道 + 内置预设 + 新增入口。 */
@@ -94,6 +94,19 @@ export async function openProviderManager(
 }
 
 /**
+ * 各协议的 base_url 约定说明。写成显式表而不是拼 `type.${protocol}Desc`：
+ * 字面量能被 i18n 孤儿扫描认出「在用」，动态拼接会让这三条看起来像没人调用。
+ *
+ * 键是 PROVIDER_PRESETS 里的 protocol（不是 preset 名）——stepfun 走 anthropic 协议，
+ * 说明也该是 anthropic 那条。base_url 带不带 /v1 是这一步最容易配错的地方，值得逐条说清。
+ */
+const PROTOCOL_DESC_KEY: Record<string, string> = {
+  anthropic: 'providerWizard.type.anthropicDesc',
+  openai: 'providerWizard.type.openaiDesc',
+  openai_responses: 'providerWizard.type.openaiResponsesDesc',
+};
+
+/**
  * 新增渠道向导：逐项问 id → 协议 → base_url → 密钥 → 模型 id → 别名 → 窗口大小。
  * 任一步 Esc 取消整个流程（中途取消不写盘，配置保持原样）。
  */
@@ -102,43 +115,68 @@ export async function runProviderWizard(
   config: StepCodeConfig,
   notify: (text: string) => void,
 ): Promise<ProviderPickResult> {
-  const id = await askLine(tui, t('providerWizard.ask.id'));
-  if (id === null || id.trim() === '') return { kind: 'cancelled' };
-  if ((config.providers ?? {})[id.trim()] !== undefined) {
-    notify(t('providerWizard.err.idExists', { id: id.trim() }));
-    return { kind: 'cancelled' };
-  }
+  const existing = config.providers ?? {};
+  // id 重复当场重问，而不是 notify 一句就把整个流程取消掉——用户想要的是换个 id 继续
+  const id = await askValidated(tui, t('providerWizard.ask.id'), (v) => {
+    if (v === '') return t('providerWizard.err.empty');
+    if (!/^[a-z0-9_-]+$/.test(v)) return t('providerWizard.err.idChars');
+    if (existing[v] !== undefined) return t('providerWizard.err.idExists', { id: v });
+    return null;
+  });
+  if (id === null) return { kind: 'cancelled' };
   const type = await showPicker(tui, {
     title: t('providerWizard.ask.type'),
-    items: Object.keys(PROVIDER_PRESETS).map((name) => ({
-      value: name,
-      label: name,
-      description: t('providerWizard.type.presetDesc', { name }),
-    })),
-    hint: t('providerWizard.hint.select'),
+    items: Object.keys(PROVIDER_PRESETS).map((name) => {
+      const descKey = PROTOCOL_DESC_KEY[PROVIDER_PRESETS[name]!.protocol];
+      return {
+        value: name,
+        label: name,
+        // 协议说明比「按 X 预设的协议与默认地址」有信息量：它直接回答 base_url 要不要带 /v1
+        description: descKey !== undefined ? t(descKey) : t('providerWizard.type.presetDesc', { name }),
+      };
+    }),
+    hint: t('providerWizard.hint.pick'),
   });
   if (type === null) return { kind: 'cancelled' };
-  const baseUrl = await askLine(tui, t('providerWizard.ask.baseUrl'), 'https://');
+  // base_url 允许留空（此时继承 preset 的默认地址），但一旦填了就必须是合法 URL：
+  // 'https://' 这个初始值等于没填，不能当成用户的输入
+  const baseUrl = await askValidated(
+    tui,
+    t('providerWizard.ask.baseUrl'),
+    (v) => (v === '' || v === 'https://' || /^https?:\/\//i.test(v) ? null : t('providerWizard.err.url')),
+    { initial: 'https://' },
+  );
   if (baseUrl === null) return { kind: 'cancelled' };
-  const apiKey = await askLine(tui, t('providerWizard.ask.apiKey'));
+  // 密钥可留空：pi 版还没做 keyMode 三选，空值等价于「暂不配置」，运行时按 type 的惯例环境变量找
+  const apiKey = await askLine(tui, t('providerWizard.ask.apiKey'), undefined, t('providerWizard.hint.text'));
   if (apiKey === null) return { kind: 'cancelled' };
-  const model = await askLine(tui, t('providerWizard.ask.modelId'));
-  if (model === null || model.trim() === '') return { kind: 'cancelled' };
-  const alias = await askLine(tui, t('providerWizard.ask.displayName', { model: model.trim() }));
+  const model = await askValidated(tui, t('providerWizard.ask.modelId'), (v) =>
+    v === '' ? t('providerWizard.err.empty') : null,
+  );
+  if (model === null) return { kind: 'cancelled' };
+  const alias = await askLine(
+    tui,
+    t('providerWizard.ask.displayName', { model }),
+    undefined,
+    t('providerWizard.hint.text'),
+  );
   if (alias === null) return { kind: 'cancelled' };
-  const ctxText = await askLine(tui, t('providerWizard.ask.maxContext'));
+  const ctxText = await askValidated(tui, t('providerWizard.ask.maxContext'), (v) =>
+    v === '' || (/^\d+$/.test(v) && Number(v) > 0) ? null : t('providerWizard.err.number'),
+  );
   if (ctxText === null) return { kind: 'cancelled' };
 
+  // askValidated 返回的已是 trim 后的值；askLine 的两个（apiKey/alias）仍需自己 trim
   const provider: ProviderDraft = {
-    id: id.trim(),
+    id,
     type,
-    ...(baseUrl.trim() !== '' && baseUrl.trim() !== 'https://' ? { baseUrl: baseUrl.trim() } : {}),
+    ...(baseUrl !== '' && baseUrl !== 'https://' ? { baseUrl } : {}),
     ...(apiKey.trim() !== '' ? { apiKey: apiKey.trim() } : {}),
   };
-  const maxContextSize = Number.parseInt(ctxText.trim(), 10);
+  const maxContextSize = Number.parseInt(ctxText, 10);
   const draft: ModelDraft = {
-    alias: alias.trim() === '' ? model.trim() : alias.trim(),
-    model: model.trim(),
+    alias: alias.trim() === '' ? model : alias.trim(),
+    model,
     ...(Number.isFinite(maxContextSize) && maxContextSize > 0 ? { maxContextSize } : {}),
   };
   try {
