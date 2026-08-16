@@ -98,7 +98,7 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
       setBanner();
       const picked = await showPicker(tui, {
         title: t('firstRun.title'),
-        hint: t('firstRun.selectHint'),
+        hint: t('firstRun.hint'),
         items: [
           ...PROVIDER_OPTIONS.map((o) => ({ value: o.name, label: t(o.labelKey), description: o.baseUrl })),
           { value: DOCS_VALUE, label: t('firstRun.optionDocs'), description: DOCS_URL },
@@ -115,7 +115,7 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
     }
 
     if (step === 'baseUrl') {
-      setBanner(c.dim(`渠道：${chosen!.name}`));
+      setBanner(c.dim(t('firstRun.confirmProvider', { label: chosen!.name })));
       const url = await askLine(tui, t('firstRun.baseUrlHint'), 'https://');
       if (url === null) {
         step = 'select';
@@ -128,8 +128,12 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
     }
 
     if (step === 'key') {
-      setBanner(c.dim(`渠道：${chosen!.name} · ${chosen!.baseUrl}`));
-      const key = await askLine(tui, t('firstRun.keyHint'));
+      setBanner(
+        c.dim(
+          `${t('firstRun.confirmProvider', { label: chosen!.name })} · ${t('firstRun.confirmBaseUrl', { url: chosen!.baseUrl })}`,
+        ),
+      );
+      const key = await askLine(tui, t('firstRun.pasteHint'));
       if (key === null) {
         step = chosen!.name === 'custom' ? 'baseUrl' : 'select';
         continue;
@@ -144,9 +148,11 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
     }
 
     // step === 'model'
-    setBanner(c.dim(`渠道：${chosen!.name} · key 已写入配置`));
+    setBanner(
+      c.dim(`${t('firstRun.confirmProvider', { label: chosen!.name })} · ${t('firstRun.keySaved')}`),
+    );
     if (chosen!.models.length === 0) {
-      const modelId = await askLine(tui, t('firstRun.modelCustomHint'));
+      const modelId = await askLine(tui, t('firstRun.customModelHint'));
       if (modelId === null) {
         step = 'key';
         continue;

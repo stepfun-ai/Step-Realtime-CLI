@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -58,6 +58,59 @@ describe('i18n 表结构守卫（源码级）', () => {
   it('key 定义统一用单引号（混用会让按引号写的检索式漏检）', () => {
     const doubleQuoted = [...i18nSrc.matchAll(/^\s*"([a-zA-Z][\w.-]*)"\s*:/gm)].map((m) => m[1]!);
     expect(doubleQuoted, '这些 key 用了双引号，请改单引号').toEqual([]);
+  });
+
+  /**
+   * 反向守卫：源码里 t() 调用的 key 必须在表里。
+   *
+   * t() 找不到 key 时的兜底是 `?? key`（返回 key 本身），所以拼错或漏加不会报错、不会抛异常，
+   * 而是把开发者字符串直接画到用户界面上。2026-08-16 实测就撞到了：首次运行向导第一屏的
+   * hint 行显示的是字面的 `firstRun.selectHint`，三处（selectHint / keyHint / modelCustomHint）
+   * 全是重写 pi 版 FirstRun 时写了表里不存在的名字，而表里一直有等价文案（hint / pasteHint /
+   * customModelHint）。
+   *
+   * 这类缺陷靠肉眼撞见的成本太高——它只在走到那个分支时才可见，而首次运行向导恰好是最少被
+   * 走到的路径之一。所以固化成断言。
+   */
+  it('源码里 t() 调用的 key 全部在表里（拼错会把 key 名画到界面上）', () => {
+    const srcDir = join(__dirname, '..', 'src');
+    /** t( 左边界：不加会把 get( / toString( / import( 的尾字母 t 也匹配上。 */
+    const T_CALL = /(?<![a-zA-Z0-9_$.])t\(\s*'([a-zA-Z][\w.-]*)'/g;
+    /** t(`prefix.${x}`) 这类动态 key 无法静态确定，按前缀整段跳过。 */
+    const DYN_PREFIX = /(?<![a-zA-Z0-9_$.])t\(\s*(?:`([a-zA-Z][\w.-]*\.)\$\{|'([a-zA-Z][\w.-]*\.)'\s*\+)/g;
+
+    function walk(dir: string): string[] {
+      return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) return walk(p);
+        return e.isFile() && e.name.endsWith('.ts') && p !== join(srcDir, 'i18n.ts') ? [p] : [];
+      });
+    }
+
+    const defined = new Set(Object.keys(I18N_TABLES.zh));
+    const dynPrefixes = new Set<string>();
+    const calls: { key: string; file: string }[] = [];
+    for (const file of walk(srcDir)) {
+      const src = readFileSync(file, 'utf8');
+      for (const m of src.matchAll(DYN_PREFIX)) dynPrefixes.add((m[1] ?? m[2])!);
+      for (const m of src.matchAll(T_CALL)) calls.push({ key: m[1]!, file: file.slice(srcDir.length + 1) });
+    }
+
+    // 检索式自验：抓不到已知存在的调用就说明匹配式坏了，此时「无缺失」是假绿
+    expect(calls.length, 't() 调用一处都没抓到，检索式失效').toBeGreaterThan(200);
+    expect(calls.some((x) => x.key === 'firstRun.hint'), '抓不到已知的 t() 调用，检索式失效').toBe(true);
+
+    const missing = calls
+      .filter((x) => !defined.has(x.key) && ![...dynPrefixes].some((p) => x.key.startsWith(p)))
+      .map((x) => `${x.key} @ ${x.file}`)
+      .sort();
+    expect([...new Set(missing)], '这些 key 被 t() 调用但表里没有，界面会显示 key 名').toEqual([]);
+
+    // 动态前缀的成员也要在表里（这批逃过了上面的静态检查）
+    for (const prefix of dynPrefixes) {
+      const members = [...defined].filter((k) => k.startsWith(prefix));
+      expect(members.length, `动态前缀 ${prefix} 在表里没有任何成员`).toBeGreaterThan(0);
+    }
   });
 });
 
