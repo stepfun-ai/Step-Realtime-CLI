@@ -342,6 +342,10 @@ export class PiChat {
     // 绑一个读 this.busy 的函数，而不是在 6 处 setBusy 调用点各改一次——那种写法
     // 漏一处就出现「回合在跑但提示符还是灰的」这类状态不同步。
     this.editor.promptStyle = (s) => (this.busy ? c.bold(c.warn(s)) : c.bold(c.dim(s)));
+    // 空输入时的占位文案。busy 那句是行为说明（此时打字会进发送队列而不是立刻发出），
+    // 与提示符同样绑成读 this.busy 的函数，两者状态天然一致。
+    this.editor.placeholderStyle = (s) => c.dim(s);
+    this.editor.placeholderText = () => t(this.busy ? 'input.placeholder.busy' : 'input.placeholder.idle');
     // Ctrl+V / Alt+V 读剪贴板图片。busy 时也允许：只往输入框草稿追加占位符，不碰在跑的回合
     // （提交走排队路径，drain 时统一展开成图）。
     // 两个键位同一动作：Alt+V 是 Ink 版主仓的键位（用户肌肉记忆），Ctrl+V 兜住 Alt 被

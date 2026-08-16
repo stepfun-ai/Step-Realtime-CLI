@@ -9,7 +9,15 @@
  *
  * Ctrl+C 同理：父类对它的处理就是 `return`（交给父级），我们在这里接住。
  */
-import { Editor, type EditorOptions, type EditorTheme, matchesKey, type TUI } from '@earendil-works/pi-tui';
+import {
+  Editor,
+  type EditorOptions,
+  type EditorTheme,
+  matchesKey,
+  truncateToWidth,
+  type TUI,
+  visibleWidth,
+} from '@earendil-works/pi-tui';
 
 /**
  * 输入提示符。用 `›`（U+203A）与 Ink 版 `PromptInput` 一致——它比 `>` 窄一格的视觉重量，
@@ -20,6 +28,11 @@ export const PROMPT_SYMBOL = '› ';
 export const PROMPT_WIDTH = 2;
 /** paddingX 产生的行首空白，render 里用它定位要覆盖的那几列。 */
 const PROMPT_PAD = ' '.repeat(PROMPT_WIDTH);
+/**
+ * pi-tui 画光标用的反显序列（实测 2026-08-16）。占位文案要插在它之后，
+ * 否则会挤在光标前面看着像已输入的内容。
+ */
+const CURSOR_SEQ = '\x1b[7m \x1b[0m';
 
 export class ChatEditor extends Editor {
   /** 返回 true 表示控制器已消费这次 Esc，不再下传给编辑器。 */
@@ -68,6 +81,18 @@ export class ChatEditor extends Editor {
    * 测试与不着色场景下输出可读的纯文本。
    */
   promptStyle: (s: string) => string = (s) => s;
+  /**
+   * 空输入时显示的占位文案（返回空串表示不显示）。
+   *
+   * 定义成函数而不是字符串字段，与 `promptStyle` 同构：控制器绑一次、内部读 busy，
+   * 不需要在每个状态切换点回写一遍（漏一处就出现文案与状态不符）。
+   *
+   * busy 态那句（「思考中…输入将加入发送队列」）是**行为说明**而非装饰：此时打字会进
+   * 发送队列而不是立刻发出，不说用户不知道。Ink 版一直有这两句文案，pi 版迁移时没接。
+   */
+  placeholderText: () => string = () => '';
+  /** 占位文案着色，默认原样。 */
+  placeholderStyle: (s: string) => string = (s) => s;
 
   constructor(tui: TUI, theme: EditorTheme, options?: EditorOptions) {
     // paddingX 固定 2：给提示符腾出 '› ' 的两列。选它而不是「渲染后整行拼前缀」的理由是
@@ -92,8 +117,36 @@ export class ChatEditor extends Editor {
     if (lines.length < 3) return lines;
     const first = lines[1]!;
     if (!first.startsWith(PROMPT_PAD)) return lines; // padding 被外部改过，不硬塞
-    lines[1] = this.promptStyle(PROMPT_SYMBOL) + first.slice(PROMPT_PAD.length);
+    lines[1] = this.promptStyle(PROMPT_SYMBOL) + this.withPlaceholder(first, width).slice(PROMPT_PAD.length);
     return lines;
+  }
+
+  /**
+   * 空输入时把占位文案画在光标之后。
+   *
+   * 依赖 pi-tui 用反显字符（`\x1b[7m \x1b[0m`）表示光标这一实现细节：找到那段序列，
+   * 在它之后插入文案，再从行尾裁掉等显示宽度的空白，**行宽保持不变**——差分渲染按行
+   * 比对，行宽变了会牵连边框对齐。
+   *
+   * 找不到光标序列（pi-tui 换了光标画法）时原样返回：宁可没有占位文案，也不要插错位置
+   * 把输入行画坏。
+   */
+  private withPlaceholder(line: string, width: number): string {
+    const ph = this.placeholderText();
+    if (ph === '' || this.getText() !== '') return line;
+    const at = line.indexOf(CURSOR_SEQ);
+    if (at < 0) return line;
+    const insertAt = at + CURSOR_SEQ.length;
+    const head = line.slice(0, insertAt);
+    const tail = line.slice(insertAt);
+    // 可用宽度 = 总宽 - 提示符 - 光标 1 列；再留 1 列余量，避免正好顶到右边框
+    const room = width - PROMPT_WIDTH - 1 - 1;
+    if (room <= 0) return line;
+    const text = truncateToWidth(ph, room, '…');
+    const w = visibleWidth(text);
+    // 尾部是父类补的空白，裁掉与文案等宽的部分即可保持行宽
+    const trimmed = tail.length >= w ? tail.slice(w) : '';
+    return head + this.placeholderStyle(text) + trimmed;
   }
 
   override handleInput(data: string): void {
