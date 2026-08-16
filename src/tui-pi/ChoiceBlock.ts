@@ -11,6 +11,7 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { matchesKey, parseKey, truncateToWidth } from '@earendil-works/pi-tui';
 import { c } from './theme.js';
+import { t } from '../i18n.js';
 
 export interface Choice<T> {
   label: string;
@@ -50,7 +51,7 @@ export abstract class ChoiceBlock<T> implements Component {
   protected abstract onCancel(): void;
   /** 底部提示行。 */
   protected hintLine(): string {
-    return '↑↓ 选择 · Enter 确认 · 数字直选 · Esc 取消';
+    return t('choice.hint');
   }
 
   protected settle(fn: () => void): void {
@@ -150,7 +151,7 @@ export abstract class ChoiceBlock<T> implements Component {
       const on = i === this.selected;
       const prefix = on ? c.toolName('▶ ') : '  ';
       if (on && this.feedbackMode) {
-        const text = this.feedbackText === '' ? c.dim('（输入原因后回车）') : this.feedbackText;
+        const text = this.feedbackText === '' ? c.dim(t('choice.feedbackPlaceholder')) : this.feedbackText;
         return truncateToWidth(`${prefix}${i + 1}. ${choice.label}: ${text}▌`, width);
       }
       const label = on ? c.toolName(choice.label) : choice.label;

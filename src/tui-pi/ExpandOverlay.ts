@@ -22,6 +22,7 @@ import { matchesKey, type Component, type TUI } from '@earendil-works/pi-tui';
 import { collectExpandable, sectionsFromGroups, type TurnGroup } from '../chat/expandable.js';
 import type { DisplayItem } from '../chat/types.js';
 import { c } from './theme.js';
+import { t } from '../i18n.js';
 
 /** 把一条可展开条目渲染成纯文本行（查看器里不折叠，全文铺开）。 */
 export type EntryRenderer = (item: Extract<DisplayItem, { kind: 'tool' | 'thinking' }>, width: number) => string[];
@@ -99,11 +100,11 @@ export class ExpandOverlay implements Component {
     const view = this.lines.slice(this.offset, this.offset + this.viewRows);
     const body = view.map((l) => (l.startsWith('── ') ? c.accent(l) : l));
     const title = c.accent(
-      `查看器 · ${this.turnStarts.length} 轮 · ${this.entryCount} 条 · 共 ${this.lines.length} 行`,
+      t('expandOverlay.title', { turns: this.turnStarts.length, count: this.entryCount, lines: this.lines.length }),
     );
     const from = this.lines.length === 0 ? 0 : this.offset + 1;
     const to = Math.min(this.offset + this.viewRows, this.lines.length);
-    const keys = '↑↓/jk 滚动 · PgUp/PgDn 翻页 · ←→ 轮次 · g/G 首尾 · Esc/q/Ctrl+O 关闭';
+    const keys = t('expandOverlay.footer');
     const pos = `${from}-${to}/${this.lines.length}`;
     const gap = Math.max(1, width - keys.length - pos.length);
     const footer = c.dim(keys + ' '.repeat(gap) + pos);
