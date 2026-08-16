@@ -20,7 +20,13 @@ export const c = {
   assistant: (s: string) => s,
   thinking: chalk.dim,
   toolName: chalk.cyan,
-  toolArg: chalk.dim,
+  // 工具参数：gray（SGR 90）而非 dim（SGR 2）。两者观感差很多——SGR 2 是「降低亮度」，
+  // 具体效果由终端决定，在不少配色下暗到读不出来，实测表现为「工具调用只显示了个名字」。
+  // SGR 90 是明确的亮黑色，与 Ink 版 <Text color="gray"> 同口径。
+  toolArg: chalk.gray,
+  // skill 工具的参数用黄色：技能激活会改变后续行为，比读写路径更需要一眼认出激活了哪个
+  // （Ink 版 ToolCall.tsx 的同一处判断）。
+  toolArgSkill: chalk.yellow,
   ok: chalk.green,
   error: chalk.red,
   warn: chalk.yellow,

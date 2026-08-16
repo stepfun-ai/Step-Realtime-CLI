@@ -59,11 +59,35 @@ const ERROR_PREVIEW_LINES = 4;
 /** diff 结果完整展示的行数上限，超出截断（与 Ink 版 EXPANDED_MAX_LINES 同口径）。 */
 const DIFF_MAX_LINES = 200;
 
-/** 工具入参的单行摘要。逻辑抄自 Ink 版 ToolCall.tsx 的 summarizeInput（那边带 JSX，不能直接引）。 */
+/**
+ * 工具入参的单行摘要（折叠态标题行与 Ctrl+O 条目标题共用口径）。
+ *
+ * 字段顺序即优先级，取第一个命中的字符串字段。两处与 Ink 版不同，属 pi 版有意差异：
+ *
+ * 1. `pattern` 排在 `path` 前。grep/glob 同时有这两个字段，搜索词比搜索目录更能说明
+ *    这次调用在干什么；Ink 版顺序反了，显式传 path 的 grep 卡片只显示目录。
+ * 2. 补了 query/url/task_id/mission_id/objective/subject 六个字段。Ink 版只认前四个，
+ *    于是搜索类、web_fetch、任务类、team、goal 的卡片全都只剩一个工具名——「调用了
+ *    web_search」不告诉任何信息，「web_search  pi-tui 源码」才是。
+ *
+ * 入参是数组或对象的工具（todo_list 的 todos、ask_user 的 questions）不在这里凑摘要：
+ * 它们的结果体本身就会把内容列出来，标题行再塞一遍是重复。
+ */
 export function summarizeInput(input: unknown): string {
   if (input === null || typeof input !== 'object') return '';
   const obj = input as Record<string, unknown>;
-  for (const key of ['path', 'pattern', 'command', 'skill']) {
+  for (const key of [
+    'pattern',
+    'path',
+    'command',
+    'skill',
+    'query',
+    'url',
+    'task_id',
+    'mission_id',
+    'objective',
+    'subject',
+  ]) {
     const v = obj[key];
     if (typeof v === 'string' && v.length > 0) {
       return v.length > 80 ? `${v.slice(0, 80)}…` : v;
@@ -218,16 +242,17 @@ export class ItemBlock implements Component {
 
   private renderTool(it: Extract<DisplayItem, { kind: 'tool' }>, width: number): string[] {
     const mark = it.status === 'running' ? c.warn('⏳') : it.status === 'ok' ? c.ok('✓') : c.error('✗');
-    const arg = summarizeInput(it.input);
     const elapsed =
       it.status === 'running' && it.startedAt !== undefined
-        ? c.dim(` ${Math.max(0, Math.round((Date.now() - it.startedAt) / 1000))}s`)
+        ? c.dim(t('toolCall.elapsed', { s: Math.max(0, Math.round((Date.now() - it.startedAt) / 1000)) }))
         : '';
+    // 前台 bash 运行中才提示可转后台：发现性入口，Ctrl+B 已由 ChatEditor 绑定到 applyCtrlB
+    const bgHint = it.status === 'running' && it.name === 'bash' ? c.dim(t('toolCall.bashBackgroundHint')) : '';
     const subagent =
       it.subagentType !== undefined || it.description !== undefined
         ? c.dim(` ${[it.subagentType, it.description].filter((x) => x !== undefined).join(' · ')}`)
         : '';
-    const head = `${mark} ${c.toolName(it.name)}${arg !== '' ? ` ${c.toolArg(arg)}` : ''}${subagent}${elapsed}`;
+    const head = `${mark} ${c.toolName(it.name)}${toolArgText(it)}${subagent}${elapsed}${bgHint}`;
     const out = visibleWidth(head) > width ? wrap(head, width) : [head];
 
     // dynamic_workflow 阶段：运行中逐个列出（● 当前 / ✓ 已完成），终态坍缩成一行计数
@@ -289,17 +314,30 @@ export class ItemBlock implements Component {
 }
 
 /**
+ * 工具参数摘要的着色文本（主界面卡片与 Ctrl+O 展开态共用口径）。
+ *
+ * 抽成函数是因为这两处标题行历史上就容易漂移：Ink 版靠注释约定「共用口径」，
+ * pi 版早先是两份各自拼接的字符串，改一处漏一处。
+ */
+function toolArgText(it: Extract<DisplayItem, { kind: 'tool' }>): string {
+  const arg = summarizeInput(it.input);
+  if (arg === '') return '';
+  // 两个空格：单空格时 `write_file src/x.ts` 读起来像一个词组，双空格才分得出
+  // 「工具」与「操作对象」两段（Ink 版同口径）。
+  return it.name === 'skill' ? c.toolArgSkill(`  ${arg}`) : c.toolArg(`  ${arg}`);
+}
+
+/**
  * 查看器用：工具结果全文铺开（不折叠、不截断），diff 保持着色。
  * 头部状态行/子工具列表沿用 renderTool 的口径，这里只重做结果体。
  */
 function renderToolExpanded(it: Extract<DisplayItem, { kind: 'tool' }>, width: number): string[] {
   const mark = it.status === 'running' ? c.warn('⏳') : it.status === 'ok' ? c.ok('✓') : c.error('✗');
-  const arg = summarizeInput(it.input);
   const subagent =
     it.subagentType !== undefined || it.description !== undefined
       ? c.dim(` ${[it.subagentType, it.description].filter((x) => x !== undefined).join(' · ')}`)
       : '';
-  const head = `${mark} ${c.toolName(it.name)}${arg !== '' ? ` ${c.toolArg(arg)}` : ''}${subagent}`;
+  const head = `${mark} ${c.toolName(it.name)}${toolArgText(it)}${subagent}`;
   const out = visibleWidth(head) > width ? wrap(head, width) : [head];
   if (it.result !== undefined && it.result !== '') {
     const lines = it.result.split('\n');

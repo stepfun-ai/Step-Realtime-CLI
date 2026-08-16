@@ -107,6 +107,93 @@ describe('ItemBlock 渲染', () => {
     }
   });
 
+  it('工具标题行：参数摘要覆盖各类工具，skill 着黄、其余着 gray', () => {
+    // 用户反馈「调用工具只显示一个名字」，两个根因：参数色用了 dim(SGR 2) 在多数终端
+    // 主题下读不出来；summarizeInput 只认 path/pattern/command/skill 四字段，搜索类、
+    // web_fetch、任务类的卡片全都落空。这条测两者。
+    const prev = chalk.level;
+    chalk.level = 3;
+    try {
+      const head = (o: Record<string, unknown>): string =>
+        new ItemBlock({ kind: 'tool', id: 't', status: 'ok', ...o } as never).render(78)[0]!;
+
+      // 参数色 = gray(90)，不是 dim(2)
+      const wf = head({ name: 'write_file', input: { path: 'src/x.ts' } });
+      expect(wf, '参数应为 gray(90)').toContain('\x1b[90m');
+      expect(wf).toContain('src/x.ts');
+      // 工具名与参数之间两个空格
+      expect(wf.replace(/\x1b\[[0-9;]*m/g, '')).toContain('write_file  src/x.ts');
+
+      // skill 的参数着黄（33），与普通参数区分
+      const sk = head({ name: 'skill', input: { skill: 'academic-figure' } });
+      expect(sk, 'skill 参数应为 yellow(33)').toContain('\x1b[33m');
+
+      // 字段覆盖：这些工具此前全都只显示工具名
+      const plain = (o: Record<string, unknown>): string => head(o).replace(/\x1b\[[0-9;]*m/g, '');
+      expect(plain({ name: 'web_search', input: { query: 'pi-tui 源码', n: 10 } })).toContain('pi-tui 源码');
+      expect(plain({ name: 'web_fetch', input: { url: 'https://example.com/d' } })).toContain('https://example.com/d');
+      expect(plain({ name: 'task_output', input: { task_id: 'tm-541' } })).toContain('tm-541');
+      expect(plain({ name: 'team_spawn', input: { mission_id: 'M1', prompt: 'x' } })).toContain('M1');
+      expect(plain({ name: 'create_goal', input: { objective: '完成对标' } })).toContain('完成对标');
+      // pattern 优先于 path：grep 显示搜索词而非搜索目录
+      expect(plain({ name: 'grep', input: { pattern: 'needle', path: 'src/' } })).toContain('needle');
+      expect(plain({ name: 'grep', input: { pattern: 'needle', path: 'src/' } })).not.toContain('src/');
+      // 数组入参不凑摘要（结果体自己会列出来）
+      expect(plain({ name: 'todo_list', input: { todos: [{ title: 'a' }] } }).trim()).toBe('✓ todo_list');
+
+      // 主界面与 Ctrl+O 展开态共用口径
+      const expanded = ItemBlock.renderExpanded(
+        { kind: 'tool', id: 't', name: 'write_file', status: 'ok', input: { path: 'src/x.ts' }, result: 'ok' } as never,
+        78,
+      )[0]!;
+      expect(expanded.replace(/\x1b\[[0-9;]*m/g, '')).toContain('write_file  src/x.ts');
+    } finally {
+      chalk.level = prev;
+    }
+  });
+
+  it('bash 运行中显示耗时与 Ctrl+B 提示，非 bash 或终态不显示', () => {
+    const prev = chalk.level;
+    chalk.level = 0;
+    try {
+      const running = new ItemBlock({
+        kind: 'tool',
+        id: 't',
+        name: 'bash',
+        status: 'running',
+        startedAt: Date.now() - 3000,
+        input: { command: 'pnpm test' },
+      } as never).render(78)[0]!;
+      expect(running).toContain('已运行 3s');
+      expect(running, 'Ctrl+B 提示缺失').toContain('Ctrl+B');
+      // 终态不显示这两项
+      const done = new ItemBlock({
+        kind: 'tool',
+        id: 't',
+        name: 'bash',
+        status: 'ok',
+        startedAt: Date.now() - 3000,
+        input: { command: 'pnpm test' },
+        result: 'ok',
+      } as never).render(78)[0]!;
+      expect(done).not.toContain('Ctrl+B');
+      expect(done).not.toContain('已运行');
+      // 非 bash 工具运行中有耗时但无 Ctrl+B（转后台只对前台 bash 有意义）
+      const other = new ItemBlock({
+        kind: 'tool',
+        id: 't',
+        name: 'read_file',
+        status: 'running',
+        startedAt: Date.now() - 2000,
+        input: { path: 'a.ts' },
+      } as never).render(78)[0]!;
+      expect(other).toContain('已运行 2s');
+      expect(other).not.toContain('Ctrl+B');
+    } finally {
+      chalk.level = prev;
+    }
+  });
+
   it('thinking 块全灰：无任何非 dim 的着色残留', () => {
     // 半灰半白是老 bug：逐项配 thinkingMarkdownTheme 只覆盖带标记的元素，无标记的普通
     // 段落不经过任何 theme 函数，Markdown 原样输出即默认白——而思考内容大部分是普通段落。
