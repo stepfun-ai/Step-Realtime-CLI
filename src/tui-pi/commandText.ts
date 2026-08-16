@@ -13,10 +13,12 @@ import type { StoredMessage } from '../agent/message.js';
 import { extractUserText } from '../chat/backtrack.js';
 import { formatMemoryEntryLine, measureMemoryIndex, MEMORY_INDEX_BUDGET, scanMemory } from '../agent/memory.js';
 import { formatCount, formatDuration } from '../chat/duration.js';
+import { t } from '../i18n.js';
+import { getLocale } from '../i18n.js';
 
 /** `/tasks` 的文本清单（Ink 版是 TasksViewer 弹层，pi 版先给只读文本）。 */
 export function formatTaskList(tasks: readonly BackgroundTask[], now: number): string {
-  if (tasks.length === 0) return '当前没有后台任务';
+  if (tasks.length === 0) return t('commandText.tasks.empty');
   const order: Record<string, number> = { running: 0, failed: 1, completed: 2, killed: 3 };
   const sorted = [...tasks].sort((a, b) => {
     const d = (order[a.status] ?? 9) - (order[b.status] ?? 9);
@@ -32,25 +34,25 @@ export function formatTaskList(tasks: readonly BackgroundTask[], now: number): s
     const cmd = t.command.length > 60 ? t.command.slice(0, 57) + '...' : t.command;
     return `  ${t.status.padEnd(9)} ${t.id}${kind}${dur}${code}\n    ${cmd}`;
   });
-  return `后台任务（${tasks.length}）：\n${lines.join('\n')}\n\n用 task_output <id> 看输出，task_stop <id> 终止`;
+  return t('commandText.tasks.title', { count: tasks.length }) + '\n' + lines.join('\n') + '\n\n' + t('commandText.tasks.footer');
 }
 
 /** `/memory` 无参时的清单文本。enabled=false 时返回开启提示。 */
 export function formatMemoryList(cwd: string, enabled: boolean, now: number): string {
-  if (!enabled) return '记忆功能未开启（用 /memory on 开启）';
+  if (!enabled) return t('commandText.memory.disabled');
   const scan = scanMemory(cwd);
   const lines: string[] = [];
   const globals = scan.entries.filter((e) => e.scope === 'global');
   const projects = scan.entries.filter((e) => e.scope === 'project');
-  lines.push('全局记忆（~/.step-code/memory/）：');
-  if (globals.length === 0) lines.push('  （空）');
+  lines.push(t('app.memory.listGlobal'));
+  if (globals.length === 0) lines.push(t('app.memory.listEmpty'));
   for (const e of globals) lines.push(formatMemoryEntryLine(e));
-  lines.push('项目记忆（.step-code/memory/）：');
-  if (projects.length === 0) lines.push('  （空）');
+  lines.push(t('app.memory.listProject'));
+  if (projects.length === 0) lines.push(t('app.memory.listEmpty'));
   for (const e of projects) lines.push(formatMemoryEntryLine(e));
-  lines.push(`索引占用：${measureMemoryIndex(scan)} / ${MEMORY_INDEX_BUDGET} 字符`);
+  lines.push(t('app.memory.indexUsage', { used: measureMemoryIndex(scan), budget: MEMORY_INDEX_BUDGET }));
   if (scan.broken.length > 0) {
-    lines.push('以下文件缺字段或解析失败：');
+    lines.push(t('commandText.memory.brokenHeader'));
     for (const e of scan.broken) lines.push(`  - ${e.absPath}`);
   }
   // 回顾提示与 Ink 版同判据：条目过多，或最旧条目超 30 天没动过
@@ -58,7 +60,7 @@ export function formatMemoryList(cwd: string, enabled: boolean, now: number): st
   const tooOld =
     oldest !== undefined && oldest.updatedAt !== '' && now - Date.parse(oldest.updatedAt) > 30 * 24 * 3600 * 1000;
   if (scan.entries.length > 30 || tooOld) {
-    lines.push('建议做一次回顾：删掉过期观察，合并重复条目');
+    lines.push(t('commandText.memory.reviewHint'));
   }
   return lines.join('\n');
 }
@@ -79,22 +81,22 @@ export const NOT_WIRED: ReadonlySet<string> = new Set([]);
 /** 未接线命令的提示文本。 */
 export function notWiredText(name: string): string {
   // Ink 版已在 M5 删除，提示不能再让用户「去用 Ink 版」——那条路不存在了
-  return `/${name} 尚未接线`;
+  return t('commandText.notWired', { name });
 }
 
 /** `/goal` 无参时的状态面板文本（Ink 版是 GoalPanel 圆角框，pi 版给等价文本）。 */
 export function formatGoalPanel(g: GoalState, now: number): string {
-  const lines = [`目标：${g.objective}`];
+  const lines = [t('commandText.goal.objective', { objective: g.objective })];
   if (g.completionCriterion !== undefined && g.completionCriterion !== '') {
-    lines.push(`完成标准：${g.completionCriterion}`);
+    lines.push(t('goalPanel.criterion', { text: g.completionCriterion }));
   }
-  const budget: string[] = [`已用 ${g.turnsUsed} 轮`];
-  if (g.turnBudget !== undefined) budget.push(`预算 ${g.turnBudget} 轮`);
-  budget.push(`${formatCount(g.tokensUsed)} tokens`);
-  if (g.tokenBudget !== undefined) budget.push(`预算 ${formatCount(g.tokenBudget)}`);
+  const budget: string[] = [t('commandText.goal.turnsUsed', { turns: g.turnsUsed })];
+  if (g.turnBudget !== undefined) budget.push(t('commandText.goal.turnBudget', { budget: g.turnBudget }));
+  budget.push(t('commandText.goal.tokenBudget', { tokens: formatCount(g.tokensUsed) }));
+  if (g.tokenBudget !== undefined) budget.push(t('commandText.goal.tokenBudget', { tokens: formatCount(g.tokenBudget) }));
   budget.push(formatDuration(Math.max(0, now - g.createdAt)));
-  lines.push(`状态：${g.status} · ${budget.join(' · ')}`);
-  if (g.terminalReason !== undefined && g.terminalReason !== '') lines.push(`原因：${g.terminalReason}`);
+  lines.push(t('commandText.goal.status', { status: g.status, budget: budget.join(' · ') }));
+  if (g.terminalReason !== undefined && g.terminalReason !== '') lines.push(t('goalPanel.reason', { reason: g.terminalReason }));
   return lines.join('\n');
 }
 
@@ -106,28 +108,35 @@ export function formatTeamStatus(
 ): string {
   const body =
     missions.length === 0
-      ? '（还没有登记任务，用 team_plan 拆分）'
+      ? t('commandText.team.noMissions')
       : missions
           .map(
             (m) =>
-              `  ${m.id} [${m.status}] ${m.title}（${m.kind}，${m.scope.length > 0 ? m.scope.join('、') : '无范围限制'}）` +
-              (m.deps.length > 0 ? ` ← 依赖 ${m.deps.join('、')}` : ''),
+              t('commandText.team.missionLine', {
+                id: m.id,
+                status: m.status,
+                title: m.title,
+                kind: m.kind,
+                scope: m.scope.length > 0 ? m.scope.join(getLocale() === 'zh' ? '、' : ', ') : t('commandText.team.noScope'),
+              }) +
+              (m.deps.length > 0 ? t('commandText.team.depSuffix', { deps: m.deps.join(getLocale() === 'zh' ? '、' : ', ') }) : ''),
           )
           .join('\n');
-  return `团队模式：基准分支 ${base}\n档案目录：${dir}\n任务：\n${body}`;
+  return t('app.team.statusBody', { base, dir, body });
 }
 
 /** `/loop` 的定时任务清单文本。 */
 export function formatCronJobs(
   jobs: readonly { id: string; cron: string; prompt: string; recurring: boolean; nextFireAt: Date }[],
 ): string {
-  if (jobs.length === 0) return '当前没有定时任务（说清要定时做什么，我会用 cron_create 创建）';
+  if (jobs.length === 0) return t('commandText.cron.empty');
   const lines = jobs.map((j) => {
-    const kind = j.recurring ? '周期' : '一次性';
+    const kind = j.recurring ? t('commandText.cron.recurring') : t('cronCard.oneShot');
     const prompt = j.prompt.length > 50 ? j.prompt.slice(0, 47) + '...' : j.prompt;
-    return `  ${j.id} · ${j.cron} · ${kind} · 下次 ${j.nextFireAt.toLocaleString()}\n    ${prompt}`;
+    return t('commandText.cron.line', { id: j.id, cron: j.cron, kind, next: j.nextFireAt.toLocaleString() }) +
+      `\n    ${prompt}`;
   });
-  return `定时任务（${jobs.length}）：\n${lines.join('\n')}`;
+  return t('commandText.cron.header', { count: jobs.length }) + '\n' + lines.join('\n');
 }
 
 /**

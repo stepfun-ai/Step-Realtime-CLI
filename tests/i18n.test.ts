@@ -578,4 +578,45 @@ it('常驻面板（ChromePanels.ts）：TODO 三态计数 / 折叠提示 / 队�
     });
     expect(cjkIn(ov.render(80)), '查看器标题或底部键位出现中文').toEqual([]);
   });
+
+  it('commandText.ts：/tasks /memory /goal /team /loop 纯文本生成', async () => {
+    const { formatTaskList, formatMemoryList, notWiredText, formatGoalPanel, formatTeamStatus, formatCronJobs } = await import('../src/tui-pi/commandText.js');
+    setLocale('en');
+    const now = Date.now();
+    // /tasks 空态 / 有内容
+    expect(cjkIn([formatTaskList([], now)])).toEqual([]);
+    expect(cjkIn([formatTaskList([{ status: 'running', id: 't1', kind: 'process', command: 'sleep 1', startedAt: new Date().toISOString(), endedAt: undefined, exitCode: undefined }], now)])).toEqual([]);
+
+    // /memory 关闭 / 开启空 / 开启有条目 / 有 broken
+    expect(cjkIn([formatMemoryList('/x', false, now)])).toEqual([]);
+    expect(cjkIn([formatMemoryList('/x', true, now)])).toEqual([]);
+    // 构造一个有 broken 的 scan 结果比较麻烦，这里只保证 memory.disabled 与空列表无 CJK
+    // notWired
+    expect(cjkIn([notWiredText('somecmd')])).toEqual([]);
+
+    // /goal 面板
+    const goal = { objective: 'test', completionCriterion: 'done', turnsUsed: 1, turnBudget: 10, tokensUsed: 100, tokenBudget: 1000, status: 'active', createdAt: now, terminalReason: undefined as string | undefined };
+    expect(cjkIn([formatGoalPanel(goal, now)])).toEqual([]);
+
+    // /team status 空 / 有任务
+    expect(cjkIn([formatTeamStatus('main', '.step-code/team', [])])).toEqual([]);
+    expect(cjkIn([formatTeamStatus('main', '.step-code/team', [{ id: 'm1', status: 'doing', title: 't', kind: 'code', scope: ['a', 'b'], deps: ['m0'] }])])).toEqual([]);
+
+    // /loop 空 / 有任务
+    expect(cjkIn([formatCronJobs([])])).toEqual([]);
+    expect(cjkIn([formatCronJobs([{ id: 'j1', cron: '*/5 * * * *', prompt: 'ping', recurring: true, nextFireAt: new Date(now + 100000) }])])).toEqual([]);
+  });
+
+  it('ProviderManager.ts：providerItems 在 en 下无 CJK', async () => {
+    const { providerItems } = await import('../src/tui-pi/ProviderManager.js');
+    setLocale('en');
+    const config = {
+      provider: 'mine',
+      providers: { mine: { type: 'openai', baseUrl: 'https://api.example.com/v1' } },
+      models: { a1: { model: 'm1', provider: 'mine' } },
+    } as any;
+    const items = providerItems(config);
+    const texts = items.flatMap((i) => [i.label, i.description]);
+    expect(cjkIn(texts), 'ProviderManager 出现中文').toEqual([]);
+  });
 });
