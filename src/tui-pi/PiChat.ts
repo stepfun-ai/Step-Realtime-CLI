@@ -399,6 +399,11 @@ export class PiChat {
     });
 
     this.streamBuffer = new StreamBuffer((ev) => this.applyEvent(ev));
+    // 后台任务管理器绑到当前会话。字段初始化只是给个占位实例（无 tasksDir、无回调），
+    // 必须在这里绑一次——此前只有 /new、/fork、/resume 调 rebind，于是**启动会话**用的
+    // 一直是那个占位实例：任务落盘目录为空、onSettle 没挂，任务跑完悄无声息（实测：
+    // 状态栏 bg:1 徽章正常出现，8 秒后终态通知不出现）。
+    this.rebindBackground();
     this.compactionBinding = resolveCompactionBinding(deps.config, this.compactionProviderCache);
     this.termTitle = new TerminalTitleWriter(
       process.env,
@@ -2298,6 +2303,9 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     if (data.model !== '' && data.model !== this.currentAlias) {
       this.applyModel(data.model, { persistDefault: false });
     }
+    // 换绑：tasksDir 由 session.id 算出，恢复到别的会话后不换绑，新起的后台任务会写进
+    // 上一个会话的任务目录（这里原先只有下面那句对账，注释写着「换绑后」而实际没换过）。
+    this.rebindBackground();
     // 换绑后立刻对账：这批任务的 onSettle 属于上个会话，本会话从未触发过。
     // 切会话即换了 delivered 集合的作用域，内存里那份属于旧会话，清掉重来。
     this.deliveredWritten = new Set(r.deliveredNotifications);

@@ -106,7 +106,9 @@ describe.skipIf(bash === undefined)('后台任务防失控加固（2026-08-10 �
       const started = await waitFor(() => pingCount() > 0);
       expect(started).toBe(true);
       mgr.stop(id);
-      const dead = await waitFor(() => pingCount() === 0, 5000);
+      // 15s 而非 5s：全量并发跑（176 个文件抢 CPU）时 taskkill 整棵树会被拖慢，
+      // 5s 阈值测的是机器闲忙而不是杀树是否有效。
+      const dead = await waitFor(() => pingCount() === 0, 15000);
       expect(dead).toBe(true);
       return;
     }

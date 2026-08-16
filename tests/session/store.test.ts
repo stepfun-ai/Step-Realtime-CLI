@@ -325,14 +325,25 @@ describe('SessionStore 全量历史日志（appendFull / loadFull）', () => {
 
   it('性能回归：1000 次 append 不随日志增长退化（seen-id 按会话缓存，仅首次 loadFull）', () => {
     const s = store.create(cwd, 'm');
-    const start = performance.now();
-    for (let i = 0; i < 1000; i++) {
-      store.appendFull(cwd, s.id, [stored({ role: 'user', content: `m${i}` }, { kind: 'user' })]);
-    }
-    const elapsed = performance.now() - start;
+    const appendRange = (from: number, to: number): number => {
+      const t0 = performance.now();
+      for (let i = from; i < to; i++) {
+        store.appendFull(cwd, s.id, [stored({ role: 'user', content: `m${i}` }, { kind: 'user' })]);
+      }
+      return performance.now() - t0;
+    };
+    // 首尾各取 100 次的耗时对比，而不是看总耗时的绝对值：
+    // 绝对阈值（原来是 2000ms）测的是机器闲忙——全量并发跑时会偶发红，
+    // 而这条测试真正要防的是复杂度退化。退回每次全文重读重解析（O(n²)）时，
+    // 尾段每次要多解析 900 条，必然比首段慢一个数量级；缓存命中下两段都是常数时间。
+    const head = appendRange(0, 100);
+    appendRange(100, 900);
+    const tail = appendRange(900, 1000);
     expect(store.loadFull(cwd, s.id)).toHaveLength(1000);
-    // 缓存命中下 1000 次小消息追加是亚秒级；若退回每次全文重读重解析（累计 O(n²)），会慢一个数量级以上
-    expect(elapsed).toBeLessThan(2000);
+    // 5 倍余量 + 200ms 地板：head 只有几毫秒时比值噪声会被放大，用地板兜住
+    expect(tail, `尾段 ${tail.toFixed(0)}ms 不应远慢于首段 ${head.toFixed(0)}ms`).toBeLessThan(
+      Math.max(head * 5, 200),
+    );
   });
 });
 

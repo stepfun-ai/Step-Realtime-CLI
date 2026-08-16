@@ -4,6 +4,17 @@ import { BackgroundManager, type BackgroundTask } from '../../src/agent/backgrou
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 轮询等条件成立，而不是固定睡一段。
+ *
+ * 固定 `sleep(500)` 单跑够、全量并发跑（176 个测试文件抢 CPU）时不够：子进程 spawn +
+ * exit 事件被拖到 500ms 之后，断言就偶发失败——测的是机器闲忙，不是代码对错。
+ */
+const waitUntil = async (cond: () => boolean, timeoutMs = 8000): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond() && Date.now() < deadline) await sleep(25);
+};
+
 const SH = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
 const shArgs = (cmd: string): string[] => (process.platform === 'win32' ? ['/c', cmd] : ['-c', cmd]);
 const LONG_CMD = process.platform === 'win32' ? 'ping -n 30 127.0.0.1 >nul' : 'sleep 25';
@@ -13,7 +24,7 @@ describe('BackgroundManager onSettleEvent（终态事件钩）', () => {
     const events: BackgroundTask[] = [];
     const mgr = new BackgroundManager(10, { onSettleEvent: (t) => events.push(t) });
     mgr.start('echo hi', SH, shArgs('echo hi'), process.cwd());
-    await sleep(500);
+    await waitUntil(() => events.length >= 1);
     expect(events).toHaveLength(1);
     expect(events[0]!.status).toBe('completed');
     expect(events[0]!.command).toBe('echo hi');
@@ -59,7 +70,7 @@ describe('BackgroundManager onSettle', () => {
     const settled: BackgroundTask[] = [];
     const mgr = new BackgroundManager(10, { onSettle: (t) => settled.push(t) });
     mgr.start('echo hi', SH, shArgs('echo hi'), process.cwd());
-    await sleep(500);
+    await waitUntil(() => settled.length >= 1);
     expect(settled).toHaveLength(1);
     expect(settled[0]!.status).toBe('completed');
     expect(settled[0]!.output).toContain('hi');
@@ -69,7 +80,7 @@ describe('BackgroundManager onSettle', () => {
     const settled: BackgroundTask[] = [];
     const mgr = new BackgroundManager(10, { onSettle: (t) => settled.push(t) });
     mgr.start('exit 3', SH, shArgs('exit 3'), process.cwd());
-    await sleep(500);
+    await waitUntil(() => settled.length >= 1);
     expect(settled).toHaveLength(1);
     expect(settled[0]!.status).toBe('failed');
     expect(settled[0]!.exitCode).toBe(3);
@@ -88,7 +99,7 @@ describe('BackgroundManager onSettle', () => {
     const settled: BackgroundTask[] = [];
     const mgr = new BackgroundManager(10, { onSettle: (t) => settled.push(t) });
     const id = mgr.start('echo hi', SH, shArgs('echo hi'), process.cwd());
-    await sleep(500);
+    await waitUntil(() => mgr.get(id)?.status !== "running");
     expect(mgr.stop(id)).toBe(false); // 已终态，无法再停
     await sleep(200);
     expect(settled).toHaveLength(1);
@@ -99,7 +110,7 @@ describe('BackgroundManager onSettle', () => {
     const mgr = new BackgroundManager(10, { taskTimeoutS: 1, onSettle: (t) => settled.push(t) });
     const id = mgr.start('long', SH, shArgs(LONG_CMD), process.cwd());
     expect(mgr.get(id)?.status).toBe('running');
-    await sleep(2500);
+    await waitUntil(() => mgr.get(id)?.status === "killed", 10000);
     expect(mgr.get(id)?.status).toBe('killed');
     expect(mgr.get(id)?.output).toContain('后台任务超时（1s）');
     expect(settled).toHaveLength(1);
@@ -109,7 +120,7 @@ describe('BackgroundManager onSettle', () => {
   it('taskTimeoutS=0 时不武装超时', async () => {
     const mgr = new BackgroundManager(10, { taskTimeoutS: 0 });
     const id = mgr.start('echo hi', SH, shArgs('echo hi'), process.cwd());
-    await sleep(500);
+    await waitUntil(() => mgr.get(id)?.status === "completed");
     expect(mgr.get(id)?.status).toBe('completed');
   });
 
@@ -149,7 +160,7 @@ describe('BackgroundManager drainSettled', () => {
     const settled: BackgroundTask[] = [];
     const mgr = new BackgroundManager(10, { onSettle: (t) => settled.push(t) });
     mgr.start('echo hi', SH, shArgs('echo hi'), process.cwd());
-    await sleep(500);
+    await waitUntil(() => settled.length >= 1);
     expect(settled).toHaveLength(1);
     expect(mgr.drainSettled()).toHaveLength(1);
   });
@@ -184,7 +195,7 @@ describe('BackgroundManager 前台任务（registerForeground / detach）', () =
     expect(mgr.activeBackgroundCount()).toBe(1);
     expect(mgr.isDetached(id)).toBe(true);
     // 接管后输出继续追加（detach 前的部分输出为起点）
-    await sleep(500);
+    await waitUntil(() => settled.length >= 1);
     expect(mgr.get(id)?.output).toContain('已收集的部分输出');
     expect(mgr.get(id)?.output).toContain('after');
     // 终态照常通知（抑制已解除）
@@ -201,7 +212,7 @@ describe('BackgroundManager 前台任务（registerForeground / detach）', () =
     const release = mgr.waitForegroundRelease(id);
     expect(mgr.detach(id, true)).toBe(true);
     await expect(release).resolves.toBe('timeout_detached');
-    await sleep(2500);
+    await waitUntil(() => mgr.get(id)?.status === "killed", 10000);
     expect(mgr.get(id)?.status).toBe('killed');
     expect(mgr.get(id)?.output).toContain('后台任务超时（1s）');
     expect(settled).toHaveLength(1);
@@ -250,7 +261,7 @@ describe('BackgroundManager 前台任务（registerForeground / detach）', () =
     const proc = spawnFg('echo done');
     const id = mgr.registerForeground('cmd', proc, () => '');
     expect(mgr.detach(id)).toBe(true);
-    await sleep(500);
+    await waitUntil(() => mgr.get(id)?.status === "completed");
     expect(mgr.get(id)?.status).toBe('completed');
     expect(settled).toHaveLength(1);
     expect(settled[0]!.output).toContain('done');

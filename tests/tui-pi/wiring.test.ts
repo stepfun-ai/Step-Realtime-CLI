@@ -51,6 +51,22 @@ describe('PiChat 接线：后台任务通知链路', () => {
     expect(calls.length, '对账应有两个调用点（启动 + 切会话）').toBeGreaterThanOrEqual(2);
   });
 
+  it('启动会话就绑好后台管理器（不能只在 new/fork/resume 时 rebind）', () => {
+    // 字段初始化是 `new BackgroundManager()`（无参占位：没有 tasksDir、没有回调）。
+    // 只有三处切会话调 rebind 时，**启动会话**用的一直是那个占位实例——真机实测症状是
+    // 状态栏 bg:1 徽章正常出现、8 秒后终态通知不出现。构造里必须也绑一次。
+    const rebinds = piChat.match(/this\.rebindBackground\(\)/g) ?? [];
+    expect(rebinds.length, '构造 + new + fork + resume 共 4 处').toBeGreaterThanOrEqual(4);
+    // 构造函数体内要有一次：取 constructor 到第一个方法定义之间的片段来判断
+    const ctorStart = piChat.indexOf('constructor(deps: PiChatDeps)');
+    const ctorEnd = piChat.indexOf('/** 启动 TUI', ctorStart);
+    expect(ctorStart, 'constructor 应存在').toBeGreaterThan(0);
+    expect(
+      piChat.slice(ctorStart, ctorEnd).includes('this.rebindBackground()'),
+      '构造函数里必须绑一次，否则启动会话的 onSettle 没挂上',
+    ).toBe(true);
+  });
+
   it('persist 补写 delivered 事件（与消息本体同刻落盘）', () => {
     wired(piChat, 'pendingDeliveredEvents', 'delivered 补写');
   });
