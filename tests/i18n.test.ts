@@ -495,4 +495,39 @@ describe('en locale 下界面无中文残留（逐组件收口）', () => {
     const tabs = modelTabs({ models: {}, provider: 'default' } as any);
     expect(tabs[0]?.label).not.toMatch(/[\u4e00-\u9fa5]/);
   });
+
+  it('后台任务弹层（TasksOverlay.ts）：空列表 / 有任务 / 停止确认', async () => {
+    const { TasksOverlay } = await import('../src/tui-pi/TasksOverlay.js');
+    setLocale('en');
+    const mk = (tasks: any[]) => {
+      const now = () => Date.now();
+      return new TasksOverlay({
+        getTasks: () => tasks,
+        stopTask: () => true,
+        openOutput: () => {},
+        requestRender: () => {},
+        onClose: () => {},
+        now,
+      });
+    };
+
+    // 空列表（全部 / 过滤后）
+    const empty = mk([]);
+    expect(cjkIn(empty.render(80)), 'TasksOverlay 空列表出中文').toEqual([]);
+    empty.handleInput('tab');
+    expect(cjkIn(empty.render(80)), 'TasksOverlay 过滤空列表出中文').toEqual([]);
+
+    // 有任务
+    const withTasks = mk([
+      { id: 't1', status: 'running', command: 'sleep 1', startedAt: new Date().toISOString(), output: 'hello' },
+    ]);
+    expect(cjkIn(withTasks.render(80)), 'TasksOverlay 有任务出中文').toEqual([]);
+
+    // 停止确认态
+    const stop = mk([
+      { id: 't2', status: 'running', command: 'sleep 2', startedAt: new Date().toISOString(), output: '' },
+    ]);
+    stop.handleInput('s');
+    expect(cjkIn(stop.render(80)), 'TasksOverlay 停止确认出中文').toEqual([]);
+  });
 });

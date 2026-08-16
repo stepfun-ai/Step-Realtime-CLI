@@ -12,21 +12,28 @@ import { matchesKey, truncateToWidth, type Component } from '@earendil-works/pi-
 import type { BackgroundTask } from '../agent/background/manager.js';
 import { formatDuration } from '../chat/duration.js';
 import { c } from './theme.js';
+import { t } from '../i18n.js';
 
 /** 过滤档位：Tab 循环。 */
 export type TaskFilter = 'all' | 'running' | 'done' | 'failed';
 const FILTER_ORDER: TaskFilter[] = ['all', 'running', 'done', 'failed'];
-const FILTER_LABEL: Record<TaskFilter, string> = {
-  all: '全部',
-  running: '运行中',
-  done: '已完成',
-  failed: '失败',
-};
 
 /** 输出预览区行数（弹层里固定，全文看走 o 打开查看器）。 */
 const PREVIEW_ROWS = 8;
 
-/** 按过滤档筛选（done 含 completed 与 killed——都是「跑完了」，用户找的是「还在跑吗」）。 */
+function getFilterLabel(filter: TaskFilter): string {
+  switch (filter) {
+    case 'all':
+      return t('tasksOverlay.filterAll');
+    case 'running':
+      return t('tasksOverlay.filterRunning');
+    case 'done':
+      return t('tasksOverlay.filterDone');
+    case 'failed':
+      return t('tasksOverlay.filterFailed');
+  }
+}
+
 export function filterTasks(tasks: readonly BackgroundTask[], filter: TaskFilter): BackgroundTask[] {
   if (filter === 'all') return [...tasks];
   if (filter === 'running') return tasks.filter((t) => t.status === 'running');
@@ -132,10 +139,10 @@ export class TasksOverlay implements Component {
     const list = this.visible();
     const total = this.getTasks().length;
     const out: string[] = [
-      c.accent(`后台任务 · ${FILTER_LABEL[this.filter]}（${list.length}/${total}）`),
+      c.accent(t('tasksOverlay.title', { filter: getFilterLabel(this.filter), shown: list.length, total })),
     ];
     if (list.length === 0) {
-      out.push(c.dim(this.filter === 'all' ? '  当前没有后台任务' : `  没有${FILTER_LABEL[this.filter]}的任务`));
+      out.push(c.dim(this.filter === 'all' ? t('tasksOverlay.emptyAll') : t('tasksOverlay.emptyFiltered', { filter: getFilterLabel(this.filter) })));
     } else {
       const now = this.now();
       const sel = Math.min(this.sel, list.length - 1);
@@ -146,14 +153,14 @@ export class TasksOverlay implements Component {
     const task = this.selected();
     if (task !== undefined) {
       out.push('');
-      out.push(c.dim(`── 输出（${task.id}）──`));
-      const lines = task.output === '' ? ['（暂无输出）'] : task.output.split('\n');
+      out.push(c.dim(t('tasksOverlay.outputTitle', { id: task.id })));
+      const lines = task.output === '' ? [t('tasksOverlay.noOutput')] : task.output.split('\n');
       for (const l of lines.slice(-PREVIEW_ROWS)) out.push(c.dim(truncateToWidth(`  ${l}`, width)));
     }
     if (this.confirmStop !== null) {
-      out.push(c.warn(`终止任务 ${this.confirmStop}？[y/N]`));
+      out.push(c.warn(t('tasksOverlay.confirmStop', { id: this.confirmStop })));
     } else {
-      out.push(c.dim('↑↓/jk 选择 · Tab 过滤 · o/Enter 看全部输出 · s 终止 · Esc/q 关闭'));
+      out.push(c.dim(t('tasksOverlay.footer')));
     }
     return out;
   }
