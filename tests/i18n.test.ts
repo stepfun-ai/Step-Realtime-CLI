@@ -463,4 +463,36 @@ describe('en locale 下界面无中文残留（逐组件收口）', () => {
     const plan = new PlanApproval('# Plan\n\n- step one', () => {}, () => {});
     expect(cjkIn(plan.render(80)), '计划确认框出现中文').toEqual([]);
   });
+
+  it('选择器（pickers.ts）：默认 hint / 过滤前缀 / 恢复会话 / 思考深度选项', async () => {
+    const { PickerOverlay, thinkItems, modelTabs } = await import('../src/tui-pi/pickers.js');
+    setLocale('en');
+    const overlay = new PickerOverlay({
+      title: 'Title',
+      items: [],
+      requestRender: () => {},
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+    expect(cjkIn(overlay.render(80)), 'PickerOverlay 默认渲染出中文').toEqual([]);
+
+    // 过滤态
+    const filtered = new PickerOverlay({
+      title: 'Title',
+      items: [],
+      requestRender: () => {},
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+    (filtered as unknown as { filter: string }).filter = 'abc';
+    expect(cjkIn(filtered.render(80)), 'PickerOverlay 过滤前缀出中文').toEqual([]);
+
+    // 思考深度选项
+    const items = thinkItems();
+    expect(cjkIn(items.map((i) => i.description).filter(Boolean) as string[]), 'thinkItems 描述出中文').toEqual([]);
+
+    // modelTabs 的「全部」标签
+    const tabs = modelTabs({ models: {}, provider: 'default' } as any);
+    expect(tabs[0]?.label).not.toMatch(/[\u4e00-\u9fa5]/);
+  });
 });

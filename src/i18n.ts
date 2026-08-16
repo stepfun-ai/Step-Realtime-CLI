@@ -51,6 +51,10 @@ const zh = {
   'approval.preview.more': '  ↳ 还有 {rest} 行（Ctrl+E 展开）',
   'approval.preview.collapse': '… 已展开全部 {total} 行 · Ctrl+E 收起',
 
+  // --- 选项基类（ChoiceBlock）---
+  'choice.hint': '↑↓ 选择 · Enter 确认 · 数字直选 · Esc 取消',
+  'choice.feedbackPlaceholder': '（输入原因后回车）',
+
   // --- 询问用户（QuestionPrompt）---
   'question.other': 'Other（自由输入）',
   'question.counter': '(第 {index}/{total} 题) ',
@@ -86,6 +90,11 @@ const zh = {
   'expandViewer.position': '行 {start}-{end}/{total}',
   'expandViewer.turnSeparator': '── 第 {n} 轮 · {text} ──',
   'expandViewer.sessionStart': '会话开始',
+
+  // --- 全屏查看器弹层（ExpandOverlay，pi-tui 版措辞与 Ink 版 expandViewer 不同）---
+  'expandOverlay.title': '查看器 · {turns} 轮 · {count} 条 · 共 {lines} 行',
+  'expandOverlay.footer': '↑↓/jk 滚动 · PgUp/PgDn 翻页 · ←→ 轮次 · g/G 首尾 · Esc/q/Ctrl+O 关闭',
+
   // --- /tasks 后台任务浏览器（TasksViewer 弹层）---
   'tasksViewer.title': '任务浏览器  filter={filter} · {running} 运行中 · {completed} 已完成 · {failed} 失败/终止 · 共 {total} 个',
   'tasksViewer.filterAll': 'ALL',
@@ -118,6 +127,19 @@ const zh = {
   'tasksViewer.outputFooter': '↑↓ 滚动 · PgUp/PgDn 翻页 · g/G 顶底 · Esc/q 返回列表',
   'tasksViewer.position': '行 {start}-{end}/{total}',
 
+  // --- 后台任务弹层（TasksOverlay，pi-tui 版措辞与 Ink 版 tasksViewer 不同）---
+  'tasksOverlay.title': '后台任务 · {filter}（{shown}/{total}）',
+  'tasksOverlay.emptyAll': '  当前没有后台任务',
+  'tasksOverlay.emptyFiltered': '  没有{filter}的任务',
+  'tasksOverlay.filterAll': '全部',
+  'tasksOverlay.filterRunning': '运行中',
+  'tasksOverlay.filterDone': '已完成',
+  'tasksOverlay.filterFailed': '失败',
+  'tasksOverlay.outputTitle': '── 输出（{id}）──',
+  'tasksOverlay.noOutput': '（暂无输出）',
+  'tasksOverlay.confirmStop': '终止任务 {id}？[y/N]',
+  'tasksOverlay.footer': '↑↓/jk 选择 · Tab 过滤 · o/Enter 看全部输出 · s 终止 · Esc/q 关闭',
+
   // --- 动态区视口（LiveViewport，滚动跳顶修复）---
   'liveViewport.hiddenLines': '↑ 已隐藏 {count} 行早期输出',
 
@@ -147,6 +169,7 @@ const zh = {
 
   // --- 会话选择器（SessionPicker）与相对时间 ---
   'time.justNow': '刚刚',
+  'time.secondsAgo': '{count} 秒前',
   'time.minutesAgo': '{count} 分钟前',
   'time.hoursAgo': '{count} 小时前',
   'time.daysAgo': '{count} 天前',
@@ -188,6 +211,17 @@ const zh = {
   'thinkPicker.detail.medium': '均衡（推荐）',
   'thinkPicker.detail.high': '思考最深，难任务上可能占满输出预算',
   'thinkPicker.offDetail': '关闭 thinking 字段',
+
+  // --- 选择器通用（PickerOverlay）与思考深度选项 ---
+  'picker.hint.default': '↑↓ 选择 · Enter 确认 · 输入过滤 · Esc 取消',
+  'picker.filterPrefix': '  过滤：',
+  'picker.resumeTitle': '恢复会话',
+  'picker.resumeHint': '↑↓ 选择 · Enter 恢复 · 输入过滤 · Esc 放弃（开新会话）',
+  'picker.thinkLevel.high': '最深思考，慢但更稳',
+  'picker.thinkLevel.medium': '默认档位',
+  'picker.thinkLevel.low': '浅思考，快',
+  'picker.thinkLevel.off': '本会话不发思考字段',
+  'picker.thinkLevel.default': '跟随配置默认',
 
   // --- 技能选择器（SkillPicker）与 /skill 命令 ---
   'skillPicker.title': '选择要激活的技能（输入过滤 · ↑↓ 选择 · Enter 激活 · Esc 取消）',
@@ -242,6 +276,16 @@ const zh = {
   'todo.status.doing': '进行中',
   'todo.status.pending': '待办',
   'todo.status.done': '已完成',
+
+  // --- 常驻面板（ChromePanels：TODO + 发送队列）---
+  'panel.todo.title': '待办',
+  'panel.todo.inProgress': '{count} 进行中',
+  'panel.todo.pending': '{count} 待办',
+  'panel.todo.done': '{count} 已完成',
+  'panel.todo.more': '  … 还有 {count} 条（{parts}）',
+  'panel.queue.title': '发送队列（{count} 条，回合结束后按序发送）',
+  'panel.queue.more': '  … 还有 {count} 条',
+  'panel.queue.recall': '  Esc 取回到输入框',
 
   // --- /lang 命令 ---
   'lang.current': '当前界面语言：{lang}（可用：zh / en）',
@@ -791,6 +835,10 @@ const en: Record<keyof typeof zh, string> = {
   'question.hint': '↑↓ move · Enter confirm · Esc cancel',
   'question.hintMulti': '↑↓ move · Enter confirm · ←→ switch question · Esc cancel',
 
+  // --- 选项基类（ChoiceBlock）---
+  'choice.hint': '↑↓ select · Enter confirm · number keys direct · Esc cancel',
+  'choice.feedbackPlaceholder': '(enter reason and press Enter)',
+
   'input.placeholder.busy': 'Thinking… input will join the send queue',
   'input.placeholder.idle': 'Type a command, Enter to send',
   'input.tipPrefix': '  · Tip: {tip}',
@@ -813,6 +861,11 @@ const en: Record<keyof typeof zh, string> = {
   'expandViewer.position': 'lines {start}-{end}/{total}',
   'expandViewer.turnSeparator': '── Turn {n} · {text} ──',
   'expandViewer.sessionStart': 'Session start',
+
+  // --- 全屏查看器弹层（ExpandOverlay，pi-tui 版措辞与 Ink 版 expandViewer 不同）---
+  'expandOverlay.title': 'Viewer · {turns} turns · {count} items · {lines} lines total',
+  'expandOverlay.footer': '↑↓/jk scroll · PgUp/PgDn page · ←→ turns · g/G top/bottom · Esc/q/Ctrl+O close',
+
   'tasksViewer.title': 'TASK BROWSER  filter={filter} · {running} running · {completed} completed · {failed} failed/killed · {total} total',
   'tasksViewer.filterAll': 'ALL',
   'tasksViewer.filterRunning': 'running',
@@ -844,6 +897,19 @@ const en: Record<keyof typeof zh, string> = {
   'tasksViewer.outputFooter': '↑↓ scroll · PgUp/PgDn page · g/G top/bottom · Esc/q back to list',
   'tasksViewer.position': 'lines {start}-{end}/{total}',
 
+  // --- 后台任务弹层（TasksOverlay，pi-tui 版措辞与 Ink 版 tasksViewer 不同）---
+  'tasksOverlay.title': 'Background tasks · {filter} ({shown}/{total})',
+  'tasksOverlay.emptyAll': '  no background tasks',
+  'tasksOverlay.emptyFiltered': '  no {filter} tasks',
+  'tasksOverlay.filterAll': 'all',
+  'tasksOverlay.filterRunning': 'running',
+  'tasksOverlay.filterDone': 'done',
+  'tasksOverlay.filterFailed': 'failed',
+  'tasksOverlay.outputTitle': '── Output ({id}) ──',
+  'tasksOverlay.noOutput': '(no output yet)',
+  'tasksOverlay.confirmStop': 'Stop task {id}? [y/N]',
+  'tasksOverlay.footer': '↑↓/jk select · Tab filter · o/Enter view output · s stop · Esc/q close',
+
   'liveViewport.hiddenLines': '↑ {count} earlier lines hidden',
 
   'thinking.streaming': 'Thinking…',
@@ -868,6 +934,7 @@ const en: Record<keyof typeof zh, string> = {
   'dynamicWorkflow.summary': 'dynamic_workflow "{name}" · {phases} phases',
 
   'time.justNow': 'just now',
+  'time.secondsAgo': '{count}s ago',
   'time.minutesAgo': '{count} min ago',
   'time.hoursAgo': '{count} hr ago',
   'time.daysAgo': '{count} days ago',
@@ -906,6 +973,17 @@ const en: Record<keyof typeof zh, string> = {
   'thinkPicker.detail.medium': 'balanced (recommended)',
   'thinkPicker.detail.high': 'deepest thinking; may consume the whole output budget on hard tasks',
   'thinkPicker.offDetail': 'disable the thinking field',
+
+  // --- 选择器通用（PickerOverlay）与思考深度选项 ---
+  'picker.hint.default': '↑↓ select · Enter confirm · type to filter · Esc cancel',
+  'picker.filterPrefix': '  filter: ',
+  'picker.resumeTitle': 'Resume session',
+  'picker.resumeHint': '↑↓ select · Enter resume · type to filter · Esc cancel (start new session)',
+  'picker.thinkLevel.high': 'deepest thinking, slower but more stable',
+  'picker.thinkLevel.medium': 'balanced (recommended)',
+  'picker.thinkLevel.low': 'light thinking, fast',
+  'picker.thinkLevel.off': 'do not send thinking field this session',
+  'picker.thinkLevel.default': 'follow config default',
 
   // --- 技能选择器（SkillPicker）与 /skill 命令 ---
   'skillPicker.title': 'Select a skill to activate (type to filter · ↑↓ select · Enter activate · Esc cancel)',
@@ -956,6 +1034,16 @@ const en: Record<keyof typeof zh, string> = {
   'todo.status.doing': 'in progress',
   'todo.status.pending': 'pending',
   'todo.status.done': 'done',
+
+  // --- 常驻面板（ChromePanels：TODO + 发送队列）---
+  'panel.todo.title': 'Todos',
+  'panel.todo.inProgress': '{count} in progress',
+  'panel.todo.pending': '{count} pending',
+  'panel.todo.done': '{count} done',
+  'panel.todo.more': '  … {count} more ({parts})',
+  'panel.queue.title': 'Send queue ({count}, sent in order at end of turn)',
+  'panel.queue.more': '  … {count} more',
+  'panel.queue.recall': '  Esc recall to input',
 
   'lang.current': 'Current UI language: {lang} (available: zh / en)',
   'lang.switched': 'UI language switched to: {lang}',

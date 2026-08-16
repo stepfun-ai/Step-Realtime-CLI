@@ -13,20 +13,21 @@ import { Container, Editor, SelectList, matchesKey, visibleWidth, type Component
 import type { SessionMeta } from '../session/store.js';
 import type { StepCodeConfig } from '../config/config.js';
 import { c, editorTheme, selectListTheme } from './theme.js';
+import { t } from '../i18n.js';
 
 /** 相对时间（与 Ink 版 SessionPicker.relativeTime 同口径）。 */
 export function relativeTime(iso: string, now = Date.now()): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return '';
-  const sec = Math.max(0, Math.round((now - t) / 1000));
-  if (sec < 60) return `${sec} 秒前`;
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) return '';
+  const sec = Math.max(0, Math.round((now - parsed) / 1000));
+  if (sec < 60) return t('time.secondsAgo', { count: sec });
   const min = Math.round(sec / 60);
-  if (min < 60) return `${min} 分钟前`;
+  if (min < 60) return t('time.minutesAgo', { count: min });
   const hour = Math.round(min / 60);
-  if (hour < 24) return `${hour} 小时前`;
+  if (hour < 24) return t('time.hoursAgo', { count: hour });
   const day = Math.round(hour / 24);
-  if (day < 30) return `${day} 天前`;
-  return new Date(t).toISOString().slice(0, 10);
+  if (day < 30) return t('time.daysAgo', { count: day });
+  return new Date(parsed).toISOString().slice(0, 10);
 }
 
 export interface PickerTab {
@@ -76,7 +77,7 @@ export class PickerOverlay implements Component {
     initialTab?: string;
   }) {
     this.title = opts.title;
-    this.hint = opts.hint ?? '↑↓ 选择 · Enter 确认 · 输入过滤 · Esc 取消';
+    this.hint = opts.hint ?? t('picker.hint.default');
     this.requestRender = opts.requestRender;
     this.onSelectItem = opts.onSelect;
     this.onCancel = opts.onCancel;
@@ -171,7 +172,7 @@ export class PickerOverlay implements Component {
   }
 
   render(width: number): string[] {
-    const head = `${c.accent(this.title)}${this.filter !== '' ? c.dim(`  过滤：${this.filter}`) : ''}`;
+    const head = `${c.accent(this.title)}${this.filter !== '' ? c.dim(t('picker.filterPrefix') + this.filter) : ''}`;
     const lines = [head];
     if (this.tabs.length > 1) {
       // tab 条：active 反色加粗，其余灰色；总宽超 width 时右端截断加 …（v1 不做滚动窗口）
@@ -197,7 +198,7 @@ export function sessionItems(metas: readonly SessionMeta[], now = Date.now()): S
   return metas.map((m) => ({
     value: m.id,
     label: m.name ?? m.title ?? m.preview?.slice(0, 40) ?? m.id,
-    description: `${relativeTime(m.updatedAt, now)} · ${m.messageCount} 条 · ${m.id.slice(0, 8)}`,
+    description: `${relativeTime(m.updatedAt, now)} · ${t('sessionPicker.count', { count: m.messageCount })} · ${m.id.slice(0, 8)}`,
   }));
 }
 
@@ -234,11 +235,11 @@ export function modelItems(config: StepCodeConfig, currentAlias?: string, channe
 /** 思考深度候选项：三档 + 关闭 + 跟随配置默认。 */
 export function thinkItems(current?: string): SelectItem[] {
   const rows: { value: string; label: string; description: string }[] = [
-    { value: 'high', label: 'high', description: '最深思考，慢但更稳' },
-    { value: 'medium', label: 'medium', description: '默认档位' },
-    { value: 'low', label: 'low', description: '浅思考，快' },
-    { value: 'off', label: 'off', description: '本会话不发思考字段' },
-    { value: '__default__', label: '跟随配置默认', description: '清除会话级覆盖' },
+    { value: 'high', label: 'high', description: t('picker.thinkLevel.high') },
+    { value: 'medium', label: 'medium', description: t('picker.thinkLevel.medium') },
+    { value: 'low', label: 'low', description: t('picker.thinkLevel.low') },
+    { value: 'off', label: 'off', description: t('picker.thinkLevel.off') },
+    { value: '__default__', label: t('picker.thinkLevel.default'), description: t('picker.thinkLevel.default') },
   ];
   return rows.map((r) => ({
     ...r,
@@ -253,7 +254,7 @@ export function modelTabs(config: StepCodeConfig): PickerTab[] {
     const channel = entry.provider ?? config.provider ?? 'default';
     if (!seen.includes(channel)) seen.push(channel);
   }
-  return [{ id: 'all', label: '全部' }, ...seen.sort().map((ch) => ({ id: ch, label: ch }))];
+  return [{ id: 'all', label: t('modelPicker.tabAll') }, ...seen.sort().map((ch) => ({ id: ch, label: ch }))];
 }
 
 /** 把选择器挂成 overlay 并返回结果（取消为 null）。 */
@@ -319,9 +320,9 @@ export async function pickSessionStandalone(metas: readonly SessionMeta[]): Prom
   tui.start();
   try {
     return await showPicker(tui, {
-      title: '恢复会话',
+      title: t('picker.resumeTitle'),
       items: sessionItems(metas),
-      hint: '↑↓ 选择 · Enter 恢复 · 输入过滤 · Esc 放弃（开新会话）',
+      hint: t('picker.resumeHint'),
     });
   } finally {
     tui.stop();
