@@ -17,36 +17,48 @@ export type Locale = 'zh' | 'en';
 /** 中文表（基准表，en 表 key 集合必须与之逐一对齐，由类型与测试双重强制）。 */
 const zh = {
   // --- 审批对话（ApprovalPrompt）---
-  'approval.title': '需要确认：即将执行工具 {name}',
-  'approval.title.bash': '执行这条命令？',
-  'approval.title.write': '写入这个文件？',
-  'approval.title.edit': '应用这些修改？',
-  'approval.option.allowOnce': '允许一次（y）',
-  'approval.option.allowSession': '本会话都允许（a）',
-  'approval.option.deny': '拒绝（n）',
-  'approval.option.denyWithFeedback': '拒绝并写评论（f）',
+  //
+  // 2026-08-16：值统一按 pi 版组件的实际措辞与键位校准。Ink 层已于 M5 删除，本表现在
+  // 唯一的消费者是 tui-pi，所以「以组件为准改表」比「以表为准改组件」零回归——后者会
+  // 改动中文用户已经看惯的文案，还可能把 pi 版重写时故意调整的键位说明改回错的。
+  'approval.title': '允许调用 {name} 吗',
+  'approval.title.bash': '允许执行这条命令吗',
+  'approval.title.write': '允许写入这个文件吗',
+  'approval.title.edit': '允许修改这个文件吗',
+  // 选项 label 不含热键：ChoiceBlock 只用 hotkeys 做键盘匹配、不渲染它，热键统一在
+  // 底部 hint 里说明。label 里再写一遍会变成「1. 允许一次（y）」这样的重复。
+  'approval.option.allowOnce': '允许一次',
+  'approval.option.allowSession': '本会话都允许',
+  'approval.option.deny': '拒绝',
+  'approval.option.denyWithFeedback': '拒绝并说明原因',
   'approval.hint.feedback': '输入拒绝原因 · Enter 提交 · Esc 直接拒绝',
-  'approval.hint.select': '↑/↓ 选择 · 1/2/3/4 或 y/a/n/f 直选 · Enter 确认 · Esc 拒绝',
-  // bash 危险命令警告（命中模式表后在命令上方红标显示）
-  'approval.danger.rmRf': '危险命令：递归强制删除（rm -rf）',
-  'approval.danger.sudo': '危险命令：将以 root 权限执行（sudo）',
-  'approval.danger.pipeShell': '危险命令：远程脚本直接管道执行（curl/wget | sh）',
-  'approval.danger.ddDevice': '危险命令：dd 直接写入块设备',
-  'approval.danger.mkfs': '危险命令：格式化文件系统（mkfs）',
-  'approval.danger.chmod777': '危险命令：开放全部权限（chmod 777）',
-  'approval.danger.rawDevice': '危险命令：重定向直接写入裸设备',
-  'approval.danger.forkBomb': '危险命令：疑似 fork 炸弹',
+  'approval.hint.select': '↑↓ 选择 · Enter 确认 · y/a/n/f 直选 · Esc 拒绝',
+  'approval.hint.previewToggle': ' · Ctrl+E {action}预览',
+  'approval.hint.expand': '展开',
+  'approval.hint.collapse': '收起',
+  // bash 危险命令警告（命中模式表后在命令上方红标显示）。
+  // 措辞保留 pi 版的「后果说明」而非 Ink 版的「命令名复述」：用户要判断的是会失去什么，
+  // 「递归强制删除（rm -rf）」只是把命令念了一遍，命令本身就显示在下一行。
+  'approval.danger.rmRf': '递归强制删除：删掉的内容不进回收站，无法撤销',
+  'approval.danger.sudo': '以 root 权限执行',
+  'approval.danger.pipeShell': '把远程脚本直接管道给 shell 执行',
+  'approval.danger.ddDevice': '向块设备写入：会覆盖磁盘数据',
+  'approval.danger.mkfs': '格式化文件系统',
+  'approval.danger.chmod777': '开放全部权限',
+  'approval.danger.rawDevice': '重定向写裸设备',
+  'approval.danger.forkBomb': 'fork 炸弹',
   // ctrl+e 预览（edit diff / write 内容）
-  'approval.preview.more': '… 仅显示前 {shown}/{total} 行 · Ctrl+E 预览更多',
+  'approval.preview.more': '  ↳ 还有 {rest} 行（Ctrl+E 展开）',
   'approval.preview.collapse': '… 已展开全部 {total} 行 · Ctrl+E 收起',
 
   // --- 询问用户（QuestionPrompt）---
   'question.other': 'Other（自由输入）',
   'question.counter': '(第 {index}/{total} 题) ',
-  'question.multiHint': '  （多选：空格勾选，Enter 提交）',
-  'question.otherPlaceholder': '输入自定义答案，回车提交',
-  'question.hint': '↑↓ 移动 · 数字键直选 · Enter 确认 · Esc 取消',
-  'question.hintMulti': '↑↓ 移动 · ←→ 切换题 · 数字键直选 · Enter 确认 · Esc 取消',
+  'question.multiHint': '（空格多选）',
+  'question.otherPlaceholder': '自己写一个答案',
+  'question.hint': '↑↓ 移动 · Enter 确认 · Esc 取消',
+  'question.hintMulti': '↑↓ 移动 · Enter 确认 · ←→ 切题 · Esc 取消',
+
 
   // --- 底部输入框（PromptInput）---
   'input.placeholder.busy': '思考中…输入将加入发送队列',
@@ -295,10 +307,11 @@ const zh = {
   // --- App 计划确认框与计划模式 ---
   'app.plan.approved': '📋 已批准的计划：\n\n{plan}',
   'app.plan.readyTitle': 'Ready to code? 计划如下：',
-  'plan.option.approve': '批准并执行',
+  'plan.option.approve': '按这个计划执行',
   'plan.option.rejectWithFeedback': '拒绝并说明如何修订',
   'plan.option.reject': '拒绝',
-  'plan.hint': '↑↓ 选择 · Enter 确认 · 1-3 直选 · y 批准 / n 拒绝 / f 写修订意见 · Esc 拒绝',
+  'plan.hint': '↑↓ 选择 · Enter 确认 · y/f/n 直选 · Esc 拒绝',
+  'plan.confirmTitle': '计划已就绪，确认后退出计划模式并开始执行',
   'app.plan.off': '计划模式已关闭，恢复执行。',
   'app.plan.on': '计划模式已开启：我只做只读调查并产出计划，调 exit_plan_mode 提交你确认，批准后才执行。再次输入 /plan 可提前关闭。',
 
@@ -747,33 +760,36 @@ const zh = {
 
 /** 英文表：key 与 zh 一一对应（类型级强制，漏 key 直接编译报错）。 */
 const en: Record<keyof typeof zh, string> = {
-  'approval.title': 'Approval needed: about to run tool {name}',
-  'approval.title.bash': 'Run this command?',
-  'approval.title.write': 'Write this file?',
-  'approval.title.edit': 'Apply these changes?',
-  'approval.option.allowOnce': 'Allow once (y)',
-  'approval.option.allowSession': 'Allow for this session (a)',
-  'approval.option.deny': 'Deny (n)',
-  'approval.option.denyWithFeedback': 'Deny with feedback (f)',
+  'approval.title': 'Allow calling {name}?',
+  'approval.title.bash': 'Allow running this command?',
+  'approval.title.write': 'Allow writing this file?',
+  'approval.title.edit': 'Allow editing this file?',
+  'approval.option.allowOnce': 'Allow once',
+  'approval.option.allowSession': 'Allow for this session',
+  'approval.option.deny': 'Deny',
+  'approval.option.denyWithFeedback': 'Deny and explain why',
   'approval.hint.feedback': 'Type rejection reason · Enter to submit · Esc to deny',
-  'approval.hint.select': '↑/↓ select · 1/2/3/4 or y/a/n/f · Enter confirm · Esc deny',
-  'approval.danger.rmRf': 'Dangerous: recursive force delete (rm -rf)',
-  'approval.danger.sudo': 'Dangerous: runs with root privileges (sudo)',
-  'approval.danger.pipeShell': 'Dangerous: remote script piped to shell (curl/wget | sh)',
-  'approval.danger.ddDevice': 'Dangerous: dd writes directly to a block device',
-  'approval.danger.mkfs': 'Dangerous: formats a filesystem (mkfs)',
-  'approval.danger.chmod777': 'Dangerous: grants all permissions (chmod 777)',
-  'approval.danger.rawDevice': 'Dangerous: redirect writes directly to a raw device',
-  'approval.danger.forkBomb': 'Dangerous: suspected fork bomb',
-  'approval.preview.more': '… showing first {shown}/{total} lines · Ctrl+E to preview more',
+  'approval.hint.select': '↑↓ select · Enter confirm · y/a/n/f direct · Esc deny',
+  'approval.hint.previewToggle': ' · Ctrl+E {action} preview',
+  'approval.hint.expand': 'expand',
+  'approval.hint.collapse': 'collapse',
+  'approval.danger.rmRf': 'Recursive force delete: nothing goes to the trash, cannot be undone',
+  'approval.danger.sudo': 'Runs with root privileges',
+  'approval.danger.pipeShell': 'Pipes a remote script straight into the shell',
+  'approval.danger.ddDevice': 'Writes to a block device: will overwrite disk data',
+  'approval.danger.mkfs': 'Formats a filesystem',
+  'approval.danger.chmod777': 'Grants all permissions',
+  'approval.danger.rawDevice': 'Redirects output onto a raw device',
+  'approval.danger.forkBomb': 'Fork bomb',
+  'approval.preview.more': '  ↳ {rest} more lines (Ctrl+E to expand)',
   'approval.preview.collapse': '… all {total} lines shown · Ctrl+E to collapse',
 
   'question.other': 'Other (free input)',
   'question.counter': '(Question {index}/{total}) ',
-  'question.multiHint': '  (multi-select: Space to toggle, Enter to submit)',
-  'question.otherPlaceholder': 'Type a custom answer, Enter to submit',
-  'question.hint': '↑↓ move · number keys select · Enter confirm · Esc cancel',
-  'question.hintMulti': '↑↓ move · ←→ switch question · number keys select · Enter confirm · Esc cancel',
+  'question.multiHint': '(Space to multi-select)',
+  'question.otherPlaceholder': 'Write your own answer',
+  'question.hint': '↑↓ move · Enter confirm · Esc cancel',
+  'question.hintMulti': '↑↓ move · Enter confirm · ←→ switch question · Esc cancel',
 
   'input.placeholder.busy': 'Thinking… input will join the send queue',
   'input.placeholder.idle': 'Type a command, Enter to send',
@@ -990,10 +1006,11 @@ const en: Record<keyof typeof zh, string> = {
 
   'app.plan.approved': '📋 Approved plan:\n\n{plan}',
   'app.plan.readyTitle': 'Ready to code? Plan as follows:',
-  'plan.option.approve': 'Approve and execute',
+  'plan.option.approve': 'Go with this plan',
   'plan.option.rejectWithFeedback': 'Reject and describe what to revise',
   'plan.option.reject': 'Reject',
-  'plan.hint': '↑↓ select · Enter confirm · 1-3 quick pick · y approve / n reject / f write feedback · Esc reject',
+  'plan.hint': '↑↓ select · Enter confirm · y/f/n direct · Esc reject',
+  'plan.confirmTitle': 'Plan is ready; confirming exits plan mode and starts execution',
   'app.plan.off': 'Plan mode off; resuming execution.',
   'app.plan.on': 'Plan mode on: I will only investigate read-only and produce a plan, submit it via exit_plan_mode for your confirmation, and execute only after approval. Type /plan again to turn it off early.',
 

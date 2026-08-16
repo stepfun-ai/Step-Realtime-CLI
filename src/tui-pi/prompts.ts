@@ -7,6 +7,7 @@
  */
 import { Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { AskUserQuestion, AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
+import { t } from '../i18n.js';
 import { ChoiceBlock, type Choice } from './ChoiceBlock.js';
 import { c, markdownTheme } from './theme.js';
 import { markdownTransform } from '../chat/markdownPrep.js';
@@ -14,34 +15,41 @@ import { markdownTransform } from '../chat/markdownPrep.js';
 /** 预览折叠行数上限（与 Ink 版 PREVIEW_LIMIT 同口径）。 */
 const PREVIEW_LIMIT = 10;
 
-/** 按工具定制的审批标题。 */
-const TITLES: Record<string, string> = {
-  bash: '允许执行这条命令吗',
-  write_file: '允许写入这个文件吗',
-  edit_file: '允许修改这个文件吗',
+/**
+ * 按工具定制的审批标题：存 i18n key 而不是文案。
+ *
+ * 这一层原来是硬编码中文，于是英文 locale 下审批弹层整块不翻译。审批是要用户做决定的
+ * 界面，看不懂等于没提示，所以这里的接线优先级高于其它面板。
+ */
+const TITLE_KEYS: Record<string, string> = {
+  bash: 'approval.title.bash',
+  write_file: 'approval.title.write',
+  edit_file: 'approval.title.edit',
 };
 
 /**
  * bash 危险命令模式表（逐条抄自 Ink 版，宁保守勿误报）。
  * 命中后在命令上方红标一行警告。
+ *
+ * warn 存 i18n key：危险警告是安全信息，英文用户看不懂中文警告等于警告失效。
  */
-const DANGER_PATTERNS: ReadonlyArray<{ pattern: RegExp; warn: string }> = [
+const DANGER_PATTERNS: ReadonlyArray<{ pattern: RegExp; warnKey: string }> = [
   {
     pattern:
       /\brm\s+(?:-{1,2}[\w-]+\s+)*(?:-[\w-]*(?:r[\w-]*f|f[\w-]*r)[\w-]*|--recursive\b[^|;]*--force|--force\b[^|;]*--recursive)/,
-    warn: '递归强制删除：删掉的内容不进回收站，无法撤销',
+    warnKey: 'approval.danger.rmRf',
   },
-  { pattern: /\bsudo\b/, warn: '以 root 权限执行' },
-  { pattern: /\b(?:curl|wget)\b[^|;]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/, warn: '把远程脚本直接管道给 shell 执行' },
-  { pattern: /\bdd\b[^|;]*\bof=\/dev\//, warn: '向块设备写入：会覆盖磁盘数据' },
-  { pattern: /\bmkfs(?:\.\w+)?\b/, warn: '格式化文件系统' },
-  { pattern: /\bchmod\s+(?:-\S+\s+)*777\b/, warn: '开放全部权限' },
-  { pattern: />\s*\/dev\/(?:sd|hd|vd|nvme|mmcblk|disk)/, warn: '重定向写裸设备' },
-  { pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:\s*&[^}]*\}/, warn: 'fork 炸弹' },
+  { pattern: /\bsudo\b/, warnKey: 'approval.danger.sudo' },
+  { pattern: /\b(?:curl|wget)\b[^|;]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/, warnKey: 'approval.danger.pipeShell' },
+  { pattern: /\bdd\b[^|;]*\bof=\/dev\//, warnKey: 'approval.danger.ddDevice' },
+  { pattern: /\bmkfs(?:\.\w+)?\b/, warnKey: 'approval.danger.mkfs' },
+  { pattern: /\bchmod\s+(?:-\S+\s+)*777\b/, warnKey: 'approval.danger.chmod777' },
+  { pattern: />\s*\/dev\/(?:sd|hd|vd|nvme|mmcblk|disk)/, warnKey: 'approval.danger.rawDevice' },
+  { pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:\s*&[^}]*\}/, warnKey: 'approval.danger.forkBomb' },
 ];
 
 export function dangerWarnings(command: string): string[] {
-  return DANGER_PATTERNS.filter(({ pattern }) => pattern.test(command)).map(({ warn }) => warn);
+  return DANGER_PATTERNS.filter(({ pattern }) => pattern.test(command)).map(({ warnKey }) => t(warnKey));
 }
 
 function bashCommand(name: string, input: unknown): string {
@@ -108,10 +116,10 @@ export class InlineApproval extends ChoiceBlock<ApprovalValue> {
     done: (outcome: ApprovalOutcome) => void,
   ) {
     const choices: Choice<ApprovalValue>[] = [
-      { label: '允许一次', hotkeys: ['y'], value: 'allow' },
-      { label: '本会话都允许', hotkeys: ['a'], value: 'allow-session' },
-      { label: '拒绝', hotkeys: ['n'], value: 'deny' },
-      { label: '拒绝并说明原因', hotkeys: ['f'], value: 'deny-feedback', requiresFeedback: true },
+      { label: t('approval.option.allowOnce'), hotkeys: ['y'], value: 'allow' },
+      { label: t('approval.option.allowSession'), hotkeys: ['a'], value: 'allow-session' },
+      { label: t('approval.option.deny'), hotkeys: ['n'], value: 'deny' },
+      { label: t('approval.option.denyWithFeedback'), hotkeys: ['f'], value: 'deny-feedback', requiresFeedback: true },
     ];
     super(choices, requestRender);
     this.toolName = toolName;
@@ -138,15 +146,16 @@ export class InlineApproval extends ChoiceBlock<ApprovalValue> {
   }
 
   protected override hintLine(): string {
-    const base = '↑↓ 选择 · Enter 确认 · y/a/n/f 直选 · Esc 拒绝';
-    return this.preview !== null && this.preview.length > PREVIEW_LIMIT
-      ? `${base} · Ctrl+E ${this.expanded ? '收起' : '展开'}预览`
-      : base;
+    const base = t('approval.hint.select');
+    if (this.preview === null || this.preview.length <= PREVIEW_LIMIT) return base;
+    const action = t(this.expanded ? 'approval.hint.collapse' : 'approval.hint.expand');
+    return base + t('approval.hint.previewToggle', { action });
   }
 
   protected renderBody(width: number): string[] {
     const out: string[] = [];
-    out.push(c.warn(TITLES[this.toolName] ?? `允许调用 ${this.toolName} 吗`));
+    const titleKey = TITLE_KEYS[this.toolName];
+    out.push(c.warn(titleKey !== undefined ? t(titleKey) : t('approval.title', { name: this.toolName })));
     for (const warn of dangerWarnings(bashCommand(this.toolName, this.input))) {
       out.push(c.error(`  ⚠ ${warn}`));
     }
@@ -161,7 +170,7 @@ export class InlineApproval extends ChoiceBlock<ApprovalValue> {
         out.push(`  ${truncateToWidth(colored, Math.max(1, width - 2))}`);
       }
       if (!this.expanded && this.preview.length > PREVIEW_LIMIT) {
-        out.push(c.dim(`  ↳ 还有 ${this.preview.length - PREVIEW_LIMIT} 行（Ctrl+E 展开）`));
+        out.push(c.dim(t('approval.preview.more', { rest: this.preview.length - PREVIEW_LIMIT })));
       }
     }
     return out;
@@ -182,9 +191,9 @@ export class PlanApproval extends ChoiceBlock<PlanValue> {
   constructor(plan: string, requestRender: () => void, done: (outcome: PlanOutcome) => void) {
     super(
       [
-        { label: '按这个计划执行', hotkeys: ['y'], value: 'approve' },
-        { label: '拒绝并说明如何修订', hotkeys: ['f'], value: 'reject-feedback', requiresFeedback: true },
-        { label: '拒绝', hotkeys: ['n'], value: 'reject' },
+        { label: t('plan.option.approve'), hotkeys: ['y'], value: 'approve' },
+        { label: t('plan.option.rejectWithFeedback'), hotkeys: ['f'], value: 'reject-feedback', requiresFeedback: true },
+        { label: t('plan.option.reject'), hotkeys: ['n'], value: 'reject' },
       ],
       requestRender,
     );
@@ -201,11 +210,11 @@ export class PlanApproval extends ChoiceBlock<PlanValue> {
   }
 
   protected override hintLine(): string {
-    return '↑↓ 选择 · Enter 确认 · y/f/n 直选 · Esc 拒绝';
+    return t('plan.hint');
   }
 
   protected renderBody(width: number): string[] {
-    return [c.accent('计划已就绪，确认后退出计划模式并开始执行'), ...this.markdown.render(Math.max(1, width - 2)).map((l) => `  ${l}`)];
+    return [c.accent(t('plan.confirmTitle')), ...this.markdown.render(Math.max(1, width - 2)).map((l) => `  ${l}`)];
   }
 }
 
@@ -353,7 +362,7 @@ export class QuestionPrompt {
     const out: string[] = [];
     const counter = this.req.questions.length > 1 ? `[${this.qIdx + 1}/${this.req.questions.length}] ` : '';
     const header = q.header !== undefined && q.header !== '' ? `[${q.header}] ` : '';
-    const multi = q.multi_select === true ? c.dim('（空格多选）') : '';
+    const multi = q.multi_select === true ? c.dim(t('question.multiHint')) : '';
     out.push(...wrapTextWithAnsi(`${c.accent(counter)}${c.dim(header)}${q.question}${multi}`, Math.max(1, width)));
     q.options.forEach((opt, i) => {
       const on = slot.cursor === i;
@@ -363,13 +372,13 @@ export class QuestionPrompt {
       out.push(truncateToWidth(`${on ? c.toolName('→ ') : '  '}${box}[${i + 1}] ${label}${desc}`, width));
     });
     const onOther = slot.cursor === this.otherIndex;
-    const otherText = slot.other === '' ? c.dim('自己写一个答案') : slot.other;
+    const otherText = slot.other === '' ? c.dim(t('question.otherPlaceholder')) : slot.other;
     out.push(truncateToWidth(`${onOther ? c.toolName('→ ') : '  '}${otherText}${onOther ? '▌' : ''}`, width));
     out.push(
       c.dim(
         this.req.questions.length > 1
-          ? '↑↓ 移动 · Enter 确认 · ←→ 切题 · Esc 取消'
-          : '↑↓ 移动 · Enter 确认 · Esc 取消',
+          ? t('question.hintMulti')
+          : t('question.hint'),
       ),
     );
     out.push('');

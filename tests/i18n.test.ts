@@ -20,7 +20,9 @@ afterEach(() => {
 
 describe('t() 查表与插值', () => {
   it('默认 zh：返回中文文案', () => {
-    expect(t('approval.option.deny')).toBe('拒绝（n）');
+    // 值不含热键标注：ChoiceBlock 只用 hotkeys 做键盘匹配、不渲染它，热键在底部 hint 里
+    // 统一说明。2026-08-16 按 pi 版组件的实际渲染校准了这批 label。
+    expect(t('approval.option.deny')).toBe('拒绝');
     expect(t('todo.title')).toBe('任务清单');
   });
 
@@ -35,7 +37,7 @@ describe('t() 查表与插值', () => {
 
   it('缺失 key 回退 zh 表；zh 也没有返回 key 本身', () => {
     setLocale('en');
-    expect(t('approval.option.deny')).toBe('Deny (n)');
+    expect(t('approval.option.deny')).toBe('Deny');
     expect(t('no.such.key')).toBe('no.such.key');
   });
 
@@ -419,5 +421,46 @@ describe('批次二关键 key：zh 插值与 en 对照', () => {
     expect(t('cmd.loop')).not.toContain('创建');
     setLocale('en');
     expect(t('cmd.loop')).not.toContain('create');
+  });
+});
+
+/**
+ * en locale 下的中文残留守卫。
+ *
+ * 2026-08-16 扫描发现：tui-pi 的六个 UI 组件（prompts / pickers / TasksOverlay /
+ * ExpandOverlay / ProviderManager / commandText）完全不走 i18n，文案是硬编码中文，
+ * 于是英文用户看到的界面基本还是中文——i18n 表里 397 个 key 没有任何调用点。
+ *
+ * 这组测试直接渲染组件、断言 en 下无 CJK 字符，比「grep 源码有没有中文字面量」更准：
+ * 后者拦不住「字面量在 i18n 表里但 en 值忘了译」，前者能。
+ * 每接线一个组件就把它加进来，逐个收口。
+ */
+describe('en locale 下界面无中文残留（逐组件收口）', () => {
+  const CJK = /[\u4e00-\u9fa5]/;
+  /** 剥 ANSI 后找 CJK：颜色码里不会有中文，但去掉后断言失败信息更可读。 */
+  const cjkIn = (lines: readonly string[]): string[] =>
+    lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, '')).filter((l) => CJK.test(l));
+
+  it('审批弹层（prompts.ts）：标题 / 选项 / 危险警告 / 提示行全部可翻译', async () => {
+    const { InlineApproval, PlanApproval, dangerWarnings } = await import('../src/tui-pi/prompts.js');
+    setLocale('en');
+    // 危险命令警告是安全信息，英文用户看不懂中文警告等于警告失效
+    expect(cjkIn(dangerWarnings('rm -rf /tmp/x'))).toEqual([]);
+    expect(cjkIn(dangerWarnings('sudo rm -rf /'))).toEqual([]);
+
+    const ap = new InlineApproval('bash', { command: 'ls -la' }, () => {}, () => {});
+    expect(cjkIn(ap.render(80)), '审批弹层渲染出中文').toEqual([]);
+
+    // 未知工具走 approval.title 的插值分支
+    const ap2 = new InlineApproval('some_tool', { x: 1 }, () => {}, () => {});
+    expect(cjkIn(ap2.render(80))).toEqual([]);
+
+    // 长预览触发 Ctrl+E 折叠提示与展开/收起切换
+    const long = Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n');
+    const ap3 = new InlineApproval('write_file', { path: 'a.txt', content: long }, () => {}, () => {});
+    expect(cjkIn(ap3.render(80)), '折叠提示行出现中文').toEqual([]);
+
+    const plan = new PlanApproval('# Plan\n\n- step one', () => {}, () => {});
+    expect(cjkIn(plan.render(80)), '计划确认框出现中文').toEqual([]);
   });
 });
