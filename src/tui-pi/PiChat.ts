@@ -303,6 +303,9 @@ export class PiChat {
     this.defaultModelPointer = deps.config.modelAlias ?? deps.config.model;
     this.mode = deps.initialMode;
     this.planMode = deps.session.planMode ?? false;
+    // 待发队列随会话恢复：上次退出时排着队没发出去的内容，接回来等本轮结束照常自动发送。
+    // 不在这里立刻起回合——启动这一刻用户可能正要输别的（与后台通知补投同一考虑）。
+    this.queue = [...(deps.session.queue ?? [])];
     this.history = [...deps.session.messages];
 
     this.tui = new TuiMainScreen(new ProcessTerminal());
@@ -696,6 +699,24 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.tui.requestRender();
   }
 
+  /**
+   * 队列变更的唯一出口：改内存 → 落 wire 事件 → 刷状态栏与常驻面板。
+   *
+   * 不允许各处直接改 `this.queue`：变更点有五处（busy 时排队、排队的斜杠命令、后台
+   * 通知补投、Esc 取回时清空、回合末消费剩余），任一处漏落盘就会出现「界面显示 N 条、
+   * 重启后变 M 条」。走 wire 事件而不是只等 persist 的理由见 wirelog 里 queue.update
+   * 的说明：排队发生在 busy 期间，而 persist 集中在回合边界。
+   */
+  private updateQueue(next: readonly string[]): void {
+    this.queue = [...next];
+    this.appendWire({
+      type: 'queue.update',
+      ts: new Date().toISOString(),
+      queue: next.length > 0 ? [...next] : undefined,
+    });
+    this.syncStatus();
+  }
+
   /** 持久化。顺序不变量与 Ink 版一致：先 appendFull 再 save（wireSeq 游标一致性）。 */
   private persist(): void {
     this.session.messages = this.history;
@@ -704,6 +725,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.session.model = this.currentAlias ?? this.model;
     this.session.thinkOverride = this.thinkOverride;
     this.session.planMode = this.planMode;
+    // 空队列写 undefined 而非空数组：与 queue.update 事件的归一口径一致，快照里不留噪音
+    this.session.queue = this.queue.length > 0 ? [...this.queue] : undefined;
     // goal 与 team 快照随会话落盘（无值时清掉旧字段，否则 resume 会复活已结束的目标）
     this.session.goal = this.goal.snapshot() ?? undefined;
     this.session.team = this.team.snapshot() ?? undefined;
@@ -777,7 +800,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
           notificationId: o.notificationId,
         });
       }
-      this.queue = [];
+      this.updateQueue([]);
       this.notifyPrepared.clear();
       const cur = this.editor.getText();
       const merged = drafts.join('\n');
@@ -963,8 +986,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         return;
       }
       // busy 时提交进队列，回合收尾自动续发（对齐 Ink 版发送队列语义）
-      this.queue.push(text);
-      this.syncStatus();
+      this.updateQueue([...this.queue, text]);
       this.push({ kind: 'note', text: `已排队（${this.queue.length} 条），回合结束后自动发送` });
       return;
     }
@@ -990,8 +1012,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       return;
     }
     if (this.busy && busyRoute(name, args) === 'queue') {
-      this.queue.push(raw.trim());
-      this.syncStatus();
+      this.updateQueue([...this.queue, raw.trim()]);
       this.push({
         kind: 'note',
         text: `/${name} 会改动本回合的前提，已排队（${this.queue.length} 条），回合结束后执行`,
@@ -1903,6 +1924,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.images.clear();
     // 新会话 model 存别名（同 persist 口径），避免真实 id 被启动时的别名反查误判
     this.session = this.deps.store.create(this.deps.ctx.cwd, this.currentAlias ?? this.model);
+    // 队列不跨会话：与 fork 同理，排队内容属于上一个会话的现场（已由开头 persist 保住）。
+    // 直接赋值不走 updateQueue，避免给新会话日志记一条凭空的「清空」。
+    this.queue = [];
+    this.notifyPrepared.clear();
     this.rebindBackground();
     this.planMode = false;
     this.prePlanMode = null;
@@ -1943,6 +1968,12 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.team.deactivate();
     this.status.setState({ goal: undefined, teamActive: false });
     this.session = forked;
+    // 队列不随 fork 走：排队内容是用户对源会话说的话，副本继承会让同一批消息在两个
+    // 会话各发一次。源会话的队列已由函数开头那次 persist 保住，这里只清内存。
+    // 直接赋值不走 updateQueue——此刻日志已是副本的，落一条 queue.update 等于在副本
+    // 历史上凭空记一次「清空」。
+    this.queue = [];
+    this.notifyPrepared.clear();
     this.rebindBackground();
     this.persist();
     this.push({
@@ -1987,6 +2018,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         }
       })();
     }
+    const redelivered: string[] = [];
     for (const task of result.redeliver) {
       this.push({
         kind: 'note',
@@ -2001,9 +2033,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       const msg = buildSettleMessage(task, { startsPromptTurn: true });
       const body = typeof msg.message.content === 'string' ? msg.message.content : '';
       this.notifyPrepared.set(body, msg);
-      this.queue.push(body);
+      redelivered.push(body);
     }
-    if (result.redeliver.length > 0) this.syncStatus();
+    // 循环外一次性落盘：逐条 updateQueue 会给一次补投写 N 条 queue.update 事件
+    if (redelivered.length > 0) this.updateQueue([...this.queue, ...redelivered]);
   }
 
   /** 后台任务管理器换绑当前会话（任务落盘目录随会话 id 走）。 */
@@ -2185,8 +2218,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       queue: this.queue,
       hasPendingPrompt: this.promptActive,
     });
-    this.queue = plan.queueRemainder;
-    this.syncStatus();
+    this.updateQueue(plan.queueRemainder);
     if (plan.action === 'idle') return;
     if (plan.action === 'submit-queue') {
       const text = plan.text ?? '';
@@ -2305,6 +2337,11 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.mode = data.mode ?? this.mode;
     this.planMode = data.planMode ?? false;
     this.thinkOverride = data.thinkOverride;
+    // 队列跟着目标会话走：当前会话排着的队属于旧现场，切过去要换成目标会话自己的。
+    // 直接赋值不落 wire 事件——此刻 this.session 已经是新会话，落事件会把「恢复」这个
+    // 读取动作记成新会话的一次队列变更。
+    this.queue = [...(data.queue ?? [])];
+    this.notifyPrepared.clear();
     // goal 与 team 跟着目标会话恢复。active goal 会被 restore 降级为 paused：
     // 切过来的瞬间不该自动跑起来，要用户确认后 /goal resume。
     this.goal.restore(data.goal);

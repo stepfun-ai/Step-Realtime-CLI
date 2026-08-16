@@ -170,6 +170,61 @@ describe('SessionStore.resume 检查点 + 尾段重放', () => {
     expect(result.session.mode).toBe('auto');
   });
 
+  it('待发队列：快照后的 queue.update 事件在 resume 时重放（覆盖「排完队直接退出」）', () => {
+    const s = store.create(cwd, 'm');
+    const m1 = stored({ role: 'user', content: '开始干活' }, { kind: 'user' });
+    s.messages.push(m1);
+    store.appendFull(cwd, s.id, [m1]);
+    store.save(s); // 检查点：此刻队列为空
+    // 回合进行中用户排了两条队。persist 集中在回合边界，此刻只有 wire 事件落了盘——
+    // 这正是「排完队直接 Ctrl+C」的现场，只写快照的实现在这里会丢数据。
+    store.appendWire(cwd, s.id, [{ type: 'queue.update', ts: TS, queue: ['第一条排队'] }]);
+    store.appendWire(cwd, s.id, [{ type: 'queue.update', ts: TS, queue: ['第一条排队', '第二条排队'] }]);
+
+    const r = store.resume(cwd, s.id)!;
+    expect(r.session.queue).toEqual(['第一条排队', '第二条排队']);
+  });
+
+  it('待发队列：清空事件（缺省字段与空数组）都归一为 undefined', () => {
+    const s = store.create(cwd, 'm');
+    const m1 = stored({ role: 'user', content: 'x' }, { kind: 'user' });
+    s.messages.push(m1);
+    store.appendFull(cwd, s.id, [m1]);
+    store.save(s);
+    // 必须先在尾段里设值再清空。只放一条清空事件的话，重放态的 queue 初态本就是
+    // undefined，「清空生效」与「清空被忽略」结果一样，断言测的是初态不是清空逻辑
+    // （实测：把 reducer 改成忽略清空事件，那样写的断言照样全绿）。
+    store.appendWire(cwd, s.id, [
+      { type: 'queue.update', ts: TS, queue: ['先排一条'] },
+      { type: 'queue.update', ts: TS },
+    ]);
+    expect(store.resume(cwd, s.id)!.session.queue).toBeUndefined();
+
+    // 空数组走另一条分支，同样归一为 undefined（不留空数组噪音）
+    const s2 = store.create(cwd, 'm');
+    const m2 = stored({ role: 'user', content: 'y' }, { kind: 'user' });
+    s2.messages.push(m2);
+    store.appendFull(cwd, s2.id, [m2]);
+    store.save(s2);
+    store.appendWire(cwd, s2.id, [
+      { type: 'queue.update', ts: TS, queue: ['另一条'] },
+      { type: 'queue.update', ts: TS, queue: [] },
+    ]);
+    expect(store.resume(cwd, s2.id)!.session.queue).toBeUndefined();
+  });
+
+  it('待发队列：尾段无 queue.update 时保留快照原值（区分「未变更」与「已清空」）', () => {
+    const s = store.create(cwd, 'm');
+    s.queue = ['快照里的排队'];
+    const m1 = stored({ role: 'user', content: 'x' }, { kind: 'user' });
+    s.messages.push(m1);
+    store.appendFull(cwd, s.id, [m1]);
+    store.save(s);
+    // 尾段只有无关事件：队列没被动过，不能因此判成清空
+    store.appendWire(cwd, s.id, [{ type: 'permission.set_mode', ts: TS, mode: 'auto' }]);
+    expect(store.resume(cwd, s.id)!.session.queue).toEqual(['快照里的排队']);
+  });
+
   it('无快照且无日志：返回 null', () => {
     expect(store.resume(cwd, 'nope')).toBeNull();
   });

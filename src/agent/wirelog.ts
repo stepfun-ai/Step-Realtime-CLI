@@ -155,6 +155,18 @@ export type WireEvent =
       goal?: GoalState;
     }
   | {
+      /**
+       * 待发队列变更（缺省 queue 字段或空数组 = 队列已清空）。
+       *
+       * 排队发生在 busy 期间，而快照落盘时机集中在回合结束——只写快照的话，「排完队
+       * 直接退出」这个最需要恢复的场景恰好丢数据。所以队列与 goal 同样双写：事件是
+       * 事实源，快照是检查点。
+       */
+      type: 'queue.update';
+      ts: string;
+      queue?: string[];
+    }
+  | {
       /** 应用一次压缩：重放到此事件时，内存里已重建的消息历史整体替换为压缩后的存活序列。 */
       type: 'context.apply_compaction';
       ts: string;
@@ -212,6 +224,8 @@ export interface WireReplayState {
   planMode?: boolean;
   thinkOverride?: string;
   goal?: GoalState;
+  /** 待发队列（queue.update 事件重建；空数组与 undefined 同义为「无排队」）。 */
+  queue?: string[];
   /** 已送达通知的幂等键集合（显式 delivered 事件 + background_task 消息回填双通道）。 */
   deliveredNotifications: Set<string>;
   /** turn.prompt 事件计数。 */
@@ -265,6 +279,10 @@ export function applyWireEvent(state: WireReplayState, event: WireEvent): void {
       break;
     case 'goal.update':
       state.goal = event.goal;
+      break;
+    case 'queue.update':
+      // 空数组归一成 undefined：两者语义相同，统一后快照里不留空数组噪音
+      state.queue = event.queue !== undefined && event.queue.length > 0 ? [...event.queue] : undefined;
       break;
     case 'context.apply_compaction':
       state.messages = [...event.messages];

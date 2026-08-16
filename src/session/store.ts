@@ -57,6 +57,13 @@ export interface SessionData extends SessionMeta {
   /** 会话级 Plan 模式。 */
   planMode?: boolean;
   /**
+   * 待发队列：busy 期间排队、尚未发送的消息（含排队的斜杠命令）。
+   *
+   * 随会话持久化的理由是它是「用户已经输入但还没被处理」的内容——丢了就得重新想一遍
+   * 刚才要说什么。恢复时原样接回队列，回合结束后照常自动发送。
+   */
+  queue?: string[];
+  /**
    * 检查点游标：本快照覆盖到事件日志（wire.jsonl）的第几条事件。
    * 快照自本版本起降级为「检查点 + 派生缓存」，事件日志才是事实源；resume 时从本游标
    * 之后的尾段事件开始重放。本字段缺失时快照不可作检查点：resume 忽略其 messages，
@@ -567,6 +574,7 @@ export class SessionStore {
     // 否则保留快照原值
     if (tail.some((e) => e.type === 'think.set')) session.thinkOverride = state.thinkOverride;
     if (tail.some((e) => e.type === 'goal.update')) session.goal = state.goal;
+    if (tail.some((e) => e.type === 'queue.update')) session.queue = state.queue;
     session.wireSeq = events.length;
 
     // 已送达集合：delivered 事件 add-only，全流回放幂等；另从最终消息历史回填

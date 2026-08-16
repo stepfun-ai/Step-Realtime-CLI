@@ -176,4 +176,26 @@ describe('PiChat 接线：会话切换的清理与恢复', () => {
     // Esc 与 Ctrl+C 都走它，不再各自直接 abort
     expect(piChat.includes('this.controller?.abort();\n      return true;'), 'Esc/Ctrl+C 应走 abortTurn').toBe(false);
   });
+
+  it('待发队列持久化：变更走 updateQueue，两条恢复路径都接回', () => {
+    wired(piChat, 'updateQueue', '队列变更统一出口');
+    wired(piChat, "type: 'queue.update'", '队列 wire 事件');
+    wired(piChat, 'this.session.queue =', 'persist 写入队列快照');
+    // 两条恢复路径：构造器（启动 / --continue）与 resumeSession（应用内 /resume）
+    const restores = piChat.match(/this\.queue = \[\.\.\.\((?:deps\.session|data)\.queue \?\? \[\]\)\]/g) ?? [];
+    expect(restores.length, '队列恢复点应有 2 处（构造器 + resumeSession）').toBe(2);
+  });
+
+  it('队列变更不绕过 updateQueue（漏一处就会界面 N 条、重启 M 条）', () => {
+    // 反向断言：除 updateQueue 自身的赋值、以及 new/fork 的显式清空外，不允许再有
+    // 直接改 this.queue 的写法。这条挡的是「新增一个排队入口时忘了走统一出口」。
+    const directWrites = piChat.match(/this\.queue(?:\.push\(|\.pop\(|\.shift\(| = )/g) ?? [];
+    // 允许的 4 处：updateQueue 内部赋值 + resumeSession 接回 + 构造器接回 + new/fork 清空各一
+    expect(
+      directWrites.length,
+      `直接改 this.queue 的地方有 ${directWrites.length} 处，超出预期的 5 处白名单——新增排队入口请走 updateQueue`,
+    ).toBeLessThanOrEqual(5);
+    // push 一律不允许：排队必须走 updateQueue（它负责落 wire 事件）
+    expect(piChat.includes('this.queue.push('), 'queue.push 绕过了持久化').toBe(false);
+  });
 });
