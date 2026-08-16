@@ -93,6 +93,16 @@ export class ChatEditor extends Editor {
   placeholderText: () => string = () => '';
   /** 占位文案着色，默认原样。 */
   placeholderStyle: (s: string) => string = (s) => s;
+  /**
+   * 输入框下方的一行瞬时提示（primed 态用）。返回空串表示不占行。
+   *
+   * 为什么不用转录区的 note：primed 是**瞬时状态**（5 秒自动过期），note 会永久留在
+   * 历史里，用户翻回去看到一堆「再按一次 Esc」的残骸，而当下那条又滚上去了看不见。
+   * Ink 版把它贴在输入框下方就是这个道理——状态提示跟着状态走，状态没了行也没了。
+   */
+  footerText: () => string = () => '';
+  /** 下方提示行的着色，默认原样。 */
+  footerStyle: (s: string) => string = (s) => s;
 
   constructor(tui: TUI, theme: EditorTheme, options?: EditorOptions) {
     // paddingX 固定 2：给提示符腾出 '› ' 的两列。选它而不是「渲染后整行拼前缀」的理由是

@@ -605,18 +605,50 @@ it('常驻面板（ChromePanels.ts）：TODO 三态计数 / 折叠提示 / 队�
     // /loop 空 / 有任务
     expect(cjkIn([formatCronJobs([])])).toEqual([]);
     expect(cjkIn([formatCronJobs([{ id: 'j1', cron: '*/5 * * * *', prompt: 'ping', recurring: true, nextFireAt: new Date(now + 100000) }])])).toEqual([]);
+
+    // 上面的渲染断言走不到的分支（memory broken、goal 终态 reason、任务异常态等）用表级
+    // 断言兜底：commandText.ts 引用的 key 组在 en 表里逐条查中文。渲染断言只能覆盖被构造
+    // 出来的那几条路径，漏掉的分支不会报错——这一条补的就是那部分。
+    const { I18N_TABLES } = await import('../src/i18n.js');
+    const en = I18N_TABLES.en;
+    const prefixes = ['commandText.', 'goalPanel.', 'cronCard.', 'app.memory.', 'app.team.'];
+    const keys = Object.keys(en).filter((k) => prefixes.some((p) => k.startsWith(p)));
+    expect(keys.length, '应能取到 commandText 引用的 key 组').toBeGreaterThan(30);
+    expect(cjkIn(keys.map((k) => en[k] ?? '')), 'en 表里 commandText 相关 key 仍有中文').toEqual([]);
   });
 
-  it('ProviderManager.ts：providerItems 在 en 下无 CJK', async () => {
+  it('ProviderManager.ts：providerItems 各分支 + wizard 文案在 en 下无 CJK', async () => {
     const { providerItems } = await import('../src/tui-pi/ProviderManager.js');
+    const { I18N_TABLES } = await import('../src/i18n.js');
     setLocale('en');
+    // 三个分支要一起覆盖：baseUrl 有值 / baseUrl 缺失（走 defaultAddress 兜底）/ 预设渠道。
+    // 只给一个 baseUrl 有值的渠道时，defaultAddress 那条根本不执行——实测把它改回硬编码
+    // 中文，测试依然全绿。覆盖不足的守卫和恒真守卫一样没有防护力。
     const config = {
       provider: 'mine',
-      providers: { mine: { type: 'openai', baseUrl: 'https://api.example.com/v1' } },
+      providers: {
+        mine: { type: 'openai', baseUrl: 'https://api.example.com/v1' },
+        noUrl: { type: 'anthropic' },
+      },
       models: { a1: { model: 'm1', provider: 'mine' } },
     } as any;
     const items = providerItems(config);
     const texts = items.flatMap((i) => [i.label, i.description]);
-    expect(cjkIn(texts), 'ProviderManager 出现中文').toEqual([]);
+    expect(cjkIn(texts), 'ProviderManager 列表项出现中文').toEqual([]);
+    // 确实走到了 baseUrl 缺失分支（否则上面的断言测不到 defaultAddress）
+    expect(items.some((i) => i.value === 'custom:noUrl' || i.value.includes('noUrl'))).toBe(true);
+    // 预设渠道分支
+    expect(items.some((i) => i.value.startsWith('preset:'))).toBe(true);
+    // 新增入口分支
+    expect(items.some((i) => i.value === '__add__')).toBe(true);
+
+    // 向导与删除确认的文案只在交互流里出现（askLine / overlay 回调），渲染测不到。
+    // 直接查 en 表：这些 key 若忘了译，渲染断言永远发现不了。
+    const en = I18N_TABLES.en;
+    const interactive = Object.keys(en).filter(
+      (k) => k.startsWith('providerWizard.') || k.startsWith('providerManager.'),
+    );
+    expect(interactive.length, '应能取到这两组 key').toBeGreaterThan(20);
+    expect(cjkIn(interactive.map((k) => en[k] ?? '')), 'en 表里仍有中文未译').toEqual([]);
   });
 });
