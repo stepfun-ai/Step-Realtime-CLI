@@ -18,11 +18,15 @@ import type { LoopHooks } from '../agent/hooks.js';
 import { composeLoopHooks, type HookEngine } from '../agent/hooks/engine.js';
 import { runAgent } from '../agent/loop.js';
 import { stored, type StoredMessage } from '../agent/message.js';
+import { notifyDedupKeyFromOrigin, pendingDeliveredEvents } from '../agent/wirelog.js';
+
+import { buildSettleMessage, decideNotifyRoute } from '../agent/background/notify.js';
+import { emitTerminalNotification } from '../agent/background/terminal-notify.js';
 import { decide, planModeDenyReason, type PermissionMode } from '../agent/permission/mode.js';
 import { createSubagentRunner } from '../agent/subagent/runner.js';
 import type { SubagentStore } from '../agent/subagent/store.js';
 import type { AgentDefinition } from '../agent/subagent/types.js';
-import { BackgroundManager } from '../agent/background/manager.js';
+import { BackgroundManager, type BackgroundTask } from '../agent/background/manager.js';
 import { CronScheduler } from '../agent/cron/scheduler.js';
 import { CronJobStore } from '../agent/cron/store.js';
 import { assembleGoalInject, decideGoalTurn } from '../agent/goal/drive.js';
@@ -30,7 +34,7 @@ import { GoalMode, type GoalChangeEvent } from '../agent/goal/mode.js';
 import { initTeam } from '../agent/team/mode.js';
 import { TeamMode } from '../agent/team/mode.js';
 import { estimateTokens, fullCompact } from '../agent/compaction/compact.js';
-import { MEMORY_ONBOARDING_INJECTION } from '../agent/memory.js';
+import { MEMORY_ONBOARDING_INJECTION, memorySection, scanMemory } from '../agent/memory.js';
 import { subagentListing } from '../agent/systemPrompt.js';
 import {
   PROVIDER_PRESETS,
@@ -58,6 +62,7 @@ import { renderSkillActivation, skillListing, type SkillRegistry } from '../skil
 import { REFLECT_EMPTY_HISTORY, REFLECT_NO_FINDINGS, runReflect } from '../agent/reflect.js';
 import { expandPluginCommand, type PluginCommand } from '../plugin/manager.js';
 import { runPluginCommand } from '../chat/pluginCommand.js';
+import { clearDynamicTools } from '../tools/index.js';
 import { restoreFile } from '../tools/checkpoint.js';
 import { resolvePath } from '../tools/fsutil.js';
 import type { ToolContext } from '../tools/types.js';
@@ -91,6 +96,7 @@ import { countHistoryImages, extractImageContent, ImageAttachmentStore } from '.
 import { askLine, modelItems, modelTabs, showPicker, sessionItems, thinkItems, type PickerOverlay } from './pickers.js';
 import { StreamBuffer } from '../chat/streamBuffer.js';
 import { appendText, settleThinking } from '../chat/streamReducer.js';
+import { composeSystem } from '../chat/composeSystem.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { ChatEditor } from './ChatEditor.js';
@@ -116,6 +122,13 @@ export interface PiChatDeps {
   model: string;
   config: StepCodeConfig;
   initialMode: PermissionMode;
+  /** 当前渠道名（config.provider）：/think 门控与 loop 的思考参数判定要用。 */
+  providerName?: string;
+  /**
+   * 恢复会话时已落盘的 delivered 通知幂等键。启动对账据此判断哪些后台任务终态
+   * 「已终态但通知没送到」，需要补投。缺省空集（全新会话没有历史通知）。
+   */
+  resumeDelivered?: ReadonlySet<string>;
   store: SessionStore;
   session: SessionData;
   maxContextSize: number;
@@ -245,8 +258,30 @@ export class PiChat {
   private readonly termTitle: TerminalTitleWriter;
   /** 已尝试过 AI 标题生成的会话 id：每会话只试一次，失败不重试（生成是锦上添花，不值得重试预算）。 */
   private readonly titleGenTried = new Set<string>();
+  /**
+   * 已落盘 delivered 事件的通知幂等键。写入集中在 persist 补写，本集合防重复写导致
+   * wire 日志膨胀；崩溃后对账靠磁盘上的 delivered 事件，不靠这个内存集合。
+   */
+  private deliveredWritten = new Set<string>();
+  /**
+   * SessionStart hook 的 stdout。会话创建/恢复后触发一次，拼在 system 尾部（仅本进程生效）。
+   * 此前整块没接：hook 配了也不会被执行，用户以为注入了上下文其实是空的。
+   */
+  private sessionContext = '';
+  /**
+   * 补投通知的正文 → 已装配消息的映射。队列里存的是正文字符串（与用户消息同构，
+   * 才能走同一条排空逻辑），但通知消息带 taskId 与 notificationId 幂等键，重新 stored
+   * 会丢掉它们。排空时按正文取回原消息，取不到则按普通注入处理。
+   */
+  private readonly notifyPrepared = new Map<string, StoredMessage>();
   private thinkingAccum = '';
   private baseTokens = 0;
+  /**
+   * `baseTokens` 覆盖到历史的哪个下标（usage 事件的 measuredLength）。压缩预检要用它
+   * 把「真实 usage + 之后新增消息的估算」拼起来；此前这个字段被整个丢掉，预检只能走
+   * 纯字符估算（不含 system 与 tools，实测低估一半），单回合纯对话轮于是永远判不出该压缩。
+   */
+  private measuredLen = 0;
   private exitPrimed = false;
   private exitPrimedTimer: ReturnType<typeof setTimeout> | undefined;
   private ticker: ReturnType<typeof setInterval> | undefined;
@@ -404,6 +439,18 @@ export class PiChat {
     if (this.deps.configStartupNotice !== undefined) {
       this.push({ kind: 'note', text: this.deps.configStartupNotice });
     }
+    // SessionStart hook：会话创建/恢复后触发一次，stdout 注入 system 尾部。
+    // notice 出口先挂上，否则 hook 的可见性提示会静默丢（/reload 时也补挂，见 runReload）。
+    const engine = this.deps.hookEngineRef.current;
+    if (engine !== undefined) {
+      engine.setNoticeSink((m) => this.push({ kind: 'note', text: m }));
+      void engine.run('SessionStart', {}).then((r) => {
+        if (r.stdout !== '') this.sessionContext = r.stdout;
+      });
+    }
+    // 启动对账：磁盘上 running 但无活进程的判 lost，已终态而通知未送达的补投。
+    // 上个进程崩溃或被强杀时，那批任务的 onSettle 从未触发过，只有这里能捞回来。
+    this.reconcileBackground(this.deps.resumeDelivered ?? new Set());
     this.tui.start();
     // @ 文件补全的索引：后台扫 cwd，不阻塞首帧。扫完前 @ 补全为空（优雅降级），
     // 失败也降级为空索引，不影响命令补全。
@@ -644,7 +691,17 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.session.goal = this.goal.snapshot() ?? undefined;
     this.session.team = this.team.snapshot() ?? undefined;
     try {
+      // 顺序是不变量：先 appendFull 后 save。save() 把当前 wire 事件数写进快照当
+      // 检查点游标；顺序颠倒会让快照 messages 比游标超前，resume 重放尾段事件时把
+      // 已在快照里的消息再追加一次。
       this.deps.store.appendFull(this.session.cwd, this.session.id, this.history);
+      // delivered 事件在此统一补写：通知消息本体随 appendFull 落盘的同一时刻写送达事件，
+      // 两者同生共死——崩溃只可能丢「都还没写」的，对账会正确补投；不允许出现
+      // 「事件已落盘、消息没落盘」的中间态（那会让对账误判已送达而丢掉补投机会）。
+      const pendingDelivered = pendingDeliveredEvents(this.history, this.deliveredWritten, new Date().toISOString());
+      if (pendingDelivered.length > 0) {
+        this.deps.store.appendWire(this.session.cwd, this.session.id, pendingDelivered);
+      }
       this.deps.store.save(this.session);
     } catch {
       // 持久化失败不打断会话
@@ -682,11 +739,39 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       return true;
     }
     if (this.queue.length > 0) {
-      const merged = this.queue.join('\n');
+      // 系统合成注入（后台通知信封 / cron prompt / skill 正文）不进输入框草稿：正文是给
+      // 模型看的 XML，用户既不该编辑也读不懂，灌进去只会得到一段标签。这些条目随队列一起
+      // 丢弃（与本分支的清空语义一致），但单独报数——静默消失比丢弃更糟。
+      const dropped = this.queue.filter((s) => this.notifyPrepared.has(s));
+      const drafts = this.queue.filter((s) => !this.notifyPrepared.has(s));
+      // 被丢弃的通知不再补投，所以在此显式落盘 delivered 事件（丢弃即送达）——它们的消息
+      // 本体永远不会进 history，走不到 persist 的统一补写，不落盘就会在下次对账时重复投递。
+      for (const text of dropped) {
+        const o = this.notifyPrepared.get(text)?.origin;
+        if (o?.kind !== 'background_task' || o.notificationId === undefined) continue;
+        const key = notifyDedupKeyFromOrigin(o.taskId, o.notificationId);
+        if (this.deliveredWritten.has(key)) continue;
+        this.deliveredWritten.add(key);
+        this.appendWire({
+          type: 'background.notify_delivered',
+          ts: new Date().toISOString(),
+          taskId: o.taskId ?? '',
+          status: /^task:.+:([a-z]+)$/.exec(o.notificationId)?.[1] ?? '',
+          notificationId: o.notificationId,
+        });
+      }
       this.queue = [];
+      this.notifyPrepared.clear();
       const cur = this.editor.getText();
-      this.editor.setText(cur === '' ? merged : `${cur}\n${merged}`);
-      this.push({ kind: 'note', text: '已把排队消息取回输入框' });
+      const merged = drafts.join('\n');
+      if (merged !== '') this.editor.setText(cur === '' ? merged : `${cur}\n${merged}`);
+      this.push({
+        kind: 'note',
+        text:
+          dropped.length > 0
+            ? `已把排队消息取回输入框（另丢弃 ${dropped.length} 条系统注入）`
+            : '已把排队消息取回输入框',
+      });
       this.syncStatus();
       return true;
     }
@@ -1847,13 +1932,109 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.syncTerminalTitle();
   }
 
+  /**
+   * 后台任务对账。两个调用点：启动时（`start`）与切会话后（`resumeSession`）。
+   *
+   * 对账要解决的是**通知的跨进程丢失**：任务在上个进程里跑完，`onSettle` 触发过一次
+   * 就不会再触发；上个进程若崩溃或被强杀，那次通知就永久丢了。`reconcile` 拿磁盘上的
+   * 任务状态与已落盘的 delivered 幂等键比对，捞出「已终态但没送达」的那批补投。
+   *
+   * lost 的 team worker 额外标 blocked：worker 进程没了、任务却还挂在 active，
+   * 团队状态机会一直等它。fire-and-forget，不阻塞恢复流程。
+   */
+  private reconcileBackground(delivered: ReadonlySet<string>): void {
+    let result: ReturnType<BackgroundManager['reconcile']>;
+    try {
+      result = this.background.reconcile(delivered);
+    } catch {
+      return; // 对账失败不该挡住会话启动
+    }
+    for (const task of result.lost) {
+      const m = /^team·([A-Z]\d+)\s/.exec(task.command);
+      if (m === null) continue;
+      const missionId = m[1]!;
+      void (async (): Promise<void> => {
+        try {
+          if (!this.team.active) return;
+          const store = this.team.getStore();
+          const state = await store.load();
+          const mission = state.missions.find((x) => x.id === missionId);
+          if (mission === undefined || mission.status !== 'active') return;
+          await store.setStatus(missionId, 'blocked');
+        } catch {
+          // 静默跳过：团队档案可能已被删
+        }
+      })();
+    }
+    for (const task of result.redeliver) {
+      this.push({
+        kind: 'note',
+        text: t('background.redelivered', {
+          id: task.id,
+          status: t(`background.status.${task.status}`),
+          command: task.command,
+        }),
+      });
+      // 补投走队列而不是直接 runTurn：启动/切会话这一刻不该自动起一个回合，
+      // 用户可能正要输别的。队列在下次回合收尾或手动 Esc 取回时排空。
+      const msg = buildSettleMessage(task, { startsPromptTurn: true });
+      const body = typeof msg.message.content === 'string' ? msg.message.content : '';
+      this.notifyPrepared.set(body, msg);
+      this.queue.push(body);
+    }
+    if (result.redeliver.length > 0) this.syncStatus();
+  }
+
   /** 后台任务管理器换绑当前会话（任务落盘目录随会话 id 走）。 */
   private rebindBackground(): void {
     this.background = new BackgroundManager(10, {
       taskTimeoutS: this.deps.config.background?.bashTaskTimeoutS ?? 600,
       tasksDir: this.deps.store.tasksDirFor(this.session.cwd, this.session.id),
       onSettleEvent: (task) => this.appendWire({ type: 'background.task_settle', ts: new Date().toISOString(), task }),
+      onSettle: (task) => this.onBackgroundSettle(task),
     });
+  }
+
+  /**
+   * 后台任务到达终态。三件事，与 `onSettleEvent`（只写事件日志）分工不同：
+   *
+   * 1. 转录区一条 note——用户可读格式，无论后续是否注入模型都要有；
+   * 2. 终端通知（铃响 / 桌面通知），独立于 notifyOnComplete：用户切走终端也能感知；
+   * 3. 按 busy 分流注入。空闲时取出全部待投递通知各自独立提交、唤醒新回合；
+   *    busy 时什么都不做——通知已在管理器的待投递队列里，`runAgent` 会在回合边界
+   *    flush 进 messages（模型下一回合即可见，不等整个循环结束）。
+   *
+   * 这整条链路迁移时漏了（只挂了 onSettleEvent），后台任务因此变成「发出去就忘」：
+   * 完成后既无提示也不注入，用户只能自己去 /tasks 翻。
+   */
+  private onBackgroundSettle(task: BackgroundTask): void {
+    this.push({
+      kind: 'note',
+      text: t('background.settled', {
+        id: task.id,
+        status: t(`background.status.${task.status}`),
+        command: task.command,
+      }),
+    });
+    this.syncStatus();
+    if (this.deps.config.background?.notifyTerminal !== false) {
+      const statusLabel = t(`background.status.${task.status}`);
+      emitTerminalNotification(`后台任务 ${task.id} ${statusLabel}：${task.command}`);
+    }
+    // notifyOnComplete=false 只提示不注入。待投递队列要清掉，否则回合边界 flush 又注进去了
+    if (this.deps.config.background?.notifyOnComplete === false) {
+      this.background.drainSettled();
+      return;
+    }
+    if (decideNotifyRoute(this.busy) === 'submit') {
+      for (const settled of this.background.drainSettled()) {
+        const msg = buildSettleMessage(settled, { startsPromptTurn: true });
+        const body = typeof msg.message.content === 'string' ? msg.message.content : '';
+        // silent：通知正文是给模型看的 XML 信封，不能显示成用户气泡——那等于系统冒充用户
+        // 说了一段话。用户侧可见性由上面那条 note 承担（人读格式）。
+        void this.runTurn(body, { silent: true, prepared: msg });
+      }
+    }
   }
 
   // ---------------------------------------------------------------- 耗时命令
@@ -1990,7 +2171,14 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       const text = plan.text ?? '';
       // 队列里可能混着排队的斜杠命令（busyRoute 判为 queue 的那些）
       if (text.startsWith('/')) await this.handleSlash(text);
-      else await this.runTurn(text);
+      else {
+        // 后台通知补投：取回带幂等键的原消息，并按 silent 走（正文是给模型看的 XML 信封）
+        const prepared = this.notifyPrepared.get(text);
+        if (prepared !== undefined) {
+          this.notifyPrepared.delete(text);
+          await this.runTurn(text, { silent: true, prepared });
+        } else await this.runTurn(text);
+      }
       return;
     }
     // submit-continuation：goal 仍 active 时把 steer 留言拼进注入文本；
@@ -2067,17 +2255,32 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
 
   /** 恢复指定会话：重建历史与转录区，模型跟随该会话当初的选择。 */
   private resumeSession(id: string): void {
-    const data = this.deps.store.load(this.deps.ctx.cwd, id);
-    if (data === null) {
+    // 走 store.resume 而不是 load：resume = 快照检查点 + 事件日志尾段重放，多做三件
+    // load 做不到的事——补上检查点之后的非消息状态变更、闭合末尾悬空 tool_use（不闭合
+    // 会让下一轮请求因「tool_use 没有配对的 tool_result」被协议拒绝）、给出已送达通知的
+    // 幂等键集合供后台任务对账。启动路径（cli.ts）一直走 resume，应用内 /resume 此前
+    // 还停在 load，两条恢复路径行为不一致，这里对齐。
+    const r = this.deps.store.resume(this.deps.ctx.cwd, id);
+    if (r === null) {
       this.push({ kind: 'note', text: `没找到会话 ${id}` });
       return;
     }
+    const data = r.session;
     this.persist();
     this.session = data;
     this.history.length = 0;
-    this.history.push(...data.messages);
+    this.history.push(...data.messages.map((m) => ({ ...m })));
+    if (r.closedDanglingToolUse) {
+      this.push({
+        kind: 'note',
+        text: `恢复时闭合了 ${r.closedToolUseIds.length} 个未完成的工具调用（合成错误结果，不假装成功）`,
+      });
+    }
     // 快照栈属于上一个会话的运行现场，切会话即清（否则回退会按错的 historyLen 截断）
     clearUndoSnapshots(this.undoStack);
+    // 上个会话经 tool_search 加载的动态工具同样属于那个现场：不清会泄漏到恢复后的会话，
+    // 模型看得见一个本轮没人搜过的工具。
+    clearDynamicTools();
     this.mode = data.mode ?? this.mode;
     this.planMode = data.planMode ?? false;
     this.thinkOverride = data.thinkOverride;
@@ -2095,6 +2298,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     if (data.model !== '' && data.model !== this.currentAlias) {
       this.applyModel(data.model, { persistDefault: false });
     }
+    // 换绑后立刻对账：这批任务的 onSettle 属于上个会话，本会话从未触发过。
+    // 切会话即换了 delivered 集合的作用域，内存里那份属于旧会话，清掉重来。
+    this.deliveredWritten = new Set(r.deliveredNotifications);
+    this.reconcileBackground(this.deliveredWritten);
     const replay = historyToDisplayItems(data.messages);
     this.transcript.reset(
       [
@@ -2388,7 +2595,19 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    * 不该在转录区显示成用户说的话（显示出来会让人以为自己发过这段），
    * 但仍要作为 user 消息进历史，否则模型看不到续接指令。
    */
-  private async runTurn(text: string, opts?: { silent?: boolean }): Promise<void> {
+  private async runTurn(
+    text: string,
+    opts?: {
+      silent?: boolean;
+      /**
+       * 已装配好的 user 消息，直接进 history 而不是由本方法 stored() 一个新的。
+       * 后台任务通知走这条：`buildSettleMessage` 产出的消息带 kind='background_task'、
+       * taskId 与 notificationId（补投幂等键），重新 stored 会退化成 kind='injection'
+       * 并丢掉幂等键，崩溃后对账就会重复投递同一条通知。
+       */
+      prepared?: StoredMessage;
+    },
+  ): Promise<void> {
     // 图片占位符 → image content block。没有图片时 content 就是原文本（走旧路径），
     // 转录区显示的是折叠掉占位符的正文，不把 base64 摊到屏幕上。
     const extracted = extractImageContent(text, this.images);
@@ -2416,7 +2635,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       });
     }
     this.history.push(
-      stored({ role: 'user', content: extracted.content }, { kind: opts?.silent === true ? 'injection' : 'user' }),
+      opts?.prepared ??
+        stored({ role: 'user', content: extracted.content }, { kind: opts?.silent === true ? 'injection' : 'user' }),
     );
 
     this.busy = true;
@@ -2443,6 +2663,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       hooks,
       maxDepth: this.deps.config.subagent.maxDepth,
       maxStepsDefault: this.deps.config.subagent.maxSteps,
+      userMessageBudget: {
+        maxTokens: this.deps.config.compaction.userMessageMaxTokens,
+        headTokens: this.deps.config.compaction.userMessageHeadTokens,
+      },
       compaction: {
         maxContextSize: this.maxContextSize,
         triggerRatio: this.deps.config.compaction.triggerRatio,
@@ -2464,11 +2688,17 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       },
     });
 
-    const system =
-      this.deps.systemPrefix +
-      skillListing(this.deps.skillsRef.current, this.deps.config.skillListingBudget) +
-      subagentListing([...this.deps.subagentRegistry.values()]) +
-      (this.deps.agentsMd !== '' ? `\n\n${this.deps.agentsMd}` : '');
+    // system 逐轮组装（composeSystem 定段序：低频内容在前，保住 prompt 缓存前缀）。
+    // memory 段仅开启时注入，每轮现扫目录——条目数小、开销可忽略，换来的是 agent 自己
+    // 写完文件后下一轮即被索引到。这一段与 sessionContext 都曾整块漏掉，见 composeSystem 注释。
+    const system = composeSystem({
+      prefix: this.deps.systemPrefix,
+      skills: skillListing(this.deps.skillsRef.current, this.deps.config.skillListingBudget),
+      subagents: subagentListing([...this.deps.subagentRegistry.values()]),
+      agentsMd: this.deps.agentsMd,
+      memory: this.deps.config.memory?.enabled === true ? memorySection(scanMemory(this.deps.ctx.cwd)) : '',
+      sessionContext: this.sessionContext,
+    });
 
     try {
       for await (const ev of runAgent({
@@ -2490,6 +2720,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
           team: this.team,
           cron: this.cron,
           askUser: (req) => this.askUserQuestion(req),
+          // 子 agent 并发上限：不传会退到 runTurn.ts 里的硬编码 4，与 [subagent] max_concurrent 脱节
+          subagentMaxConcurrent: this.deps.config.subagent.maxConcurrent,
         },
         messages: this.history,
         signal: controller.signal,
@@ -2503,6 +2735,18 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         },
         compactionModel: compaction.model,
         compactionProvider: compaction.provider,
+        // /think 门控据此判定当前渠道支不支持思考参数
+        providerName: this.deps.providerName,
+        // 把状态栏的真实 usage 基准交给压缩预检。基准为 0（全新会话尚无真实 usage）时不传：
+        // 让 runAgent 走估算路径，那条路径会补上框架侧开销；传 0 会被当成「已测量」而丢掉补偿。
+        initialUsage: this.baseTokens > 0 ? { total: this.baseTokens, measuredLength: this.measuredLen } : undefined,
+        userMessageBudget: {
+          maxTokens: this.deps.config.compaction.userMessageMaxTokens,
+          headTokens: this.deps.config.compaction.userMessageHeadTokens,
+        },
+        // 不传等于 0，而 0 在 loop.ts 里就是「关闭自动续写」——正文被 max_tokens 截断后
+        // 不再自动续写，用户只看到半截回答。默认 3。
+        maxAutoContinues: this.deps.config.continuation?.maxAutoContinues,
         todos: this.todos.items,
         injectBackgroundNotifications: true,
         onWireEvent: (event) => this.appendWire(event),
@@ -2551,6 +2795,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // 会把一段完整思考劈成前后两块（顺序看着还对，但块数与内容边界都错了）。
     if (ev.type === 'usage') {
       this.baseTokens = ev.totalTokens;
+      if (ev.measuredLength !== undefined) this.measuredLen = ev.measuredLength;
       this.status.setState({ usedTokens: this.baseTokens });
       this.tui.requestRender();
       return;

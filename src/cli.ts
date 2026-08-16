@@ -1121,6 +1121,8 @@ if (opts.reflect === true) {
     model: providerModel,
     config,
     initialMode,
+    providerName: config.provider,
+    resumeDelivered,
     store,
     session,
     maxContextSize: sessionMaxContextSize,
