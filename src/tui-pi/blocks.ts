@@ -182,8 +182,10 @@ export class ItemBlock implements Component {
       case 'welcome':
         return renderWelcome(it.data, width);
       case 'user': {
-        // 用户消息：竖线 + 青色，与助手正文形成视觉分栏
-        const body = wrap(it.text, width - 2);
+        // 蓝色竖线前缀 + 黄色正文，对齐 Ink 版（Ink 用 `› ` 前缀，pi 保留 `│ ` 竖线做
+        // 视觉分栏）。先折行再逐行着色：wrap 若按显示宽度计算，提前注入的 ANSI 序列
+        // 会被算进字符宽度导致折行位置偏移。
+        const body = wrap(it.text, width - 2).map((l) => c.userText(l));
         return [...indent(body, c.user('│ ')), ''];
       }
       case 'assistant':

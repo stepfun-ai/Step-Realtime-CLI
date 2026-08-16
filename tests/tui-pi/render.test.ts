@@ -84,6 +84,29 @@ describe('ItemBlock 渲染', () => {
     expect(plain(asst.render(40)).join('\n')).toContain('好');
   });
 
+  it('用户消息正文着黄、前缀着蓝（与 Ink 版同口径，不能退回默认白）', () => {
+    // 转录区里用户消息若不着色就与助手正文糊成一片。这条断言盯的是「正文有黄」，
+    // 不是「有颜色」——之前 c.user 只给前缀上色、正文继承默认白，看起来也「有颜色」。
+    const prev = chalk.level;
+    chalk.level = 3;
+    try {
+      const lines = new ItemBlock({ kind: 'user', text: '帮我改个文件' }).render(40);
+      const first = lines[0]!;
+      // chalk.yellow = SGR 33，chalk.blue = 34
+      expect(first, '正文缺黄色 SGR').toContain('\x1b[33m');
+      expect(first, '前缀缺蓝色 SGR').toContain('\x1b[34m');
+      // 折行后每一行的正文都要着色，不能只有首行
+      const long = new ItemBlock({ kind: 'user', text: 'x'.repeat(120) }).render(40);
+      const bodyLines = long.filter((l) => l.trim() !== '');
+      expect(bodyLines.length, '应折成多行').toBeGreaterThan(1);
+      for (const l of bodyLines) expect(l, '续行正文缺黄色').toContain('\x1b[33m');
+      // 折行宽度不被 ANSI 撑破（着色发生在折行之后）
+      for (const l of long) expect(visibleWidth(l)).toBeLessThanOrEqual(40);
+    } finally {
+      chalk.level = prev;
+    }
+  });
+
   it('成功的工具输出整段折叠成一行，diff 完整展示', () => {
     const ok = new ItemBlock({
       kind: 'tool',
