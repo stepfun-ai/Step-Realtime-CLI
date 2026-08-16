@@ -360,7 +360,9 @@ try {
       config = loadConfig(cwd, { provider: opts.provider, model: opts.model });
       provider = createProvider(config);
     } else {
-      // 用户选择退出或取消
+      // 选了「查看文档」时把链接打到终端：TUI 已 stop，此时 stderr 才可靠，
+      // 而清屏后用户刚在列表里看到的那个链接已经不在屏幕上了。
+      if (configured.kind === 'docs') console.error(t('firstRun.docsNotice', { url: configured.url }));
       process.exit(0);
     }
   } else {
@@ -407,7 +409,10 @@ async function runBrokenConfigRecovery(
     }
   }
   const result = await runFirstRunSetup();
-  if (result.kind !== 'configured') return null;
+  if (result.kind !== 'configured') {
+    if (result.kind === 'docs') console.error(t('firstRun.docsNotice', { url: result.url }));
+    return null;
+  }
   let diagnostics: ConfigLoadDiagnostics | undefined;
   const config = loadConfig(cwd, { provider: opts.provider, model: opts.model }, (d) => {
     diagnostics = d;

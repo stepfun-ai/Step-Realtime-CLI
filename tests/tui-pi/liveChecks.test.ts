@@ -54,8 +54,17 @@ function writeConfig(toml: string): void {
  * 返回去掉 ANSI 的纯文本，便于断言。
  */
 async function runProcess(
-  opts: { stdin?: string; timeoutMs?: number; stopWhen?: RegExp; args?: string[] } = {},
-): Promise<{ text: string; raw: string; exited: boolean }> {
+  opts: {
+    stdin?: string;
+    timeoutMs?: number;
+    stopWhen?: RegExp;
+    args?: string[];
+    /** 要验向导本身的用例把它设 true：此时不能给 key，否则进程直接进主界面。 */
+    noApiKey?: boolean;
+    /** 喂 stdin 前的等待。向导要按方向键，1200ms 时 TUI 可能还没接管，按键会丢。 */
+    stdinDelayMs?: number;
+  } = {},
+): Promise<{ text: string; raw: string; err: string; exited: boolean }> {
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
   delete env['NODE_ENV'];
   delete env['VITEST'];
@@ -66,7 +75,8 @@ async function runProcess(
   // 的想当然拼法），provider 根本不认，于是每个用例的进程都停在首次运行向导：SessionStart
   // 的 hook 执行点没走到（被误判成「功能缺失」），而 /memory 与 /compact-model 却「通过」了
   // ——它们的 stopWhen 命中的是向导文案里的字样，属假绿。故下面加了 assertPastFirstRun。
-  env['STEP_CODE_API_KEY'] = 'sk-test-not-a-real-key';
+  if (opts.noApiKey === true) delete env['STEP_CODE_API_KEY'];
+  else env['STEP_CODE_API_KEY'] = 'sk-test-not-a-real-key';
 
   const child = spawn(process.execPath, [entry, ...(opts.args ?? [])], {
     cwd: work,
@@ -75,6 +85,7 @@ async function runProcess(
   });
 
   let raw = '';
+  let err = '';
   let exited = false;
   const stop = opts.stopWhen;
   const done = new Promise<void>((resolve) => {
@@ -82,6 +93,9 @@ async function runProcess(
     child.stdout.on('data', (c: Buffer) => {
       raw += c.toString();
       if (stop !== undefined && stop.test(raw.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, ''))) finish();
+    });
+    child.stderr.on('data', (c: Buffer) => {
+      err += c.toString();
     });
     child.on('exit', () => {
       exited = true;
@@ -91,13 +105,13 @@ async function runProcess(
   });
 
   if (opts.stdin !== undefined) {
-    // 等首帧画完再喂输入，否则按键可能早于 TUI 接管
-    await new Promise((r) => setTimeout(r, 1200));
+    // 等首帧画完再喂输入，否则按键可能早于 TUI 接管（向导要按方向键，需要更长的等待）
+    await new Promise((r) => setTimeout(r, opts.stdinDelayMs ?? 1200));
     child.stdin.write(opts.stdin);
   }
   await done;
   child.kill('SIGKILL');
-  return { text: raw.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, ''), raw, exited };
+  return { text: raw.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, ''), raw, err, exited };
 }
 
 /**
@@ -181,5 +195,24 @@ timeout = 20
     assertPastFirstRun(text);
     expect(text, '错误命令下也出现「记忆」类词，说明 ② 的断言词太宽').not.toMatch(/记忆|观察池/);
     expect(text, '错误命令下也出现「压缩模型」，说明 ③ 的断言词太宽').not.toMatch(/压缩模型/);
+  }, 20000);
+
+  /**
+   * ④ 首次运行向导的「查看文档」出口必须把链接打到 stderr。
+   *
+   * 这一项先前是静默失败：选文档与取消都返回 `kind: 'cancel'`，cli 直接 process.exit(0)，
+   * TUI 一清屏，用户刚在列表里看到的那个链接就没了——选这一项等于什么也没得到。
+   * 断言放在 stderr 而不是屏幕内容上：TUI stop 之后才轮到 stderr，这正是要验的时序。
+   */
+  it('④ 首次运行向导「查看文档」出口：进程退出且 stderr 留下文档链接', async () => {
+    // 不写 config、不给 key，让进程真的走进向导；↓×3 选到第 4 项「查看文档」
+    const { err, exited } = await runProcess({
+      noApiKey: true,
+      stdin: '\x1b[B\x1b[B\x1b[B\r',
+      stdinDelayMs: 2000,
+      timeoutMs: 8000,
+    });
+    expect(exited, '选文档后进程应自行退出').toBe(true);
+    expect(err, 'stderr 里没有文档链接，用户选了这一项却什么也没拿到').toMatch(/https?:\/\/\S+quickstart/);
   }, 20000);
 });

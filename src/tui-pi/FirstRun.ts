@@ -22,6 +22,12 @@ import { c } from './theme.js';
 
 export type FirstRunResult =
   | { kind: 'configured'; apiKey: string; provider: string; model: string }
+  /**
+   * 用户选了「查看文档，稍后手动配置」。与 cancel 分开：这条路径要在退出后把文档链接
+   * 打到终端上，否则 TUI 一清屏，用户刚选的那个链接就消失了（先前两者都返回 cancel，
+   * 于是进程静默退出，选这一项等于什么也没得到）。
+   */
+  | { kind: 'docs'; url: string }
   | { kind: 'cancel' };
 
 interface ProviderOption {
@@ -98,7 +104,7 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
       setBanner();
       const picked = await showPicker(tui, {
         title: t('firstRun.title'),
-        hint: t('firstRun.hint'),
+        subtitle: t('firstRun.hint'),
         items: [
           ...PROVIDER_OPTIONS.map((o) => ({ value: o.name, label: t(o.labelKey), description: o.baseUrl })),
           { value: DOCS_VALUE, label: t('firstRun.optionDocs'), description: DOCS_URL },
@@ -106,8 +112,8 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
       });
       if (picked === null) return { kind: 'cancel' };
       if (picked === DOCS_VALUE) {
-        // 文档出口：不落盘，退出后由 cli 打印提示（stderr 在 tui.stop 之后才可靠）
-        return { kind: 'cancel' };
+        // 文档出口：不落盘，退出后由 cli 打印链接（stderr 在 tui.stop 之后才可靠）
+        return { kind: 'docs', url: DOCS_URL };
       }
       chosen = { ...PROVIDER_OPTIONS.find((o) => o.name === picked)! };
       step = chosen.name === 'custom' ? 'baseUrl' : 'key';
@@ -115,8 +121,8 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
     }
 
     if (step === 'baseUrl') {
-      setBanner(c.dim(t('firstRun.confirmProvider', { label: chosen!.name })));
-      const url = await askLine(tui, t('firstRun.baseUrlHint'), 'https://');
+      setBanner(c.dim(t('firstRun.confirmProvider', { label: chosen!.name })), c.accent(t('firstRun.baseUrlTitle')));
+      const url = await askLine(tui, t('firstRun.baseUrlHint'), 'https://', t('firstRun.pasteEscHint'));
       if (url === null) {
         step = 'select';
         continue;
@@ -132,8 +138,9 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
         c.dim(
           `${t('firstRun.confirmProvider', { label: chosen!.name })} · ${t('firstRun.confirmBaseUrl', { url: chosen!.baseUrl })}`,
         ),
+        c.accent(t('firstRun.pasteTitle')),
       );
-      const key = await askLine(tui, t('firstRun.pasteHint'));
+      const key = await askLine(tui, t('firstRun.pasteHint'), undefined, t('firstRun.pasteEscHint'));
       if (key === null) {
         step = chosen!.name === 'custom' ? 'baseUrl' : 'select';
         continue;
@@ -150,9 +157,10 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
     // step === 'model'
     setBanner(
       c.dim(`${t('firstRun.confirmProvider', { label: chosen!.name })} · ${t('firstRun.keySaved')}`),
+      c.accent(t('firstRun.customModelTitle')),
     );
     if (chosen!.models.length === 0) {
-      const modelId = await askLine(tui, t('firstRun.customModelHint'));
+      const modelId = await askLine(tui, t('firstRun.customModelHint'), undefined, t('firstRun.pasteEscHint'));
       if (modelId === null) {
         step = 'key';
         continue;
@@ -169,7 +177,8 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
     }
     const picked = await showPicker(tui, {
       title: t('firstRun.modelTitle'),
-      hint: t('firstRun.modelHint'),
+      subtitle: t('firstRun.modelHint'),
+      hint: t('firstRun.modelEscHint'),
       items: chosen!.models.map((m) => ({ value: m.alias, label: m.displayName, description: m.modelId })),
     });
     if (picked === null) {

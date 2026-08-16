@@ -53,6 +53,14 @@ export class PickerOverlay implements Component {
   /** 额外按键处理（如会话选择器的 d 删除）；返回 true 表示已消费。 */
   private readonly onKey?: (data: string, selected: SelectItem | null) => boolean;
   private readonly hint: string;
+  /**
+   * 标题下方的说明行（可选）。
+   *
+   * 和 hint 分开是因为它们竞争同一个位置：hint 在底部承担操作键提示（↑↓/Enter/Esc），
+   * 调用方一旦传业务说明进 hint，操作键提示就被顶掉了。首次运行向导先前正是如此——
+   * 第一屏只有「未检测到 API key」，没有任何键位提示，而那是新用户见到的第一个界面。
+   */
+  private readonly subtitle?: string;
   private readonly maxVisible: number;
   /** Shift+Enter 确认（如模型选择器的「仅本会话生效」）；不设则 shift+enter 走普通确认。 */
   private readonly onShiftSelect?: (item: SelectItem) => void;
@@ -67,6 +75,7 @@ export class PickerOverlay implements Component {
     items: SelectItem[];
     maxVisible?: number;
     hint?: string;
+    subtitle?: string;
     requestRender: () => void;
     onSelect: (item: SelectItem) => void;
     onCancel: () => void;
@@ -78,6 +87,7 @@ export class PickerOverlay implements Component {
   }) {
     this.title = opts.title;
     this.hint = opts.hint ?? t('picker.hint.default');
+    this.subtitle = opts.subtitle;
     this.requestRender = opts.requestRender;
     this.onSelectItem = opts.onSelect;
     this.onCancel = opts.onCancel;
@@ -174,6 +184,7 @@ export class PickerOverlay implements Component {
   render(width: number): string[] {
     const head = `${c.accent(this.title)}${this.filter !== '' ? c.dim(t('picker.filterPrefix') + this.filter) : ''}`;
     const lines = [head];
+    if (this.subtitle !== undefined) lines.push(c.dim(this.subtitle));
     if (this.tabs.length > 1) {
       // tab 条：active 反色加粗，其余灰色；总宽超 width 时右端截断加 …（v1 不做滚动窗口）
       let bar = '';
@@ -264,6 +275,8 @@ export function showPicker(
     title: string;
     items: SelectItem[];
     hint?: string;
+    /** 标题下方的说明行；业务说明走这里，别塞进 hint（那会顶掉操作键提示）。 */
+    subtitle?: string;
     onKey?: (data: string, selected: SelectItem | null, overlay: PickerOverlay) => boolean;
     /** Shift+Enter 确认入口（模型选择器「仅本会话生效」）。 */
     onShiftSelect?: (value: string) => void;
@@ -284,6 +297,7 @@ export function showPicker(
       title: opts.title,
       items: opts.items,
       hint: opts.hint,
+      subtitle: opts.subtitle,
       requestRender: () => tui.requestRender(),
       onSelect: (item) => finish(item.value),
       onCancel: () => finish(null),
@@ -344,7 +358,13 @@ export class Banner implements Component {
 }
 
 
-export function askLine(tui: TUI, hint: string, initial?: string): Promise<string | null> {
+/**
+ * 单行输入。hint 在输入框上方说明填什么，keyHint 在下方说明按什么键。
+ *
+ * 键位提示放输入框下方而不是拼进 hint：位置与主界面输入框的 footer 提示同口径，
+ * 用户找键位提示时看的是同一个地方。
+ */
+export function askLine(tui: TUI, hint: string, initial?: string, keyHint?: string): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     const host = new Container();
     let settled = false;
@@ -366,6 +386,11 @@ export function askLine(tui: TUI, hint: string, initial?: string): Promise<strin
     if (initial !== undefined) editor.setText(initial);
     host.addChild(hintLine);
     host.addChild(editor);
+    if (keyHint !== undefined) {
+      const keyLine = new Banner();
+      keyLine.setLines([c.dim(keyHint)]);
+      host.addChild(keyLine);
+    }
     tui.addChild(host);
     tui.setFocus(editor);
     tui.requestRender();

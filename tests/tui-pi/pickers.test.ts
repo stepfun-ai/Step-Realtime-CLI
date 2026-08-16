@@ -129,6 +129,29 @@ describe('PickerOverlay', () => {
     expect(picked).toEqual(['alpha']);
   });
 
+  /**
+   * subtitle 与 hint 必须各占一行，不能互相顶掉。
+   *
+   * 这是首次运行向导踩出来的：业务说明当时被传进 hint，于是底部那行操作键提示
+   * （↑↓/Enter/Esc）整条消失——新用户见到的第一个界面上没有任何键位说明。
+   */
+  it('subtitle 在标题下方，且不挤掉底部的操作键提示', () => {
+    const overlay = new PickerOverlay({
+      title: '选择模型',
+      subtitle: '未检测到 API key。请配置后继续使用：',
+      items: [{ value: 'alpha', label: 'alpha' }],
+      requestRender: () => {},
+      onSelect: () => {},
+      onCancel: () => {},
+    });
+    const lines = plain(overlay.render(60));
+    expect(lines[0]).toContain('选择模型');
+    expect(lines[1]).toContain('未检测到 API key');
+    // 底部仍是操作键提示：subtitle 占的是标题下一行，不是 hint 的位置
+    expect(lines[lines.length - 1]).toContain('Enter 确认');
+    expect(lines[lines.length - 1]).not.toContain('未检测到 API key');
+  });
+
   it('↓ 移动后 Enter 选中第二项', () => {
     const { overlay, picked } = mk();
     overlay.handleInput(DOWN);
