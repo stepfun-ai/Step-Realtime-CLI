@@ -66,7 +66,13 @@ export const markdownTheme: MarkdownTheme = {
   },
 };
 
-/** 思考块的 markdown 主题：全体压暗，与正文区分（对应 Ink 版的 dim + italic）。 */
+/**
+ * 思考块的 markdown 主题。
+ *
+ * 注意：保证思考块全灰的不是这里，是 dimAll——本主题只覆盖带标记的元素，普通段落
+ * 文本根本不经过 theme 函数。留着它的实际作用是 highlightCode 直接返回纯文本，
+ * 省掉一次「先 cli-highlight 上色、再被 dimAll 剥掉」的白做功。
+ */
 export const thinkingMarkdownTheme: MarkdownTheme = {
   ...markdownTheme,
   heading: (s) => chalk.dim(s),
@@ -76,6 +82,23 @@ export const thinkingMarkdownTheme: MarkdownTheme = {
   listBullet: (s) => chalk.dim(s),
   highlightCode: (code) => code.split('\n').map((l) => chalk.dim(l)),
 };
+
+/**
+ * 把渲染好的行统一压灰：先剥掉全部 SGR，再整行套 dim。
+ *
+ * 思考块必须走这一步，逐项配 markdown 主题治不了根本问题——无标记的普通段落文本
+ * 不经过任何 theme 函数，Markdown 原样输出，于是显示为默认白。而思考内容绝大部分
+ * 就是普通段落，结果是「一段灰一段白」。ActivityLine 的流式预览一直是全灰的，因为
+ * 它整行套 c.thinking 且不过 Markdown；定稿块对齐的就是那个口径。
+ *
+ * 只剥 SGR（\x1b[...m），不动 OSC 8 超链接序列——那是功能不是颜色，剥了会丢可点击链接。
+ */
+export function dimAll(lines: readonly string[]): string[] {
+  return lines.map((l) => {
+    const stripped = l.replace(/\x1b\[[0-9;]*m/g, '');
+    return stripped === '' ? '' : chalk.dim(stripped);
+  });
+}
 
 export const selectListTheme: SelectListTheme = {
   selectedPrefix: (s) => chalk.cyan(s),

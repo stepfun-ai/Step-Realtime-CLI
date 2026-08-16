@@ -107,6 +107,64 @@ describe('ItemBlock 渲染', () => {
     }
   });
 
+  it('thinking 块全灰：无任何非 dim 的着色残留', () => {
+    // 半灰半白是老 bug：逐项配 thinkingMarkdownTheme 只覆盖带标记的元素，无标记的普通
+    // 段落不经过任何 theme 函数，Markdown 原样输出即默认白——而思考内容大部分是普通段落。
+    // 这条断言盯的是「除 dim(2/22) 外没有别的 SGR」，不是「有 dim」：只给前缀套 dim 也能
+    // 让「有 dim」成立，那正是修复前的状态。
+    const prev = chalk.level;
+    chalk.level = 3;
+    try {
+      const text = [
+        '普通段落文本',
+        '',
+        '- 列表项文字',
+        '',
+        '**加粗** 与 `行内代码` 与 [链接](https://example.com)',
+        '',
+        '> 引用行',
+        '',
+        '# 标题',
+        '',
+        '```js',
+        'const a = 1;',
+        '```',
+        '',
+        '---',
+        '',
+        '~~删除线~~',
+      ].join('\n');
+      const cases: readonly (readonly [string, readonly string[]])[] = [
+        ['展开态', ItemBlock.renderExpanded({ kind: 'thinking', text } as never, 60)],
+        // 主界面只渲染折叠后的前 THINKING_FOLD_LINES 行，彩色元素必须落在这几行内。
+        // 用上面那段长文本时链接/删除线都在第 5 行之后，撤掉主界面的 dimAll 测试照样全绿
+        // ——断言测的是被折叠掉的部分。所以这里换一段两行的短文本，不触发折叠。
+        [
+          '主界面',
+          new ItemBlock({
+            kind: 'thinking',
+            text: '**加粗** 与 `行内代码` 与 [链接](https://example.com)\n~~删除线~~',
+          }).render(60),
+        ],
+      ];
+      for (const [name, lines] of cases) {
+        for (const l of lines) {
+          const codes = [...l.matchAll(/\x1b\[([0-9;]+)m/g)].map((m) => m[1]!);
+          const nonDim = codes.filter((x) => x !== '2' && x !== '22');
+          expect(nonDim, `${name} 出现非 dim 着色：${JSON.stringify(l.slice(0, 60))}`).toEqual([]);
+        }
+      }
+      // OSC 8 超链接是功能不是颜色，压灰不能把它剥掉
+      const withLink = ItemBlock.renderExpanded(
+        { kind: 'thinking', text: '见 [文档](https://example.com)' } as never,
+        60,
+      ).join('');
+      expect(withLink, 'OSC 8 超链接被误剥').toContain('example.com');
+    } finally {
+      chalk.level = prev;
+    }
+  });
+
   it('成功的工具输出整段折叠成一行，diff 完整展示', () => {
     const ok = new ItemBlock({
       kind: 'tool',

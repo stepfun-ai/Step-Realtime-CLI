@@ -14,7 +14,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { DisplayItem, WelcomeData } from '../chat/types.js';
 import { THINKING_FOLD_LINES } from '../chat/expandable.js';
-import { c, markdownTheme, thinkingMarkdownTheme } from './theme.js';
+import { c, dimAll, markdownTheme, thinkingMarkdownTheme } from './theme.js';
 import { markdownTransform } from '../chat/markdownPrep.js';
 import { formatDuration } from '../chat/duration.js';
 import { formatCount } from './StatusLine.js';
@@ -170,7 +170,8 @@ export class ItemBlock implements Component {
   static renderExpanded(item: Extract<DisplayItem, { kind: 'tool' | 'thinking' }>, width: number): string[] {
     if (item.kind === 'thinking') {
       const md = new Markdown(item.text, 0, 0, thinkingMarkdownTheme, undefined, { transform: markdownTransform });
-      return md.render(width - 2);
+      // 压灰同主界面：查看器里也不该出现半灰半白
+      return dimAll(md.render(width - 2));
     }
     return renderToolExpanded(item, width);
   }
@@ -194,7 +195,7 @@ export class ItemBlock implements Component {
         // 长 thinking 在主界面折叠为前 N 行 + 「还有 N 行（Ctrl+O 查看）」，
         // 全文进 ExpandViewer（Ctrl+O）。与 Ink 版同语义；阈值 3 行（Ink 是 2，
         // pi 流式预览只有尾部 1 行，定稿多给一行，从流式到定稿的视觉落差更小）。
-        const rendered = this.renderMarkdown(it.text, width - 2, true);
+        const rendered = dimAll(this.renderMarkdown(it.text, width - 2, true));
         if (rendered.length <= THINKING_FOLD_LINES) return [...indent(rendered, c.thinking('┊ ')), ''];
         const head = rendered.slice(0, THINKING_FOLD_LINES);
         const folded = c.thinking(`┊ … 还有 ${rendered.length - THINKING_FOLD_LINES} 行（Ctrl+O 查看）`);
