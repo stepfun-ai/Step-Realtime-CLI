@@ -72,6 +72,12 @@ export class ChatEditor extends Editor {
    */
   onCtrlO?: () => boolean;
   /**
+   * 除 Esc / Ctrl+C 之外的任意按键。用于解除双击确认（primed）态。
+   *
+   * 不设返回值：它永远不消费按键，只是个旁路通知——按键仍走正常处理链。
+   */
+  onOtherKey?: () => void;
+  /**
    * 自动补全菜单是否打开。Editor 的补全状态是私有字段，外部读不到；M4 接补全时由
    * provider 侧回填这个标记，M1 阶段没有 provider，恒为 false。
    */
@@ -128,6 +134,10 @@ export class ChatEditor extends Editor {
     const first = lines[1]!;
     if (!first.startsWith(PROMPT_PAD)) return lines; // padding 被外部改过，不硬塞
     lines[1] = this.promptStyle(PROMPT_SYMBOL) + this.withPlaceholder(first, width).slice(PROMPT_PAD.length);
+    // 提示行加在下边框之外而不是框内：primed 是瞬时态（5 秒过期），画在框内会让输入框
+    // 高度抖一下再抖回来，差分渲染下整块重绘；框外多一行只影响它自己。
+    const footer = this.footerText();
+    if (footer !== '') lines.push(this.footerStyle(truncateToWidth(footer, Math.max(1, width))));
     return lines;
   }
 
@@ -160,6 +170,14 @@ export class ChatEditor extends Editor {
   }
 
   override handleInput(data: string): void {
+    // primed 态解除：除 Esc 与 Ctrl+C 外的任意按键都解除双击确认态。
+    //
+    // 放在所有分支之前、且不 return——这次按键仍要按下面的正常逻辑处理。两个 primed
+    // 各自的触发键要放行（Esc 之于 backtrack、Ctrl+C 之于 exit），否则第二次按下时
+    // 会先被这里解除，双击永远走不到执行分支。
+    if (!matchesKey(data, 'escape') && !matchesKey(data, 'ctrl+c')) {
+      this.onOtherKey?.();
+    }
     if (matchesKey(data, 'escape')) {
       // 补全菜单开着时 Esc 归菜单（与 Ink 版「输入框是斜杠命令时 Esc 关菜单、不中断回合」同义）
       if (!this.autocompleteOpen && this.onEscapeKey?.() === true) return;

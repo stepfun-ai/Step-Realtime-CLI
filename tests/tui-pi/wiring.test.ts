@@ -177,6 +177,45 @@ describe('PiChat 接线：会话切换的清理与恢复', () => {
     expect(piChat.includes('this.controller?.abort();\n      return true;'), 'Esc/Ctrl+C 应走 abortTurn').toBe(false);
   });
 
+  it('Esc 双击回退：primed 状态机三个动作 + 两个纯函数都有调用点', () => {
+    // 这条对应一个真实缺口：computeBacktrack 与 truncateItemsAtLastUser 两个纯函数
+    // 迁移时就在 chat/ 里躺着，各自有测试，但 PiChat 从未调用过——功能整条缺失。
+    wired(piChat, 'computeBacktrack', '回退计算');
+    wired(piChat, 'truncateItemsAtLastUser', '转录区截断');
+    wired(piChat, 'enterBacktrackPrimed', '进入 primed');
+    wired(piChat, 'cancelBacktrackPrimed', '解除 primed');
+    wired(piChat, 'performBacktrack', '执行回退');
+    // 历史与转录区必须一起截断：只改一边会让屏幕上留着已回滚的问答
+    expect(
+      /this\.history\.push\(\.\.\.result\.history\)/.test(piChat),
+      '回退未替换 history',
+    ).toBe(true);
+    expect(
+      /truncateItemsAtLastUser\(this\.transcript\.items\(\)\)/.test(piChat),
+      '回退未截断转录区',
+    ).toBe(true);
+    // 回退后要落盘，否则重启把已撤销的那轮读回来
+    expect(/performBacktrack\(\)[\s\S]{0,900}?this\.persist\(\)/.test(piChat), '回退后未 persist').toBe(true);
+  });
+
+  it('两个 primed 提示走输入框下方 footer，不进转录区 note', () => {
+    wired(piChat, 'footerText', 'footer 绑定');
+    wired(piChat, "t('input.backtrackPrimed')", '回退提示文案');
+    wired(piChat, "t('input.exitPrimed')", '退出提示文案');
+    // 旧实现把「再按一次 Ctrl+C 退出」push 成 note，会永久留在历史里
+    expect(piChat.includes("text: '再按一次 Ctrl+C 退出'"), 'exitPrimed 提示应移出转录区').toBe(false);
+    // 任意其他键解除两个 primed（否则按了 Esc 又打字，下一次 Esc 会误判成第二击）
+    wired(piChat, 'onOtherKey', '按键解除通道');
+    wired(piChat, 'cancelExitPrimed', '解除退出 primed');
+  });
+
+  it('两个 primed 定时器在退出时都被清理', () => {
+    // 未清的 setTimeout 会让 node 事件循环多挂 5 秒才退出
+    const exitBlock = /private exit\(\): void \{[\s\S]{0,600}?\n  \}/.exec(piChat)?.[0] ?? '';
+    expect(exitBlock, 'exit 里应清 exitPrimedTimer').toContain('exitPrimedTimer');
+    expect(exitBlock, 'exit 里应清 backtrackPrimedTimer').toContain('backtrackPrimedTimer');
+  });
+
   it('待发队列持久化：变更走 updateQueue，两条恢复路径都接回', () => {
     wired(piChat, 'updateQueue', '队列变更统一出口');
     wired(piChat, "type: 'queue.update'", '队列 wire 事件');

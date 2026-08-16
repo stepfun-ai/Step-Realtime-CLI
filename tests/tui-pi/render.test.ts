@@ -578,6 +578,40 @@ describe('ChatEditor 的 Esc / Ctrl+C 路由', () => {
     ed.handleInput('\x03');
     expect(called).toBe(1);
   });
+
+  it('footerText 画在下边框之外，空串不占行', () => {
+    const { ed } = mk();
+    const base = ed.render(60);
+    expect(ed.footerText()).toBe(''); // 默认无 footer
+    ed.footerText = () => '· 再按一次 Esc 取回上一条消息编辑';
+    const withFooter = ed.render(60);
+    expect(withFooter.length, 'footer 应多占一行').toBe(base.length + 1);
+    // 必须在下边框之后（框内会让输入框高度抖动）
+    // Editor 的边框是横线（不是 welcome 框的圆角），footer 必须落在它之后
+    expect(withFooter[withFooter.length - 2]!.replace(/\x1b\[[0-9;]*m/g, ''), '倒数第二行应是下边框').toMatch(/^─+$/);
+    expect(withFooter[withFooter.length - 1]).toContain('再按一次 Esc');
+    // 超宽 footer 被截断，不撑破行宽
+    ed.footerText = () => 'x'.repeat(200);
+    const wide = ed.render(60);
+    expect(visibleWidth(wide[wide.length - 1]!)).toBeLessThanOrEqual(60);
+  });
+
+  it('除 Esc / Ctrl+C 外的按键触发 onOtherKey（primed 解除通道），且不吞按键', () => {
+    const { ed } = mk();
+    const hits: string[] = [];
+    ed.onOtherKey = () => hits.push('x');
+    // Esc 与 Ctrl+C 不触发：它们各自是两个 primed 的第二击，被解除就永远走不到执行分支
+    ed.handleInput('\x1b');
+    ed.handleInput('\x03');
+    expect(hits.length, 'Esc/Ctrl+C 不应触发解除').toBe(0);
+    // 普通字符触发，且字符仍然进了输入框（旁路通知，不消费按键）
+    ed.handleInput('a');
+    expect(hits.length).toBe(1);
+    expect(ed.getText(), '按键不应被吞掉').toBe('a');
+    // 其他控制键同样触发
+    ed.handleInput('\x02'); // ctrl+b
+    expect(hits.length).toBe(2);
+  });
 });
 
 /**

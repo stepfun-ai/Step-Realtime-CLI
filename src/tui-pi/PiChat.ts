@@ -70,7 +70,7 @@ import type { DisplayItem } from '../chat/types.js';
 import { busyRoute, helpText, parseSlash } from '../chat/commands.js';
 import { resolveProviderTarget } from '../chat/providerSwitch.js';
 import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from '../chat/reload.js';
-import { extractUserText } from '../chat/backtrack.js';
+import { computeBacktrack, extractUserText, truncateItemsAtLastUser } from '../chat/backtrack.js';
 import { clearUndoSnapshots, computeUndo, popUndoSnapshots, pushUndoSnapshot, type UndoSnapshot } from '../chat/undo.js';
 import { historyToDisplayItems } from '../chat/historyReplay.js';
 import { planTurnEnd } from '../chat/turnEnd.js';
@@ -158,6 +158,12 @@ const HINTS = 'Enter 发送 · Esc 中断 · Ctrl+C 退出 · /help 命令';
 
 /** /compact 保留的最近消息条数（与 fullCompact 的 keepRecent 默认值一致，两处必须同值）。 */
 const COMPACT_KEEP_RECENT = 6;
+
+/**
+ * primed 态（双击确认）的超时：Esc 双击回退与 Ctrl+C 双击退出共用同一档，与 Ink 版一致。
+ * 两处取同值是有意的——用户不该记两个不同的窗口长度。
+ */
+const PRIMED_TIMEOUT_MS = 5000;
 
 export class PiChat {
   private readonly deps: PiChatDeps;
@@ -284,6 +290,12 @@ export class PiChat {
   private measuredLen = 0;
   private exitPrimed = false;
   private exitPrimedTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * backtrack primed 态：第一次 Esc 进入，第二次 Esc 执行回退，5 秒无操作或按下任意
+   * 其他键则解除。与 exitPrimed 同构，两者的提示都画在输入框下方（footerText）。
+   */
+  private backtrackPrimed = false;
+  private backtrackPrimedTimer: ReturnType<typeof setTimeout> | undefined;
   private ticker: ReturnType<typeof setInterval> | undefined;
   private resolveExit: ((info: PiChatExit) => void) | undefined;
   /** 弹层（审批/计划/提问）激活中：暂停 spinner，用户此时在读弹层，动画只是噪声与无谓重绘。 */
@@ -341,6 +353,12 @@ export class PiChat {
     };
     this.editor.onEscapeKey = () => this.onEscape();
     this.editor.onCtrlC = () => this.onCtrlC();
+    // 任意其他键解除两个 primed 态：不这么做的话，用户按了 Esc 又去打字，5 秒内的
+    // 下一次 Esc 会被当成「双击的第二下」，把上一条消息意外回退掉。
+    this.editor.onOtherKey = () => {
+      this.cancelBacktrackPrimed();
+      this.cancelExitPrimed();
+    };
     // 提示符着色跟随 busy（Ink 版 PromptInput 同口径：busy 黄、空闲灰，都加粗）。
     // 绑一个读 this.busy 的函数，而不是在 6 处 setBusy 调用点各改一次——那种写法
     // 漏一处就出现「回合在跑但提示符还是灰的」这类状态不同步。
@@ -349,6 +367,17 @@ export class PiChat {
     // 与提示符同样绑成读 this.busy 的函数，两者状态天然一致。
     this.editor.placeholderStyle = (s) => c.dim(s);
     this.editor.placeholderText = () => t(this.busy ? 'input.placeholder.busy' : 'input.placeholder.idle');
+    // primed 提示行（Esc 双击回退 / Ctrl+C 双击退出）。同样绑成读状态的函数：
+    // 两个 primed 各有进入、超时、按键解除三条出口，逐处回写文案必漏。
+    // 只在空闲时显示——busy 态下 Esc 是中断、Ctrl+C 是清空/中断，两条提示都不适用
+    // （与 Ink 版 PromptInput 的 `!busy && primed` 条件同口径）。
+    this.editor.footerStyle = (s) => c.warn(s);
+    this.editor.footerText = () => {
+      if (this.busy) return '';
+      if (this.backtrackPrimed) return t('input.backtrackPrimed');
+      if (this.exitPrimed) return t('input.exitPrimed');
+      return '';
+    };
     // Ctrl+V / Alt+V 读剪贴板图片。busy 时也允许：只往输入框草稿追加占位符，不碰在跑的回合
     // （提交走排队路径，drain 时统一展开成图）。
     // 两个键位同一动作：Alt+V 是 Ink 版主仓的键位（用户肌肉记忆），Ctrl+V 兜住 Alt 被
@@ -815,7 +844,72 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       this.syncStatus();
       return true;
     }
+    // 队列空 + 输入框空 + 有可回退的 user 消息：双击 Esc 回退编辑上一条
+    if (this.editor.getText() === '' && computeBacktrack(this.history) !== null) {
+      if (this.backtrackPrimed) this.performBacktrack();
+      else this.enterBacktrackPrimed();
+      return true;
+    }
     return false;
+  }
+
+  /** 进入 backtrack primed：5 秒无第二次 Esc 自动解除。 */
+  private enterBacktrackPrimed(): void {
+    this.backtrackPrimed = true;
+    if (this.backtrackPrimedTimer !== undefined) clearTimeout(this.backtrackPrimedTimer);
+    this.backtrackPrimedTimer = setTimeout(() => {
+      this.backtrackPrimed = false;
+      this.backtrackPrimedTimer = undefined;
+      // 超时解除必须主动重绘：没有按键事件驱动这一帧，不请求的话提示行会一直挂在屏幕上
+      this.tui.requestRender();
+    }, PRIMED_TIMEOUT_MS);
+    this.tui.requestRender();
+  }
+
+  /** 解除 backtrack primed（第二次 Esc 执行前、或按下任意其他键时）。 */
+  private cancelBacktrackPrimed(): void {
+    if (!this.backtrackPrimed) return;
+    this.backtrackPrimed = false;
+    if (this.backtrackPrimedTimer !== undefined) {
+      clearTimeout(this.backtrackPrimedTimer);
+      this.backtrackPrimedTimer = undefined;
+    }
+    this.tui.requestRender();
+  }
+
+  /** 解除 exit primed（按下任意非 Ctrl+C 键时）。 */
+  private cancelExitPrimed(): void {
+    if (!this.exitPrimed) return;
+    this.exitPrimed = false;
+    if (this.exitPrimedTimer !== undefined) {
+      clearTimeout(this.exitPrimedTimer);
+      this.exitPrimedTimer = undefined;
+    }
+    this.tui.requestRender();
+  }
+
+  /**
+   * 第二次 Esc：回滚最近一条 user 消息及其之后的全部历史，转录区同步截断，
+   * 消息文本 prefill 回输入框。
+   *
+   * 历史与转录区必须一起截断：只改 history 会让屏幕上还留着已被回滚的问答，用户以为
+   * 模型还记得那一轮。两个纯函数（computeBacktrack / truncateItemsAtLastUser）迁移时
+   * 就在 chat/ 里躺着，一直没有调用点。
+   */
+  private performBacktrack(): void {
+    this.cancelBacktrackPrimed();
+    const result = computeBacktrack(this.history);
+    if (result === null) return;
+    this.history.length = 0;
+    this.history.push(...result.history);
+    this.transcript.reset(truncateItemsAtLastUser(this.transcript.items()));
+    // 回滚后的历史要落盘，否则重启又把已撤销的那轮读回来
+    this.persist();
+    this.editor.setText(result.prefill);
+    // 用量基准跟着回退：不重算的话状态栏还显示回滚前的 context 占用
+    this.measuredLen = Math.min(this.measuredLen, this.history.length);
+    this.syncStatus();
+    this.tui.requestRender();
   }
 
   /**
@@ -838,10 +932,14 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     }
     if (this.editor.getText() !== '') this.editor.setText('');
     this.exitPrimed = true;
-    this.push({ kind: 'note', text: '再按一次 Ctrl+C 退出' });
+    // 提示走输入框下方的瞬时行，不进转录区：note 会永久留在历史里，用户翻回去看到一堆
+    // 「再按一次 Ctrl+C 退出」的残骸，而当下那条早滚上去看不见了（对齐 Ink 版位置）。
     this.exitPrimedTimer = setTimeout(() => {
       this.exitPrimed = false;
-    }, 5000);
+      this.exitPrimedTimer = undefined;
+      this.tui.requestRender();
+    }, PRIMED_TIMEOUT_MS);
+    this.tui.requestRender();
     return true;
   }
 
@@ -952,6 +1050,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
 
   private exit(): void {
     if (this.exitPrimedTimer !== undefined) clearTimeout(this.exitPrimedTimer);
+    // backtrack 的定时器同样要清：未清的 setTimeout 会让 node 事件循环多挂 5 秒才退
+    if (this.backtrackPrimedTimer !== undefined) clearTimeout(this.backtrackPrimedTimer);
     if (this.ticker !== undefined) clearInterval(this.ticker);
     this.cron.stop();
     this.persist();
