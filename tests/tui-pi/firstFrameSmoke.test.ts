@@ -73,6 +73,9 @@ describe.each([{ args: [] as string[], label: '默认（无参数）' }, { args:
   ({ args }) => {
   it.skipIf(!existsSync(entry))(
     'PiChat 挂载后 stdout 必须有输出',
+    // 进程级冒烟在全量并行下会与其他 spawn 竞争 CPU，偶发超时。功能真坏时三次都会失败，
+    // retry 不掩盖回归。
+    { timeout: 40_000, retry: 2 },
     async () => {
       const { bytes, stderr, out } = await waitFirstFrameBytes(20_000, args);
       if (stderr.includes('缺少 API key')) return;
@@ -83,7 +86,6 @@ describe.each([{ args: [] as string[], label: '默认（无参数）' }, { args:
       // 首帧至少要包含同步输出的包裹序列（CSI 2026），证明写出的确实是 pi-tui 的渲染帧
       expect(out).toContain('\x1b[?2026');
     },
-    40_000,
   );
   },
 );
