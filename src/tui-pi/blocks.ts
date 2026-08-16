@@ -60,6 +60,13 @@ const ERROR_PREVIEW_LINES = 4;
 const DIFF_MAX_LINES = 200;
 
 /**
+ * 能被 Ctrl+B 转后台的工具：它们跑起来会在 BackgroundManager 里留前台任务，
+ * applyCtrlB 一次性把这些全转后台。集中成常量而不是散在条件里，是因为将来新增
+ * 可后台化的工具时，忘了改这里的表现就是「功能能用但用户不知道」。
+ */
+const CTRL_B_TOOLS = new Set(['bash', 'spawn_agent', 'dynamic_workflow']);
+
+/**
  * 工具入参的单行摘要（折叠态标题行与 Ctrl+O 条目标题共用口径）。
  *
  * 字段顺序即优先级，取第一个命中的字符串字段。两处与 Ink 版不同，属 pi 版有意差异：
@@ -246,8 +253,14 @@ export class ItemBlock implements Component {
       it.status === 'running' && it.startedAt !== undefined
         ? c.dim(t('toolCall.elapsed', { s: Math.max(0, Math.round((Date.now() - it.startedAt) / 1000)) }))
         : '';
-    // 前台 bash 运行中才提示可转后台：发现性入口，Ctrl+B 已由 ChatEditor 绑定到 applyCtrlB
-    const bgHint = it.status === 'running' && it.name === 'bash' ? c.dim(t('toolCall.bashBackgroundHint')) : '';
+    // 前台任务运行中才提示可转后台。Ctrl+B（applyCtrlB）转的是**全部前台任务**，
+    // 不只是 bash——子 agent 与 dynamic_workflow 同样在列。Ink 版这里只判 bash，是因为
+    // 它有独立的 AgentGroup 面板单独显示子 agent 的转后台提示；pi 版按有意差异把进度
+    // 内嵌进卡片，提示也就该落在卡片上（等价物，不是漏抄）。
+    //
+    // key 名里的 bash 是历史包袱，文案本身「（Ctrl+B 转后台运行）」是通用的。不改名以
+    // 免与主仓 i18n 表无谓分叉。
+    const bgHint = it.status === 'running' && CTRL_B_TOOLS.has(it.name) ? c.dim(t('toolCall.bashBackgroundHint')) : '';
     const subagent =
       it.subagentType !== undefined || it.description !== undefined
         ? c.dim(` ${[it.subagentType, it.description].filter((x) => x !== undefined).join(' · ')}`)

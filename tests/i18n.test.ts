@@ -18,6 +18,49 @@ afterEach(() => {
   setLocale('zh');
 });
 
+describe('i18n 表结构守卫（源码级）', () => {
+  const i18nSrc = readFileSync(join(__dirname, '..', 'src', 'i18n.ts'), 'utf8');
+  /**
+   * key 定义行的匹配式。两处覆盖范围都是踩出来的，改动前先看这段：
+   *
+   * 1. **引号必须同时认单双引号**。2026-08-16 做 i18n 全量扫描时只写了单引号，于是 en 表里
+   *    唯一一条用双引号定义的 key（app.think.budgetWarning）被判成「zh 有 en 无」的缺翻译。
+   *    实际翻译一直都在，是检索式覆盖不全。
+   * 2. **字符类必须含连字符**。紧接着又用 `[\w.]` 漏掉了 `cmd.export-debug-zip`，表现为
+   *    「运行时表比源码多一条」。
+   *
+   * 两次都是同一种错：拿不完备的检索式得出空结果或差值，然后去解释那个差值，而不是先怀疑
+   * 检索式。下面那两条 `size > 300` 的断言就是为这个装的——检索式失效时先炸在那里。
+   */
+  const KEY_LINE = /^\s*['"]([a-zA-Z][\w.-]*)['"]\s*:/gm;
+
+  function keysIn(segment: string): Set<string> {
+    return new Set([...segment.matchAll(KEY_LINE)].map((m) => m[1]!));
+  }
+
+  it('zh 与 en 的 key 集完全一致（任一侧缺失都会让另一语言露出对面文案）', () => {
+    const zhStart = i18nSrc.indexOf('const zh');
+    const enStart = i18nSrc.indexOf('const en');
+    expect(zhStart, '找不到 zh 表').toBeGreaterThan(-1);
+    expect(enStart, '找不到 en 表').toBeGreaterThan(zhStart);
+    const zh = keysIn(i18nSrc.slice(zhStart, enStart));
+    const en = keysIn(i18nSrc.slice(enStart));
+    // 先确认检索式真的抓到了东西——空集比对会恒真
+    expect(zh.size, '没抓到 zh key，检索式失效').toBeGreaterThan(300);
+    expect(en.size, '没抓到 en key，检索式失效').toBeGreaterThan(300);
+    expect([...zh].filter((k) => !en.has(k)).sort(), 'zh 有 en 无').toEqual([]);
+    expect([...en].filter((k) => !zh.has(k)).sort(), 'en 有 zh 无').toEqual([]);
+    // 运行时表也应与源码一致（防止有人在表外动态塞 key）
+    expect(new Set(Object.keys(I18N_TABLES.zh))).toEqual(zh);
+    expect(new Set(Object.keys(I18N_TABLES.en))).toEqual(en);
+  });
+
+  it('key 定义统一用单引号（混用会让按引号写的检索式漏检）', () => {
+    const doubleQuoted = [...i18nSrc.matchAll(/^\s*"([a-zA-Z][\w.-]*)"\s*:/gm)].map((m) => m[1]!);
+    expect(doubleQuoted, '这些 key 用了双引号，请改单引号').toEqual([]);
+  });
+});
+
 describe('t() 查表与插值', () => {
   it('默认 zh：返回中文文案', () => {
     // 值不含热键标注：ChoiceBlock 只用 hotkeys 做键盘匹配、不渲染它，热键在底部 hint 里
