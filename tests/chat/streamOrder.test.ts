@@ -22,8 +22,15 @@ afterEach(() => {
 /**
  * PiChat.applyEvent 的块序部分（副作用剥离版）。改 PiChat 那段逻辑时这里要同步，
  * 两边都只剩三行，漂移风险低于「为了可测把 PiChat 拆散」的代价。
+ *
+ * `finishTurn` 对应 PiChat 的 `finally { streamBuffer.drain(); ...兜底 settle }`：
+ * 回合收尾时把残留思考落块。`pendingThinking` 只为测试能直接看见「残留」这个中间态。
  */
-function makeApply(t: Transcript): { apply: (ev: AgentEvent) => void } {
+function makeApply(t: Transcript): {
+  apply: (ev: AgentEvent) => void;
+  finishTurn: () => void;
+  pendingThinking: () => string;
+} {
   let accum = '';
   return {
     apply(ev: AgentEvent): void {
@@ -39,6 +46,12 @@ function makeApply(t: Transcript): { apply: (ev: AgentEvent) => void } {
       if (ev.type === 'tool_start') {
         t.push({ kind: 'tool', id: ev.id, name: ev.name, input: ev.input, status: 'running', startedAt: 0 });
       }
+    },
+    finishTurn(): void {
+      if (settleThinking(t, accum)) accum = '';
+    },
+    pendingThinking(): string {
+      return accum;
     },
   };
 }
@@ -124,5 +137,73 @@ describe('thinking 与正文的块序', () => {
     buf.ingest({ type: 'text', text: '三' });
     buf.drain();
     expect(seq(t)).toEqual(['assistant:一二三']);
+  });
+});
+
+describe('回合边界：思考不得跨回合滞留', () => {
+  /**
+   * 这一族是真机才暴露的形态：块序在回合**内**全对，错的是回合**之间**。
+   *
+   * drain() 只把 StreamBuffer 缓冲吐给 apply，thinking_delta 到了 apply 里仍只累积不落块
+   * （落块靠下一个内容流事件触发 settle）。所以「本回合最后一批事件是思考」时 accum 残留，
+   * 下一轮首个 text 才 settle——那一刻末块已是新一轮的 user 消息，思考块落在它之后。
+   */
+  it('回合以思考结尾（流断在思考中、没有 turn_done）：收尾兜底落块，不滞留', () => {
+    vi.useFakeTimers();
+    const t = new Transcript();
+    const a = makeApply(t);
+    const buf = new StreamBuffer(a.apply);
+    buf.ingest({ type: 'thinking_start' });
+    buf.ingest({ type: 'thinking_delta', text: '想到这里流就断了' });
+    buf.drain();
+    // 复现残留这个中间态：缓冲已吐净，但思考仍未落块
+    expect(a.pendingThinking(), 'drain 只吐缓冲，不负责落块').toBe('想到这里流就断了');
+    expect(seq(t)).toEqual([]);
+    // PiChat 的 finally 兜底
+    a.finishTurn();
+    expect(seq(t)).toEqual(['thinking:想到这里流就断了']);
+    expect(a.pendingThinking()).toBe('');
+  });
+
+  it('无兜底时残留会插到下一轮 user 之后（这就是被报的「思考泄漏」形态）', () => {
+    vi.useFakeTimers();
+    const t = new Transcript();
+    const a = makeApply(t);
+    const buf = new StreamBuffer(a.apply);
+    buf.ingest({ type: 'thinking_delta', text: '上一轮的思考尾巴' });
+    buf.drain();
+    // 故意不调 finishTurn，模拟修复前的行为
+    t.push({ kind: 'user', text: '下一轮提问' });
+    buf.ingest({ type: 'text', text: '这一轮的回答' });
+    buf.drain();
+    // 上一轮的思考块排在了这一轮 user 之后——顺序错乱的确切形态
+    expect(seq(t)).toEqual(['user', 'thinking:上一轮的思考尾巴', 'assistant:这一轮的回答']);
+  });
+
+  it('有兜底时同样的序列顺序正确（思考在本轮、user 在后）', () => {
+    vi.useFakeTimers();
+    const t = new Transcript();
+    const a = makeApply(t);
+    const buf = new StreamBuffer(a.apply);
+    buf.ingest({ type: 'thinking_delta', text: '上一轮的思考尾巴' });
+    buf.drain();
+    a.finishTurn();
+    t.push({ kind: 'user', text: '下一轮提问' });
+    buf.ingest({ type: 'text', text: '这一轮的回答' });
+    buf.drain();
+    expect(seq(t)).toEqual(['thinking:上一轮的思考尾巴', 'user', 'assistant:这一轮的回答']);
+  });
+
+  it('正常收尾（turn_done 已 settle）时兜底是空操作，不重复落块', () => {
+    vi.useFakeTimers();
+    const t = new Transcript();
+    const a = makeApply(t);
+    const buf = new StreamBuffer(a.apply);
+    buf.ingest({ type: 'thinking_delta', text: '想' });
+    buf.ingest({ type: 'text', text: '答' });
+    buf.drain();
+    a.finishTurn();
+    a.finishTurn(); // 幂等
+    expect(seq(t)).toEqual(['thinking:想', 'assistant:答']);
   });
 });

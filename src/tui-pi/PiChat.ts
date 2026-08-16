@@ -2766,6 +2766,21 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       this.applyEvent({ type: 'error', message: (e as Error).message });
     } finally {
       this.streamBuffer.drain();
+      // 收尾兜底：残留的思考必须在本回合内落块。
+      //
+      // drain() 只是把 StreamBuffer 的缓冲吐给 applyEvent，而 thinking_delta 在 applyEvent
+      // 里只累积进 thinkingAccum、不落块——落块靠的是「下一个内容流事件」触发 settle。
+      // 于是当本回合最后一批事件就是思考时（模型只吐思考就结束、流在思考中途断开、
+      // 生成器早退没发 turn_done/aborted），accum 会滞留到下一轮：下一轮首个 text 事件
+      // 才 settle，那一刻转录区末块已经是新一轮的 user 消息，思考块因此落在新输入之后。
+      // 用户看到的现象就是上一轮的思考泄漏到这一轮、输出顺序错乱。
+      //
+      // 放在 drain() 之后：drain 会把缓冲里最后那截 thinking_delta 也喂进 accum，
+      // 顺序反了就会漏掉那一截。
+      if (settleThinking(this.transcript, this.thinkingAccum)) {
+        this.thinkingAccum = '';
+        this.activity.setThinking(false);
+      }
       this.controller = null;
       this.busy = false;
       this.activity.setBusy(false);

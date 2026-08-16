@@ -67,6 +67,21 @@ describe('PiChat 接线：后台任务通知链路', () => {
     ).toBe(true);
   });
 
+  it('回合收尾 finally 里有思考兜底 settle（防跨回合滞留）', () => {
+    // drain() 只吐 StreamBuffer 缓冲；thinking_delta 到 applyEvent 里仍只累积不落块。
+    // 本回合最后一批事件是思考时（流断在思考中、生成器早退没发 turn_done），accum 会
+    // 滞留到下一轮，思考块落在新一轮 user 之后。块序测试在 streamOrder.test.ts，
+    // 这里守的是「那句兜底在 finally 里、且排在 drain 之后」这个位置本身。
+    const finallyStart = piChat.indexOf('} finally {', piChat.indexOf('this.streamBuffer.ingest(ev)'));
+    expect(finallyStart, '回合的 finally 块应存在').toBeGreaterThan(0);
+    const tail = piChat.slice(finallyStart, finallyStart + 1800);
+    const drainAt = tail.indexOf('this.streamBuffer.drain()');
+    const settleAt = tail.indexOf('settleThinking(this.transcript, this.thinkingAccum)');
+    expect(drainAt, 'finally 里应先 drain').toBeGreaterThanOrEqual(0);
+    expect(settleAt, 'finally 里应有兜底 settleThinking').toBeGreaterThanOrEqual(0);
+    expect(settleAt, '兜底必须在 drain 之后（否则漏掉缓冲里最后那截思考）').toBeGreaterThan(drainAt);
+  });
+
   it('persist 补写 delivered 事件（与消息本体同刻落盘）', () => {
     wired(piChat, 'pendingDeliveredEvents', 'delivered 补写');
   });
