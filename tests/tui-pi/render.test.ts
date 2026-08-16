@@ -413,6 +413,109 @@ describe('ChatEditor 的 Esc / Ctrl+C 路由', () => {
 });
 
 /**
+ * 贴图键位路由。用户实测反馈「pi 版不支持 Alt+V 贴图」：Ink 版主仓的键位是 Alt+V
+ * （`App.tsx` 的 `meta.meta && key === 'v'`），迁移时只接了 Ctrl+V，而 i18n 文案
+ * （`app.image.bannerHint`）里一直写着「Alt+V 继续添加」——文案与行为分叉，
+ * 按提示操作反而没反应。
+ *
+ * 这里用真实字节序列驱动真实 ChatEditor，同时覆盖两种键盘协议：legacy 下 Alt+V 是
+ * `ESC` + `v`，kitty 下是 `\x1b[118;3u`。核心风险是 legacy 序列与 Esc 同以 \x1b 开头，
+ * 所以必须钉住「Alt+V 不会走成 Esc（中断回合）」这一条。
+ */
+describe('贴图键位：Alt+V 与 Ctrl+V 双入口', () => {
+  function mk(): ChatEditor {
+    const term = new FakeTerminal();
+    const tui = new TuiMainScreen(term);
+    return new ChatEditor(tui, {
+      borderColor: (s) => s,
+      selectList: {
+        selectedPrefix: (s) => s,
+        selectedText: (s) => s,
+        description: (s) => s,
+        scrollInfo: (s) => s,
+        noMatch: (s) => s,
+      },
+    });
+  }
+
+  it('legacy 序列（ESC+v）触发 onAltV，且不落进输入框', () => {
+    const ed = mk();
+    let alt = 0;
+    ed.onAltV = () => {
+      alt += 1;
+      return true;
+    };
+    ed.handleInput('\x1bv');
+    expect(alt).toBe(1);
+    expect(ed.getText(), 'v 不应被当普通字符插入').toBe('');
+  });
+
+  it('kitty 序列（CSI 118;3u）同样触发 onAltV', () => {
+    const ed = mk();
+    let alt = 0;
+    ed.onAltV = () => {
+      alt += 1;
+      return true;
+    };
+    ed.handleInput('\x1b[118;3u');
+    expect(alt).toBe(1);
+  });
+
+  it('Alt+V 不触发 Esc 路由（否则按贴图会中断回合）', () => {
+    const ed = mk();
+    let esc = 0;
+    let alt = 0;
+    ed.onEscapeKey = () => {
+      esc += 1;
+      return true;
+    };
+    ed.onAltV = () => {
+      alt += 1;
+      return true;
+    };
+    ed.handleInput('\x1bv');
+    expect(esc, 'ESC+v 必须解析为 alt+v，不能当成 escape').toBe(0);
+    expect(alt).toBe(1);
+  });
+
+  it('单独的 ESC 仍走 Esc 路由，不误触贴图', () => {
+    const ed = mk();
+    let esc = 0;
+    let alt = 0;
+    ed.onEscapeKey = () => {
+      esc += 1;
+      return true;
+    };
+    ed.onAltV = () => {
+      alt += 1;
+      return true;
+    };
+    ed.handleInput('\x1b');
+    expect(esc).toBe(1);
+    expect(alt).toBe(0);
+  });
+
+  it('Ctrl+V 仍然可用（Alt 被终端吃掉时的兜底入口）', () => {
+    const ed = mk();
+    let ctrl = 0;
+    ed.onCtrlV = () => {
+      ctrl += 1;
+      return true;
+    };
+    ed.handleInput('\x16');
+    expect(ctrl).toBe(1);
+  });
+
+  it('钩子返回 false 时按键下传，不吞键', () => {
+    const ed = mk();
+    ed.onAltV = () => false;
+    ed.handleInput('\x1bv');
+    // 下传到父类：alt+v 不是 Editor 的默认键位，父类忽略它，不应插入字符
+    expect(ed.getText()).toBe('');
+  });
+});
+
+/**
  * 迁移要回答的核心问题：pi-tui 的差分渲染在「历史只追加」时会不会清 scrollback。
  * Ink 版三类渲染病害（滚动跳顶、Static 冻结、动态区顶出屏幕）全部源于整帧重绘 +
  * clearTerminal，这组用例就是验证换框架之后那个前提是否真的消失了。

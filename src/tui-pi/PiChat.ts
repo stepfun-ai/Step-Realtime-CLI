@@ -338,12 +338,16 @@ export class PiChat {
     };
     this.editor.onEscapeKey = () => this.onEscape();
     this.editor.onCtrlC = () => this.onCtrlC();
-    // Ctrl+V 读剪贴板图片。busy 时也允许：只往输入框草稿追加占位符，不碰在跑的回合
+    // Ctrl+V / Alt+V 读剪贴板图片。busy 时也允许：只往输入框草稿追加占位符，不碰在跑的回合
     // （提交走排队路径，drain 时统一展开成图）。
-    this.editor.onCtrlV = () => {
+    // 两个键位同一动作：Alt+V 是 Ink 版主仓的键位（用户肌肉记忆），Ctrl+V 兜住 Alt 被
+    // 终端或窗口管理器吃掉的场景。判定与实测见 ChatEditor.onAltV 的注释。
+    const attach = (): boolean => {
       void this.attachClipboardImage();
       return true;
     };
+    this.editor.onCtrlV = attach;
+    this.editor.onAltV = attach;
     // Ctrl+B 转后台：busy 且有前台任务时全部 detach（进程继续跑、终态自动通知）；
     // 空闲或无前台任务时返回 null → 不消费按键，交回编辑器。
     this.editor.onCtrlB = () => {
@@ -1153,6 +1157,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       helpText(),
       '',
       '快捷键：Enter 发送 · Shift+Enter 换行 · Esc 中断/取回队列 · Ctrl+C 退出 · Tab 补全',
+      '　　　　Alt+V / Ctrl+V 贴剪贴板图片 · Ctrl+O 展开工具输出与思考 · Ctrl+B 前台任务转后台',
     ];
     // 空集合时不打这一行：全部接线后还挂个空提示，看起来像功能残缺
     if (NOT_WIRED.size > 0) lines.push(`pi 版尚未接线：${[...NOT_WIRED].map((n) => '/' + n).join(' ')}`);
@@ -1168,7 +1173,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    * 下次失败可直接定位。
    */
   private async attachClipboardImage(): Promise<void> {
-    this.push({ kind: 'note', text: '正在读剪贴板图片…' });
+    this.push({ kind: 'note', text: t('app.image.reading') });
     const { image, formats } = await readClipboardImage();
     if (image === null) {
       const hint = clipboardToolHint();
@@ -1176,15 +1181,18 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         this.push({ kind: 'note', text: hint });
       } else if (formats !== null && formats !== '' && formats !== '<empty>') {
         const shown = formats.length > 200 ? `${formats.slice(0, 200)}…` : formats;
-        this.push({ kind: 'note', text: `剪贴板里没有图片。当前格式：${shown}` });
+        this.push({ kind: 'note', text: t('app.image.noneFormats', { formats: shown }) });
       } else {
-        this.push({ kind: 'note', text: '剪贴板里没有图片' });
+        this.push({ kind: 'note', text: t('app.image.none') });
       }
       return;
     }
     const att = this.images.add(image.base64, image.mediaType, image.width, image.height);
     const cur = this.editor.getText();
     this.editor.setText((cur === '' || cur.endsWith(' ') ? cur : `${cur} `) + att.placeholder);
+    // 附加成功要有明确回执：占位符插进输入框这一下容易被忽略，尤其贴第二张时
+    // 光看输入框分不清有没有生效。计数取 store 的实际张数。
+    this.push({ kind: 'note', text: t('app.image.attached', { count: this.images.size() }) });
     this.tui.requestRender();
   }
 

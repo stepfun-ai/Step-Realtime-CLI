@@ -25,6 +25,20 @@ export class ChatEditor extends Editor {
    */
   onCtrlV?: () => boolean;
   /**
+   * Alt+V：读剪贴板图片，与 `onCtrlV` 同一动作、两个入口。
+   *
+   * Ink 版主仓的贴图键位其实是 **Alt+V**（`App.tsx` 的 `meta.meta && key === 'v'`），
+   * 迁移时只接了 Ctrl+V，于是照肌肉记忆按 Alt+V 的人得到「贴图功能不存在」的结论。
+   * 两个都留：Alt+V 对齐 Ink 版习惯，Ctrl+V 保留给 Alt 被终端/窗口管理器吃掉的场景
+   * （macOS 的 Option 默认作为组字键、部分 Linux 桌面把 Alt 拿去拖窗口）。
+   *
+   * 键位识别实测（`parseKey`，2026-08-16）：legacy 模式下 Alt+V 送的是 `ESC` + `v`，
+   * pi-tui 解析为 `alt+v` 且**不会**误判成 `escape`（`\x1b` 单独到达才是 escape）；
+   * kitty 协议激活时送 `\x1b[118;3u`，同样解析为 `alt+v`。所以 Esc 的中断语义不受影响。
+   * 另有一条局限：Alt+Shift+V（`ESC` + `V`）两种模式下都解析为 undefined，不接。
+   */
+  onAltV?: () => boolean;
+  /**
    * Ctrl+B：把前台工具任务转后台（释放等待，进程继续跑）。返回 true 表示已消费。
    * Editor 父类不用这个键位，接住它不破坏编辑语义。
    */
@@ -54,6 +68,11 @@ export class ChatEditor extends Editor {
     }
     if (matchesKey(data, 'ctrl+v')) {
       if (this.onCtrlV?.() === true) return;
+    }
+    // alt+v 放在 escape 判定之后：legacy 下二者的字节序列都以 \x1b 开头，但 pi-tui 只把
+    // 单独到达的 \x1b 认作 escape，`\x1bv` 直接解析为 alt+v，两条判定互不干扰（有实测）。
+    if (matchesKey(data, 'alt+v')) {
+      if (this.onAltV?.() === true) return;
     }
     if (matchesKey(data, 'ctrl+b')) {
       if (this.onCtrlB?.() === true) return;
