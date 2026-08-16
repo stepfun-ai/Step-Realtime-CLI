@@ -2,4 +2,6 @@ allowBuilds:
   esbuild: false
 onlyBuiltDependencies:
   - esbuild
+patchedDependencies:
+  '@earendil-works/pi-tui@0.84.1': patches/@earendil-works__pi-tui@0.84.1.patch
 verifyDepsBeforeRun: false
