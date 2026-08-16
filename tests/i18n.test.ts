@@ -530,4 +530,52 @@ describe('en locale 下界面无中文残留（逐组件收口）', () => {
     stop.handleInput('s');
     expect(cjkIn(stop.render(80)), 'TasksOverlay 停止确认出中文').toEqual([]);
   });
+it('常驻面板（ChromePanels.ts）：TODO 三态计数 / 折叠提示 / 队列预览与取回提示', async () => {
+    const { renderTodos, renderQueue } = await import('../src/tui-pi/ChromePanels.js');
+    setLocale('en');
+    // 覆盖三种状态同时存在 + 超出显示上限触发折叠提示
+    const todos = [
+      { title: 'a', status: 'in_progress' as const },
+      { title: 'b', status: 'pending' as const },
+      { title: 'c', status: 'done' as const },
+      { title: 'd', status: 'pending' as const },
+      { title: 'e', status: 'pending' as const },
+      { title: 'f', status: 'pending' as const },
+      { title: 'g', status: 'pending' as const },
+    ];
+    expect(cjkIn(renderTodos(todos, 80)), 'TODO 面板出现中文').toEqual([]);
+    // 队列超过 QUEUE_MAX_ITEMS 才会出现「还有 N 条」，所以给足条数
+    expect(cjkIn(renderQueue(['q1', 'q2', 'q3', 'q4', 'q5'], 80)), '队列预览出现中文').toEqual([]);
+  });
+
+  it('选项块与查看器（ChoiceBlock.ts / ExpandOverlay.ts）：提示行与反馈占位符', async () => {
+    const { ChoiceBlock } = await import('../src/tui-pi/ChoiceBlock.js');
+    const { ExpandOverlay } = await import('../src/tui-pi/ExpandOverlay.js');
+    setLocale('en');
+    class Probe extends ChoiceBlock<string> {
+      protected onChoose(): void {}
+      protected onCancel(): void {}
+      protected renderBody(): string[] {
+        return ['body'];
+      }
+      /** 进入反馈模式，覆盖占位符那一行。 */
+      enterFeedback(): void {
+        this.handleInput('f');
+      }
+    }
+    const cb = new Probe([{ label: 'ok', hotkeys: ['y'], value: 'ok' }, { label: 'no', hotkeys: ['f'], value: 'no', requiresFeedback: true }], () => {});
+    expect(cjkIn(cb.render(80)), '选项块提示行出现中文').toEqual([]);
+    cb.enterFeedback();
+    expect(cjkIn(cb.render(80)), '反馈输入占位符出现中文').toEqual([]);
+
+    const ov = new ExpandOverlay({
+      groups: [{ userText: 'hi', entries: [{ index: 0, item: { kind: 'thinking', text: ['a', 'b', 'c', 'd'].join('\n') } }] }],
+      width: 80,
+      viewportRows: 20,
+      entryRenderer: () => ['x'],
+      requestRender: () => {},
+      onClose: () => {},
+    });
+    expect(cjkIn(ov.render(80)), '查看器标题或底部键位出现中文').toEqual([]);
+  });
 });
