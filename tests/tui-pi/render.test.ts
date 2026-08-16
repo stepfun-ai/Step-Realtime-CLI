@@ -516,6 +516,83 @@ describe('贴图键位：Alt+V 与 Ctrl+V 双入口', () => {
 });
 
 /**
+ * 输入提示符 `› `。对齐 Ink 版 PromptInput（同一个符号、busy 黄空闲灰）。
+ *
+ * 实现依赖两条 pi-tui 的实测事实，测试要把它们钉住，否则升级 pi-tui 时会静默坏掉：
+ * 1. 光标是父类用反显字符画进行内容的，不是终端真实光标 —— 所以覆盖行首字符不错位；
+ * 2. `paddingX` 只给内容行加缩进，边框行宽度不受影响，且续行同样缩进。
+ */
+describe('输入框提示符', () => {
+  function mk(): ChatEditor {
+    const term = new FakeTerminal();
+    const tui = new TuiMainScreen(term);
+    return new ChatEditor(tui, {
+      borderColor: (s) => s,
+      selectList: {
+        selectedPrefix: (s) => s,
+        selectedText: (s) => s,
+        description: (s) => s,
+        scrollInfo: (s) => s,
+        noMatch: (s) => s,
+      },
+    });
+  }
+  /** 剥 ANSI，便于按可见字符断言。 */
+  const plain = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+  it('首个内容行以 “› ” 开头', () => {
+    const ed = mk();
+    ed.setText('hello');
+    const lines = ed.render(40);
+    expect(plain(lines[1]!).startsWith('› ')).toBe(true);
+    expect(plain(lines[1]!)).toContain('hello');
+  });
+
+  it('空输入时也有提示符（不是只在有内容时出现）', () => {
+    const ed = mk();
+    const lines = ed.render(40);
+    expect(plain(lines[1]!).startsWith('› ')).toBe(true);
+  });
+
+  it('边框行宽度不受提示符影响（与转录区同宽）', () => {
+    const ed = mk();
+    ed.setText('hello');
+    const lines = ed.render(40);
+    expect(plain(lines[0]!).length, '上边框').toBe(40);
+    expect(plain(lines[lines.length - 1]!).length, '下边框').toBe(40);
+    expect(plain(lines[1]!).length, '内容行').toBe(40);
+  });
+
+  it('多行输入只有首行带提示符，续行缩进对齐', () => {
+    const ed = mk();
+    ed.setText('line1\nline2');
+    const lines = ed.render(40);
+    expect(plain(lines[1]!).startsWith('› line1')).toBe(true);
+    expect(plain(lines[2]!).startsWith('  line2'), '续行留空两列，与首行内容左边缘对齐').toBe(true);
+  });
+
+  it('折行的续行同样缩进（宽字符按显示宽度算）', () => {
+    const ed = mk();
+    ed.setText('这是一段很长的中文文本用来测试折行时的缩进');
+    const lines = ed.render(20);
+    expect(plain(lines[1]!).startsWith('› 这是')).toBe(true);
+    // 至少折出一条续行，且续行以两个空格开头
+    const cont = lines.slice(2, -1).map(plain);
+    expect(cont.length).toBeGreaterThan(0);
+    for (const l of cont) expect(l.startsWith('  ')).toBe(true);
+  });
+
+  it('promptStyle 只作用于提示符，不污染输入内容', () => {
+    const ed = mk();
+    ed.promptStyle = (s) => `<${s}>`;
+    ed.setText('abc');
+    const line = ed.render(40)[1]!;
+    expect(line.startsWith('<› >')).toBe(true);
+    expect(line).toContain('abc');
+  });
+});
+
+/**
  * 迁移要回答的核心问题：pi-tui 的差分渲染在「历史只追加」时会不会清 scrollback。
  * Ink 版三类渲染病害（滚动跳顶、Static 冻结、动态区顶出屏幕）全部源于整帧重绘 +
  * clearTerminal，这组用例就是验证换框架之后那个前提是否真的消失了。

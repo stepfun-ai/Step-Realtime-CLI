@@ -11,6 +11,16 @@
  */
 import { Editor, type EditorOptions, type EditorTheme, matchesKey, type TUI } from '@earendil-works/pi-tui';
 
+/**
+ * 输入提示符。用 `›`（U+203A）与 Ink 版 `PromptInput` 一致——它比 `>` 窄一格的视觉重量，
+ * 不会跟正文里的引用块（`>`）或 diff 标记混淆。
+ */
+export const PROMPT_SYMBOL = '› ';
+/** 提示符占用的列数（`›` 是窄字符，加一个空格共 2 列）。 */
+export const PROMPT_WIDTH = 2;
+/** paddingX 产生的行首空白，render 里用它定位要覆盖的那几列。 */
+const PROMPT_PAD = ' '.repeat(PROMPT_WIDTH);
+
 export class ChatEditor extends Editor {
   /** 返回 true 表示控制器已消费这次 Esc，不再下传给编辑器。 */
   onEscapeKey?: () => boolean;
@@ -53,9 +63,37 @@ export class ChatEditor extends Editor {
    * provider 侧回填这个标记，M1 阶段没有 provider，恒为 false。
    */
   autocompleteOpen = false;
+  /**
+   * 提示符着色：由控制器按 busy 状态换（Ink 版 busy 黄、空闲灰）。默认原样返回，
+   * 测试与不着色场景下输出可读的纯文本。
+   */
+  promptStyle: (s: string) => string = (s) => s;
 
   constructor(tui: TUI, theme: EditorTheme, options?: EditorOptions) {
-    super(tui, theme, options);
+    // paddingX 固定 2：给提示符腾出 '› ' 的两列。选它而不是「渲染后整行拼前缀」的理由是
+    // 实测（2026-08-16）——paddingX 只给**内容行**加缩进，边框行宽度不动，且折行后的
+    // 续行同样带这 2 列缩进（宽字符也算对），正好复刻 Ink 版「续行对齐到提示符之后」。
+    // 自己拼前缀则要同时改边框宽度与续行缩进，等于重复父类的折行逻辑。
+    super(tui, theme, { ...options, paddingX: options?.paddingX ?? PROMPT_WIDTH });
+  }
+
+  /**
+   * 在首个内容行画提示符。
+   *
+   * 光标是父类用**反显字符**（`\x1b[7m \x1b[0m`）画进行内容里的，不是终端真实光标定位
+   * （实测确认），所以在行首覆盖字符不会让光标错位——这是能这么简单实现的前提。
+   *
+   * 覆盖而非插入：paddingX 已经在每个内容行前放了 PROMPT_WIDTH 个空格，这里只把首行
+   * 那几个空格换成提示符，行宽与边框都不变。续行留空，形成缩进对齐。
+   */
+  override render(width: number): string[] {
+    const lines = super.render(width);
+    // 结构是「上边框 + ≥1 内容行 + 下边框」。少于 3 行说明父类结构变了，原样返回不猜。
+    if (lines.length < 3) return lines;
+    const first = lines[1]!;
+    if (!first.startsWith(PROMPT_PAD)) return lines; // padding 被外部改过，不硬塞
+    lines[1] = this.promptStyle(PROMPT_SYMBOL) + first.slice(PROMPT_PAD.length);
+    return lines;
   }
 
   override handleInput(data: string): void {
