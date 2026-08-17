@@ -11,12 +11,12 @@ import type { EditorTheme, MarkdownTheme, SelectListTheme } from '@earendil-work
 
 /** 语义色：与已删除的 Ink 版用色保持一致，迁移前后观感不跳。 */
 export const c = {
-  // 用户消息：前缀蓝色加粗 + 正文黄色，与 Ink 版 MessageList 的 user 分支同口径
-  // （实测 Ink 是 `› ` blue bold + 正文 color="yellow"；早期这里误记为 cyan 并写了
-  // 「与 Ink 一致」的注释，实际 Ink 从来没有青色用户消息）。正文着黄不是装饰：
-  // 转录区正文默认白，用户消息不着色就与助手输出糊成一片，翻历史时找不到自己说过什么。
+  // 用户消息：前缀蓝色加粗 + 正文黄色 + 整行深灰背景
+  // Ink 版 MessageList 的 user 分支是 backgroundColor="#262600" 深灰底，pi 用 SGR 48;5;236 对齐。
+  // 背景覆盖整行（含前缀）：长对话里用户气泡靠背景块与助手输出区分，比单纯竖线醒目得多。
   user: (s: string) => chalk.blue.bold(s),
   userText: chalk.yellow,
+  userBg: chalk.bgAnsi256(236),
   assistant: (s: string) => s,
   thinking: chalk.dim,
   toolName: chalk.cyan,

@@ -214,14 +214,19 @@ export class ItemBlock implements Component {
       case 'welcome':
         return renderWelcome(it.data, width);
       case 'user': {
-        // 蓝色竖线前缀 + 黄色正文，对齐 Ink 版（Ink 用 `› ` 前缀，pi 保留 `│ ` 竖线做
-        // 视觉分栏）。先折行再逐行着色：wrap 若按显示宽度计算，提前注入的 ANSI 序列
-        // 会被算进字符宽度导致折行位置偏移。
-        const body = wrap(it.text, width - 2).map((l) => c.userText(l));
-        return [...indent(body, c.user('│ ')), ''];
+        // 蓝色前缀 + 黄色正文 + 整行深灰背景，对齐 Ink 版 MessageList user 分支
+        // （Ink 用 backgroundColor="#262600" 深灰底，pi 用 SGR 48;5;236）。
+        // 背景必须覆盖整行：前缀和正文都套 c.userBg，长对话靠背景块区分用户/助手输出。
+        const bg = c.userBg;
+        const body = wrap(it.text, width - 2).map((l) => bg(c.userText(l)));
+        return [...indent(body, bg(c.user('│ '))), ''];
       }
-      case 'assistant':
-        return [...this.renderMarkdown(it.text, width, false), ''];
+      case 'assistant': {
+        // 前缀灰色 ●，对齐 Ink 版 MessageList assistant 分支（Ink 前缀灰色 ●）。
+        // 第一行带前缀，续行对齐（与 thinking 的 ┊ 同口径）。
+        const md = this.renderMarkdown(it.text, width - 2, false);
+        return [...indent(md, c.dim('● ')), ''];
+      }
       case 'thinking': {
         // 长 thinking 在主界面折叠为前 N 行 + 「还有 N 行（Ctrl+O 查看）」，
         // 全文进 ExpandViewer（Ctrl+O）。与 Ink 版同语义；阈值 3 行（Ink 是 2，
