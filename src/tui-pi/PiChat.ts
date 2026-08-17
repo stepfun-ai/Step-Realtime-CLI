@@ -2583,16 +2583,17 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const picked = await this.showInlinePicker({
       title: '恢复会话',
       items: buildItems(),
-      hint: '↑↓ 选择 · Enter 恢复 · d 删除 · r 重命名 · 输入过滤 · Esc 取消',
+      hint: '↑↓ 选择 · Enter 恢复 · Delete 删除 · r 重命名 · 输入过滤 · Esc 取消',
       onKey: (data, selected, overlay) => {
         if (selected === null) return false;
         const id = selected.value;
-        if (id === '__sub_header__') return data === 'd' || data === 'r'; // 分组标题上按键无动作
+        const filterEmpty = overlay.getFilter() === '';
+        if (id === '__sub_header__') return matchesKey(data, 'delete') || (data === 'r' && filterEmpty);
         if (id.startsWith('sub:')) {
-          // 子 agent 会话只读：删除与重命名都不放行，避免破坏父会话的溯源链
-          return data === 'd' || data === 'r';
+          return matchesKey(data, 'delete') || (data === 'r' && filterEmpty);
         }
-        if (data === 'd') {
+        // 删除走 Delete 键（不再占用裸 d，d 还给搜索框）
+        if (matchesKey(data, 'delete') || (data === 'd' && filterEmpty)) {
           if (id === this.session.id) {
             this.push({ kind: 'note', text: '不能删除当前会话（先 /new 或切到别的会话）' });
             return true;
@@ -2600,7 +2601,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
           void this.confirmDeleteSession(id, overlay, buildItems);
           return true;
         }
-        if (data === 'r') {
+        // 重命名仅在过滤为空时触发（r 还给搜索框）
+        if (data === 'r' && filterEmpty) {
           void this.renameSessionInline(id, overlay, buildItems);
           return true;
         }

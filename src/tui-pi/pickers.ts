@@ -125,6 +125,11 @@ export class PickerOverlay implements Component {
     return this.list.getSelectedItem();
   }
 
+  /** 当前过滤串（为空 = 未在搜索）。供 onKey 回调判断 d/r 等快捷键是否该拦截。 */
+  getFilter(): string {
+    return this.filter;
+  }
+
   /** 切 tab：保存当前 tab 的过滤词与选中项，恢复目标 tab 的（对应 Ink 版 switchTab）。 */
   private switchTab(dir: 1 | -1): void {
     this.tabStates.set(this.activeTab, { filter: this.filter, selected: this.list.getSelectedItem()?.value });
