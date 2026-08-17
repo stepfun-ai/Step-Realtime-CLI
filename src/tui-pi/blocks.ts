@@ -319,6 +319,13 @@ export class ItemBlock implements Component {
         }
       } else if (looksLikeDiff(lines)) {
         // diff：完整展示（截到上限），这是用户最需要当场看清的内容
+        // 对标 Ink 版 diffView.renderDiffClustered：顶部摘要头 +N -M
+        const added = lines.filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
+        const removed = lines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length;
+        let summary = '';
+        if (added > 0) summary += c.ok(`+${added} `);
+        if (removed > 0) summary += c.error(`-${removed} `);
+        if (summary !== '') out.push(`    ${summary.trimEnd()}`);
         for (const l of lines.slice(0, DIFF_MAX_LINES)) {
           const colored = l.startsWith('+') ? c.ok(l) : l.startsWith('-') ? c.error(l) : l.startsWith('@@') ? c.accent(l) : c.dim(l);
           out.push(...indent(wrap(colored, width - 4), '    '));

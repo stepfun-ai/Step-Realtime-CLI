@@ -237,10 +237,11 @@ export function modelItems(config: StepCodeConfig, currentAlias?: string, channe
     if (channel !== undefined && channel !== 'all' && ch !== channel) continue;
     for (const it of list) {
       const ctxText = it.ctx !== undefined ? ` · ${Math.round(it.ctx / 1000)}k` : '';
-      const mark = it.alias === currentAlias ? '● ' : '';
+      // 对标 Ink 版：当前生效后缀 ← 当前（绿色），前缀 ● 改为后缀
+      const mark = it.alias === currentAlias ? ` ${c.ok(t('modelPicker.current'))}` : '';
       items.push({
         value: it.alias,
-        label: `${mark}${it.display ?? it.alias}`,
+        label: `${it.display ?? it.alias}${mark}`,
         description: `${ch} · ${it.model}${ctxText}`,
       });
     }
@@ -257,10 +258,14 @@ export function thinkItems(current?: string): SelectItem[] {
     { value: 'off', label: 'off', description: t('picker.thinkLevel.off') },
     { value: '__default__', label: t('picker.thinkLevel.default'), description: t('picker.thinkLevel.default') },
   ];
-  return rows.map((r) => ({
-    ...r,
-    label: (current === r.value || (current === undefined && r.value === '__default__') ? '● ' : '') + r.label,
-  }));
+  return rows.map((r) => {
+    const isCurrent = current === r.value || (current === undefined && r.value === '__default__');
+    // 对标 Ink ThinkPicker：当前生效后缀 ← 当前（绿色）
+    return {
+      ...r,
+      label: isCurrent ? `${r.label} ${c.ok(t('modelPicker.current'))}` : r.label,
+    };
+  });
 }
 
 /** 模型选择器的渠道 tab 集合：'all' 恒第一，其余渠道按配置首现顺序（与 modelItems 分组同序）。 */
