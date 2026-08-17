@@ -316,7 +316,7 @@ export function showPicker(
       itemsForTab: opts.itemsForTab,
       initialTab: opts.initialTab,
     });
-    handle = tui.showOverlay(overlay, { width: '80%', maxHeight: '70%', anchor: 'center' });
+    handle = tui.showOverlay(overlay, { width: '80%', maxHeight: '70%', anchor: 'bottom-center' });
     handle.focus();
     tui.requestRender();
   });
