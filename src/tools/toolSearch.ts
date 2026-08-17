@@ -15,7 +15,7 @@ const schema = z.object({
 export const toolSearchTool: ToolDef<z.infer<typeof schema>> = {
   name: 'tool_search',
   description:
-    '搜索外部工具（懒加载）。当任务需要的能力不在当前工具集里时，用本工具按关键词检索外部工具（如 MCP 工具）；命中的工具会被加载，下一轮即可直接调用。',
+    '搜索外部 MCP/function 工具（懒加载）。当任务需要的能力不在当前工具集里时，用本工具按关键词检索外部工具（如 MCP 工具）；命中的工具会被加载，下一轮即可直接调用。只搜可直接调用的函数，不搜技能（skill）。需要操作指令（如浏览器操控、数据库操作）时用 skill_search。',
   schema,
   async execute(input, ctx) {
     if (ctx.toolSearch === undefined) {
