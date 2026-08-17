@@ -239,9 +239,13 @@ export class ItemBlock implements Component {
       case 'tool':
         return this.renderTool(it, width);
       case 'goalPanel':
-        return [c.accent(`goal: ${it.data.objective}`), ''];
+        return [...wrap(`goal: ${it.data.objective}`, width - 2).map((l) => c.accent(l)), ''];
       case 'cron':
-        return [c.accent(`cron: ${it.data.prompt ?? ''}`), ''];
+        // cron prompt 可能很长（几百字符），必须先 wrap 再逐行着色。
+        // 原来直接 `c.accent(prompt)` 整段当一行返回，992 字符 > 67 列终端宽度
+        // → pi-tui doRender 断言崩溃（2026-08-17 第二次宽度溢出）。
+        // 先 wrap 再 map(c.accent)：每个换行后的子行独立着色，不丢失颜色。
+        return [...wrap(`cron: ${it.data.prompt ?? ''}`, width - 2).map((l) => c.accent(l)), ''];
       default:
         return [];
     }
