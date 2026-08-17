@@ -29,6 +29,7 @@ export class CronJobStore {
       recurring: job.recurring,
       nextFireAt: job.nextFireAt.toISOString(),
       createdAt: job.createdAt,
+      sessionId: job.sessionId,
     };
     try {
       const dir = this.dir(cwd);

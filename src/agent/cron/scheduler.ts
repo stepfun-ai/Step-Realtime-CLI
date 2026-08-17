@@ -9,6 +9,8 @@ export interface CronJob {
   /** 创建时间戳（ms），stale 清理依据。 */
   createdAt: number;
   spec: CronSpec;
+  /** 创建该任务的会话 ID。用于 session 隔离：新会话不加载旧会话的 cron 任务。 */
+  sessionId: string;
 }
 
 /** 落盘/恢复的 cron 任务快照：内容即内存表示的序列化（nextFireAt 用 ISO 字符串），无 DTO。 */
@@ -20,6 +22,8 @@ export interface CronJobSnapshot {
   /** 下次触发时间（ISO 字符串），即防重放游标：已推进过的不会重算。 */
   nextFireAt: string;
   createdAt: number;
+  /** 创建该任务的会话 ID。旧任务可能无此字段（迁移前创建），加载时按无 sessionId 处理。 */
+  sessionId?: string;
 }
 
 /** recurring 任务创建超过该时长，恢复 reload 时直接清除。 */
@@ -48,11 +52,17 @@ export class CronScheduler {
   /** 任务表变更通知（装配层挂持久化，可选）。 */
   onJobChange: CronJobChangeHandler | null = null;
 
+  /** 所属会话 ID：用于 session 隔离，新会话不加载旧会话的 cron 任务。 */
+  private readonly sessionId: string;
+
   constructor(
     private readonly onFire: CronFireHandler,
     private readonly isIdle: () => boolean,
+    sessionId: string = '',
     private readonly tickMs = 10_000,
-  ) {}
+  ) {
+    this.sessionId = sessionId;
+  }
 
   /** 创建定时任务。非法 cron 表达式抛错。返回 job。 */
   create(cron: string, prompt: string, recurring = true): CronJob {
@@ -60,7 +70,7 @@ export class CronScheduler {
     if (spec === null) throw new Error(`非法 cron 表达式：${cron}`);
     const next = nextFireAfter(spec, new Date());
     if (next === null) throw new Error('该 cron 表达式在可预见时间内不会触发。');
-    const job: CronJob = { id: nextId(), cron, prompt, recurring, nextFireAt: next, createdAt: Date.now(), spec };
+    const job: CronJob = { id: nextId(), cron, prompt, recurring, nextFireAt: next, createdAt: Date.now(), spec, sessionId: this.sessionId };
     this.jobs.set(job.id, job);
     this.ensureTimer();
     this.onJobChange?.('create', job);
@@ -94,7 +104,7 @@ export class CronScheduler {
       const spec = parseCron(s.cron);
       const nextFireAt = new Date(s.nextFireAt);
       if (spec === null || Number.isNaN(nextFireAt.getTime())) continue;
-      this.jobs.set(s.id, { id: s.id, cron: s.cron, prompt: s.prompt, recurring: s.recurring, nextFireAt, createdAt: s.createdAt, spec });
+      this.jobs.set(s.id, { id: s.id, cron: s.cron, prompt: s.prompt, recurring: s.recurring, nextFireAt, createdAt: s.createdAt, spec, sessionId: s.sessionId ?? '' });
     }
     if (this.jobs.size > 0) this.ensureTimer();
     return stale;

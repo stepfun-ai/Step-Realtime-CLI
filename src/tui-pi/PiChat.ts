@@ -425,13 +425,19 @@ export class PiChat {
         else void this.cronStore.remove(this.deps.ctx.cwd, job.id);
       },
       () => !this.busy && !this.promptActive,
+      this.session.id,
     );
     this.cron.onJobChange = (kind, job) => {
       if (kind === 'create') void this.cronStore.save(this.deps.ctx.cwd, job);
       else void this.cronStore.remove(this.deps.ctx.cwd, job.id);
     };
     // 恢复本 cwd 的任务表；stale 任务由 restore 剔除，这里补清盘
-    const staleIds = this.cron.restore(this.cronStore.load(deps.ctx.cwd));
+    // session 隔离：只恢复当前 session 创建的 cron 任务，旧会话的任务不加载
+    const allJobs = this.cronStore.load(deps.ctx.cwd);
+    const myJobs = allJobs.filter((j) => j.sessionId === this.session.id);
+    const dropped = allJobs.length - myJobs.length;
+    if (dropped > 0) this.push({ kind: 'note', text: `跳过 ${dropped} 个其他会话的定时任务` });
+    const staleIds = this.cron.restore(myJobs);
     for (const id of staleIds) void this.cronStore.remove(deps.ctx.cwd, id);
 
     // goal 快照恢复：active 会被降级为 paused（防重启后无人看着就自动续跑）
