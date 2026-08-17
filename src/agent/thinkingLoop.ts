@@ -8,35 +8,48 @@
  * 预算耗尽自动降档（thinking_downgrade）只在**终点**（stop_reason=max_tokens）才介入；
  * 本模块在**流式中途**检测循环，让恢复手段可以提前触发、省掉整段无效思考的 token。
  *
- * ## 检测算法：周期性后缀重复
+ * ## 检测算法：距离感知的周期性后缀重复
  *
  * 只看「流末尾」与「更早内容」的关系，天然避开代码/列表类内容在中部的合理重复：
  *
- * 1. **长重复（段落级）**：流末尾的 WINDOW 字符块，在更早内容中出现过 ≥ REPEAT_THRESHOLD 次，
- *    且末尾 N 个连续窗口全部命中（确认循环仍在继续，而非历史上一段恰好重复）。
- * 2. **短周期循环（逐字复读）**：流末尾存在周期 < MIN_PERIOD 的精确循环
- *    （如「的的的的」「…，…，…，」），按周期检测。
+ * 1. **短周期循环（逐字复读）**：流末尾存在周期 ≤ SHORT_PERIOD_MAX 的精确循环。
+ * 2. **长重复（段落级）**：流末尾的 WINDOW 字符块，在更早内容中出现过 ≥ REPEAT_THRESHOLD 次，
+ *    且出现位置的平均间距 ≤ WINDOW × DISTANCE_RATIO（确认是周期性排列，而非散落引用），
+ *    且末尾 N 个连续窗口全部命中（确认循环仍在继续）。
+ *
+ * ### 距离分析（对标 Gemini CLI）
+ *
+ * 关键区分：同一短语在长思考中出现多次，可能是「散落引用」（正常）或「周期性循环」（死循环）。
+ * 仅计数无法区分两者——一个 100 字符短语在 4000 字符思考中出现 4 次，间距 ≈ 1000，
+ * 是散落引用；间距 ≈ 100，是循环。距离分析通过计算出现位置的平均间距来区分：
+ *
+ *   - 平均间距 ≤ WINDOW × DISTANCE_RATIO → 紧凑周期排列 → 判定为循环
+ *   - 平均间距 > WINDOW × DISTANCE_RATIO → 松散散落 → 不判定
  *
  * 设计约束：
- * - **只增不扫全量**：维护累积文本与已确认重复次数，每次 ingest 只扫尾部窗口，O(1) 摊销。
- * - **宁漏不误报**：检测只用于「提示用户 + 可选注入诱导」，误报代价是一条无害提示；
- *   但误报触发「中止思考」会打断正常推理，故触发阈值从严（阈值见各常量注释）。
+ * - **只增不扫全量**：维护累积文本，每次 ingest 只扫尾部窗口，O(1) 摊销。
+ * - **宁漏不误报**：检测只用于「提示用户 + 可选注入诱导」，误报触发「中止思考」会打断
+ *   正常推理，故阈值从严。
  * - **区分中英文**：不做分词，统一按字符窗口处理；中文无空格分词问题，英文按字符近似。
  */
 
-/** 检测窗口大小（字符）。取 50：小于常见列表项/代码行的重复单元，大于大多数标点抖动。 */
-const WINDOW = 50;
-/** 一个窗口在更早内容中出现 ≥ 该次数，计为「重复」。1 次出现 = 初次，≥2 次出现 = 开始重复。
- *  取 4（非 3）：中文 50 字符密度高，50 字符窗口巧合命中 3 次不罕见，4 次几乎排除巧合。 */
+/** 检测窗口大小（字符）。取 100：对齐 Gemini CLI，减少中文巧合命中概率。 */
+const WINDOW = 100;
+/** 一个窗口在更早内容中出现 ≥ 该次数，计为「重复」。 */
 const REPEAT_THRESHOLD = 4;
-/** 末尾连续命中窗口数 ≥ 该值，判定为「循环进行中」。2 个窗口 = 至少 100 字符仍在重复。 */
+/** 距离比：平均间距 ≤ WINDOW × 该值 → 判定为周期性循环。
+ *  取 2.0：4 次出现挤在 600 字符以内（67% 重复率）才算循环，几乎排除散落引用。 */
+const DISTANCE_RATIO = 2.0;
+/** 末尾连续命中窗口数 ≥ 该值，判定为「循环进行中」。2 个窗口 = 至少 200 字符仍在重复。 */
 const CONSECUTIVE_TAIL_HITS = 2;
 /** 短周期循环的最小重复次数：末尾周期 p 的单元重复 ≥ 该次数才判定。 */
 const SHORT_PERIOD_MIN_REPEATS = 8;
-/** 短周期的最大周期长度：超过即交给长重复路径。 */
-const SHORT_PERIOD_MAX = 12;
+/** 短周期的最大周期长度：超过即交给长重复路径。
+ *  取 30：覆盖常见短语循环周期（如"这个方案的核心问题是"= 10 字符），
+ *  同时不会误伤正常推理（30 字符精确重复 8 次 = 240 字符复读，正常思考不会这样）。 */
+const SHORT_PERIOD_MAX = 30;
 /** 触发检测的最小流长度：思考太短不可能成循环，避免开头误判。
- *  取 600（非 400）：前 600 字符通常是正常的推理展开，不检测，进一步降低短思考误报。 */
+ *  取 600：前 600 字符通常是正常的推理展开，不检测。 */
 const MIN_CHARS = 600;
 
 export interface ThinkingLoopVerdict {
@@ -83,26 +96,39 @@ export function createThinkingLoopDetector(): {
 
     // --- 长重复（段落级）：末尾连续 CONSECUTIVE_TAIL_HITS 个窗口各自在更早内容中重复 ---
     // 从尾向前取窗口，步长 WINDOW/2（重叠采样，避免窗口对齐恰好错过重复单元）。
+    // 每个窗口不仅计数，还计算平均间距——只有紧凑周期排列才算命中（距离感知）。
     let consecutive = 0;
     let sample: string | undefined;
     let maxRepeats = 0;
     for (let end = buf.length; end - WINDOW >= MIN_CHARS / 2 && consecutive < CONSECUTIVE_TAIL_HITS; end -= Math.floor(WINDOW / 2)) {
       const win = buf.slice(end - WINDOW, end);
-      // 该窗口在「更早内容」（去掉末尾本身）中的出现次数
       const earlier = buf.slice(0, end - WINDOW);
-      let count = 0;
+
+      // 收集所有出现位置（上限 20，超过即停止收集——足够计算间距）
+      const positions: number[] = [];
       let idx = earlier.indexOf(win);
-      while (idx !== -1) {
-        count++;
+      while (idx !== -1 && positions.length < 20) {
+        positions.push(idx);
         idx = earlier.indexOf(win, idx + 1);
-        if (count >= REPEAT_THRESHOLD) break;
       }
-      maxRepeats = Math.max(maxRepeats, count);
-      if (count >= REPEAT_THRESHOLD) {
+
+      if (positions.length < REPEAT_THRESHOLD) break; // 出现次数不够 → 循环已停
+
+      // 距离分析：计算相邻出现位置的平均间距
+      let totalDist = 0;
+      for (let i = 1; i < positions.length; i++) {
+        totalDist += positions[i] - positions[i - 1];
+      }
+      const avgDist = totalDist / (positions.length - 1);
+
+      maxRepeats = Math.max(maxRepeats, positions.length);
+
+      if (avgDist <= WINDOW * DISTANCE_RATIO) {
+        // 紧凑周期排列 → 命中
         consecutive++;
         sample = sample ?? win;
       } else {
-        break; // 末尾窗口不再重复 → 循环已停，不算进行中
+        break; // 间距太大，是散落引用 → 不算循环
       }
     }
     if (consecutive >= CONSECUTIVE_TAIL_HITS) {
