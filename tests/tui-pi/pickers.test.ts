@@ -82,7 +82,7 @@ describe('modelItems', () => {
     // 渠道按配置首现顺序：step35（stepfun）在 k3（kimi）之前——与 Ink 版一致，不再按字典序
     expect(items[0]!.value).toBe('step35');
     expect(items[1]!.value).toBe('k3');
-    expect(items[1]!.label).toContain('●');
+    expect(items[1]!.label).toContain('← 当前');
     expect(items[1]!.description).toBe('kimi · k3 · 400k');
     expect(items[0]!.label).toBe('Step 3.5');
     expect(items[0]!.description).toBe('stepfun · step-3.5-flash · 262k');
@@ -97,9 +97,9 @@ describe('thinkItems', () => {
   it('四档 + 跟随默认，当前项标点', () => {
     const items = thinkItems('high');
     expect(items.map((i) => i.value)).toEqual(['high', 'medium', 'low', 'off', '__default__']);
-    expect(items[0]!.label).toContain('●');
+    expect(items[0]!.label).toContain('← 当前');
     const none = thinkItems(undefined);
-    expect(none[4]!.label).toContain('●');
+    expect(none[4]!.label).toContain('← 当前');
   });
 });
 
@@ -342,8 +342,9 @@ describe('PickerOverlay 额外键位与 setItems（会话选择器的删除/重�
     ]);
     const lines = plain(overlay.render(60));
     expect(lines[0]).toContain('过滤：a');
+    // 子串 AND 匹配：'a' 命中 alpha（value）和 beta（label 含 a）
     expect(lines.join('\n')).toContain('alpha');
-    expect(lines.join('\n')).not.toContain('beta');
+    expect(lines.join('\n')).toContain('beta');
   });
 });
 

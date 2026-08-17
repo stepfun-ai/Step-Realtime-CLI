@@ -47,6 +47,7 @@ export class PickerOverlay implements Component {
   private readonly title: string;
   private list: SelectList;
   private filter = '';
+  private allItems: SelectItem[];
   private readonly onSelectItem: (item: SelectItem) => void;
   private readonly onCancel: () => void;
   private readonly requestRender: () => void;
@@ -86,6 +87,7 @@ export class PickerOverlay implements Component {
     initialTab?: string;
   }) {
     this.title = opts.title;
+    this.allItems = [...opts.items];
     this.hint = opts.hint ?? t('picker.hint.default');
     this.subtitle = opts.subtitle;
     this.requestRender = opts.requestRender;
@@ -103,6 +105,32 @@ export class PickerOverlay implements Component {
     this.onKey = opts.onKey;
   }
 
+  /**
+   * 自定义过滤：对标 Ink 版，对 value + label + description 做空格分词 AND 子串匹配
+   * （大小写不敏感）。pi-tui SelectList 自带过滤只做 value 前缀匹配，这里在应用层补全。
+   *
+   * 做法：先用本函数筛出候选，再把完整候选集喂给 SelectList 并 setFilter('') 让它原样展示。
+   * 不能直接 setFilter(filter)——那会触发 SelectList 内部的 value.startsWith 前缀过滤，
+   * 把我们的子串匹配结果再砍一遍。
+   */
+  private applyFilter(): void {
+    const tokens = this.filter.toLowerCase().split(/\s+/).filter((t) => t !== '');
+    let candidates: SelectItem[];
+    if (tokens.length === 0) {
+      candidates = this.allItems;
+    } else {
+      candidates = this.allItems.filter((item) => {
+        const haystack = `${item.value} ${item.label} ${item.description ?? ''}`.toLowerCase();
+        return tokens.every((tok) => haystack.includes(tok));
+      });
+    }
+    // 重建 SelectList：items 换掉后内部索引语义失效
+    // 必须传副本：SelectList 内部持有 items 引用，后续 allItems.length=0 会连带清空它
+    this.list = this.buildList([...candidates]);
+    this.list.setFilter('');
+    this.requestRender();
+  }
+
   private buildList(items: SelectItem[]): SelectList {
     const list = new SelectList(items, this.maxVisible, selectListTheme);
     list.onSelect = (item) => this.onSelectItem(item);
@@ -115,10 +143,8 @@ export class PickerOverlay implements Component {
   }
 
   setItems(items: SelectItem[]): void {
-    // SelectList 没有 setItems，重建过滤即可让它重新计算候选
-    (this.list as unknown as { items: SelectItem[] }).items = items;
-    this.list.setFilter(this.filter);
-    this.requestRender();
+    this.allItems = [...items];
+    this.applyFilter();
   }
 
   getSelected(): SelectItem | null {
@@ -137,9 +163,11 @@ export class PickerOverlay implements Component {
     const saved = this.tabStates.get(this.activeTab);
     this.filter = saved?.filter ?? '';
     const items = this.itemsForTab?.(this.tabs[this.activeTab]!.id) ?? [];
-    // 重建 SelectList：候选集换掉后选中索引语义失效，按 saved.selected 找回位置
+    // 更新 allItems 为当前 tab 的候选集，让 applyFilter 在正确集合上过滤
+    // 必须赋新数组：allItems 可能与外部数组共享引用，length=0 会连带清空外部
+    this.allItems = [...items];
     this.list = this.buildList(items);
-    this.list.setFilter(this.filter);
+    this.applyFilter();
     if (saved?.selected !== undefined) {
       const idx = items.findIndex((i) => i.value === saved.selected);
       if (idx >= 0) this.list.setSelectedIndex(idx);
@@ -156,8 +184,7 @@ export class PickerOverlay implements Component {
       // 与 Ink 对齐：有过滤词先清词，再按一次才取消
       if (this.filter !== '') {
         this.filter = '';
-        this.list.setFilter('');
-        this.requestRender();
+        this.applyFilter();
         return;
       }
       this.onCancel();
@@ -171,15 +198,13 @@ export class PickerOverlay implements Component {
     if (this.onKey?.(data, this.list.getSelectedItem()) === true) return;
     if (matchesKey(data, 'backspace') || matchesKey(data, 'delete')) {
       this.filter = [...this.filter].slice(0, -1).join('');
-      this.list.setFilter(this.filter);
-      this.requestRender();
+      this.applyFilter();
       return;
     }
-    // 可打印字符进过滤串；其余（方向键、Enter）交给 SelectList
-    if (data.length === 1 && data.charCodeAt(0) >= 32 && data !== ' ') {
+    // 可打印字符进过滤串；空格也进（支持 "kimi flash" 这种多词 AND 过滤）
+    if (data.length === 1 && data.charCodeAt(0) >= 32 && !data.startsWith('\x1b')) {
       this.filter += data;
-      this.list.setFilter(this.filter);
-      this.requestRender();
+      this.applyFilter();
       return;
     }
     this.list.handleInput(data);

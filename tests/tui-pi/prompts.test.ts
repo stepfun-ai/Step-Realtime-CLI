@@ -33,7 +33,7 @@ describe('buildPreview', () => {
   it('edit_file 给出 -/+ 对照，write_file 给出待写内容，其它工具无预览', () => {
     const edit = buildPreview('edit_file', { old_string: 'a\nb', new_string: 'a\nc' });
     expect(edit?.map((l) => l.text)).toEqual(['- a', '- b', '+ a', '+ c']);
-    expect(buildPreview('write_file', { content: 'x\ny' })?.map((l) => l.text)).toEqual(['x', 'y']);
+    expect(buildPreview('write_file', { content: 'x\ny' })?.map((l) => l.text)).toEqual(['  1 │ x', '  2 │ y']);
     expect(buildPreview('bash', { command: 'ls' })).toBeNull();
   });
 });
