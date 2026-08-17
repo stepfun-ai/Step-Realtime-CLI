@@ -9,7 +9,7 @@ function repeat(unit: string, n: number): string {
 describe('thinking 流死循环检测器', () => {
   it('短周期逐字复读（「的」×N）→ 判定循环', () => {
     const d = createThinkingLoopDetector();
-    let v = d.ingest(repeat('让我先思考一下这个问题的背景。', 20)); // 凑够 MIN_CHARS
+    let v = d.ingest(repeat('让我先思考一下这个问题的背景。', 35)); // 35×18=630，过 MIN_CHARS=600
     expect(v.looping).toBe(false);
     v = d.ingest(repeat('的', 200));
     expect(v.looping).toBe(true);
@@ -17,9 +17,9 @@ describe('thinking 流死循环检测器', () => {
 
   it('段落级周期重复（同一段话反复输出）→ 判定循环', () => {
     const d = createThinkingLoopDetector();
-    const para = '首先我需要分析这个问题的核心矛盾，它涉及到多个层面的因素，需要逐一排查确认。',
+    const para = '首先我需要分析这个问题的核心矛盾，它涉及到多个层面的因素，需要逐一排查确认，然后再做综合判断。', // 50 字符
       // 同一段话重复多遍（模拟模型反复「重新整理思路」）
-      v = d.ingest(repeat(para, 12));
+      v = d.ingest(repeat(para, 15));
     expect(v.looping).toBe(true);
     expect(v.sample).toBeDefined();
   });
@@ -48,7 +48,7 @@ describe('thinking 流死循环检测器', () => {
 
   it('触发后不再重复触发（fired 一次性）', () => {
     const d = createThinkingLoopDetector();
-    d.ingest(repeat('的', 500));
+    d.ingest(repeat('的', 800)); // 800 > MIN_CHARS=600，先触发
     const v1 = d.ingest(repeat('的', 100));
     // 已 fired，后续 ingest 返回不触发
     expect(v1.looping).toBe(false);
