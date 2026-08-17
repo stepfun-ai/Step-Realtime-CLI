@@ -13,6 +13,15 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { DisplayItem, WelcomeData } from '../chat/types.js';
+
+/** Braille 转圈帧序列（与 Ink 版 BRAILLE_FRAMES 同口径），供 running 状态动态 spinner。 */
+const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const SPINNER_INTERVAL_MS = 80;
+
+/** 当前 braille 帧：由时间派生（与 Ink 版 useSpinnerFrame 同口径），不存计数器。 */
+function spinnerFrame(): string {
+  return BRAILLE_FRAMES[Math.floor(Date.now() / SPINNER_INTERVAL_MS) % BRAILLE_FRAMES.length] ?? BRAILLE_FRAMES[0]!;
+}
 import { THINKING_FOLD_LINES } from '../chat/expandable.js';
 import { c, dimAll, markdownTheme, thinkingMarkdownTheme } from './theme.js';
 import { markdownTransform } from '../chat/markdownPrep.js';
@@ -257,7 +266,7 @@ export class ItemBlock implements Component {
   }
 
   private renderTool(it: Extract<DisplayItem, { kind: 'tool' }>, width: number): string[] {
-    const mark = it.status === 'running' ? c.warn('⏳') : it.status === 'ok' ? c.ok('✓') : c.error('✗');
+    const mark = it.status === 'running' ? c.warn(spinnerFrame()) : it.status === 'ok' ? c.ok('✓') : c.error('✗');
     const elapsed =
       it.status === 'running' && it.startedAt !== undefined
         ? c.dim(t('toolCall.elapsed', { s: Math.max(0, Math.round((Date.now() - it.startedAt) / 1000)) }))
@@ -299,7 +308,7 @@ export class ItemBlock implements Component {
     if (sub !== undefined && sub.length > 0) {
       if (it.status === 'running') {
         for (const ev of sub.slice(-3)) {
-          const m = ev.status === 'running' ? '⏳' : ev.status === 'ok' ? '✓' : '✗';
+          const m = ev.status === 'running' ? spinnerFrame() : ev.status === 'ok' ? '✓' : '✗';
           out.push(c.dim(`    ${m} ${ev.name}`));
         }
       } else {
@@ -361,7 +370,7 @@ function toolArgText(it: Extract<DisplayItem, { kind: 'tool' }>): string {
  * 头部状态行/子工具列表沿用 renderTool 的口径，这里只重做结果体。
  */
 function renderToolExpanded(it: Extract<DisplayItem, { kind: 'tool' }>, width: number): string[] {
-  const mark = it.status === 'running' ? c.warn('⏳') : it.status === 'ok' ? c.ok('✓') : c.error('✗');
+  const mark = it.status === 'running' ? c.warn(spinnerFrame()) : it.status === 'ok' ? c.ok('✓') : c.error('✗');
   const subagent =
     it.subagentType !== undefined || it.description !== undefined
       ? c.dim(` ${[it.subagentType, it.description].filter((x) => x !== undefined).join(' · ')}`)
