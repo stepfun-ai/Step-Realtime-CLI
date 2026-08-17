@@ -74,7 +74,8 @@ export function buildPreview(name: string, input: unknown): PreviewLine[] | null
     return out;
   }
   if (name === 'write_file' && typeof obj.content === 'string') {
-    return obj.content.split('\n').map((l) => ({ text: l }));
+    // 对标 Ink 版 buildWriteLines：行号 padStart(3) + │ 分隔符
+    return obj.content.split('\n').map((l, i) => ({ text: `${String(i + 1).padStart(3)} │ ${l}` }));
   }
   return null;
 }
