@@ -94,6 +94,12 @@ export interface BackgroundManagerOptions {
    * resume 对账发现 lost 任务时同步调用（reconcile 是同步方法，回调须同步返回，不得 await）。
    */
   onLost?: (lost: LostTask) => void;
+  /**
+   * 进程终止实现（缺省 terminateProcTree）。存在只为可测：超时路径是「先 SIGTERM，
+   * 宽限期后补 SIGKILL」，而中间夹着 settle() 把 task.proc 清空，句柄必须提前捞进闭包
+   * 才不会让进程变孤儿。没有这个缝，这条时序只能靠读源码保证。
+   */
+  killProc?: (proc: ChildProcess | undefined, signal: NodeJS.Signals) => void;
 }
 
 const MAX_OUTPUT_BYTES = 64 * 1024; // 内存只留 64KB 尾部
@@ -546,14 +552,23 @@ export class BackgroundManager {
     task.timer.unref?.();
   }
 
+  /** 终止进程（走可注入实现，缺省 terminateProcTree）。 */
+  private kill(proc: ChildProcess | undefined, signal: NodeJS.Signals): void {
+    (this.options.killProc ?? terminateProcTree)(proc, signal);
+  }
+
   /** 终止运行中任务（超时路径）：附注原因，先温和后强杀，置终态并触发 onSettle。 */
   private terminate(task: Internal, note: string): void {
     if (task.status !== 'running') return;
     task.output += `${task.output === '' ? '' : '\n'}[${note}]`;
-    terminateProcTree(task.proc, 'SIGTERM');
+    // 句柄先捞进局部变量：下面的 settle() 会把 task.proc 清空（终态释放重引用），
+    // 而 SIGKILL 兜底在宽限期之后才执行，那时读 task.proc 只会拿到 undefined，
+    // 温和终止没成功的进程就此变成孤儿。
+    const proc = task.proc;
+    this.kill(proc, 'SIGTERM');
     task.onStop?.();
     const force = setTimeout(() => {
-      if (task.exited !== true) terminateProcTree(task.proc, 'SIGKILL');
+      if (task.exited !== true) this.kill(proc, 'SIGKILL');
     }, KILL_GRACE_MS);
     force.unref?.();
     task.status = 'killed';
@@ -576,6 +591,19 @@ export class BackgroundManager {
     // 被抑制（task_stop）的任务同样落盘（meta 带 suppressNotify，对账时不补投）。
     if (task.streamed !== true && task.output !== '') this.persistOutputChunk(task, task.output);
     this.persistMeta(task);
+    // 终态即释放重引用：条目本身要留着（task_list / task_output 还读它，元数据几百字节），
+    // 但这三个字段各自连着一整片对象图，留下来就是纯泄漏：
+    // - onStop 捕获子 agent 的 AbortController，控制器持有 signal 上注册的全部 abort 监听器，
+    //   而子 agent 跑一趟会注册一批（每次 provider fetch、每个工具调用），那些闭包各自捕获
+    //   请求缓冲与消息数组 → 一条 tasks → onStop → controller → signal → listeners → 子 agent
+    //   整份上下文的链在任务结束后依然完整；
+    // - proc 是已退出进程的 ChildProcess 句柄，连着 stdout/stderr 的内部缓冲；
+    // - getPartialOutput 捕获前台命令调用方的收集缓冲。
+    // stop() 在 status !== 'running' 时直接返回，终态后这三个字段再无读取方。
+    // 2026-08-16 的 4GB OOM 就是这条链：29 个后台子 agent，会话文件才 240KB。
+    task.onStop = undefined;
+    task.proc = undefined;
+    task.getPartialOutput = undefined;
     // 终态事件先走审计通道（含被抑制任务），再走通知通道
     this.options.onSettleEvent?.(this.toPublic(task));
     if (task.suppressNotify === true) return;
@@ -718,7 +746,7 @@ export class BackgroundManager {
   stop(id: string): boolean {
     const t = this.tasks.get(id);
     if (t === undefined || t.status !== 'running') return false;
-    terminateProcTree(t.proc, 'SIGTERM');
+    this.kill(t.proc, 'SIGTERM');
     t.onStop?.();
     t.status = 'killed';
     t.endedAt = new Date().toISOString();
