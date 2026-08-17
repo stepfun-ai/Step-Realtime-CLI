@@ -998,28 +998,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   /**
    * `/compact-model`：会话级切换压缩摘要模型。
    *
-   * 三态：无参查询（只读，busy 时即时分发到这里）、`reset` 清除覆盖、带参切换。
+   * 三态：无参弹选择器（与 `/model` 对齐）、`reset` 清除覆盖、带参直接切换。
    * 覆盖不落盘——与 `/model` 同口径，持久化靠 config.toml 加热重载。
    */
   private runCompactModel(arg: string): void {
-    if (arg === '') {
-      const configured = this.deps.config.compaction.model;
-      const b = this.compactionBinding;
-      const source =
-        this.compactionModelOverride !== undefined
-          ? t('app.compactModel.sourceOverride', { name: this.compactionModelOverride })
-          : configured !== undefined && configured !== ''
-            ? t('app.compactModel.sourceConfig', { name: configured })
-            : t('app.compactModel.sourceNone');
-      const resolved =
-        b.provider !== undefined
-          ? t('app.compactModel.resolvedAlias', { model: b.model ?? '' })
-          : b.model !== undefined
-            ? t('app.compactModel.resolvedBare', { model: b.model })
-            : t('app.compactModel.resolvedMain');
-      this.push({ kind: 'note', text: `${source}\n${resolved}` });
-      return;
-    }
     // reset：清除覆盖按 config 重解。缓存不清——键是别名，重解同别名复用实例
     if (arg === 'reset') {
       if (this.compactionModelOverride === undefined) {
@@ -1031,6 +1013,11 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       this.push({ kind: 'note', text: t('app.compactModel.resetDone') });
       return;
     }
+    this.applyCompactModel(arg);
+  }
+
+  /** 应用压缩模型覆盖（别名切换逻辑，picker 与命令行共用）。 */
+  private applyCompactModel(arg: string): void {
     this.compactionModelOverride = arg;
     const binding = resolveCompactionBinding(this.deps.config, this.compactionProviderCache, arg);
     this.compactionBinding = binding;
@@ -1043,6 +1030,24 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       // 覆盖保留（与 config 里配了坏别名的行为一致），reset 可清除。
       this.push({ kind: 'note', text: t('app.compactModel.fallback', { name: arg }) });
     }
+  }
+
+  /** 压缩模型选择器：与 /model 同款 picker，当前压缩模型标 ●。 */
+  private async pickCompactModel(): Promise<void> {
+    const items = modelItems(this.deps.config, this.compactionModelOverride ?? this.deps.config.compaction.model);
+    if (items.length === 0) {
+      this.push({ kind: 'note', text: '配置里没有 [models.*] 别名，先用 /compact-model <模型 id> 直切' });
+      return;
+    }
+    const tabs = modelTabs(this.deps.config);
+    const picked = await showPicker(this.tui, {
+      title: '选择压缩模型',
+      items,
+      hint: '↑↓ 选择 · Enter 确认 · 输入过滤 · Esc 取消',
+      tabs,
+      itemsForTab: (tabId) => modelItems(this.deps.config, this.compactionModelOverride ?? this.deps.config.compaction.model, tabId),
+    });
+    if (picked !== null) this.applyCompactModel(picked);
   }
 
   /**
@@ -1265,7 +1270,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         return;
 
       case 'compact-model':
-        this.runCompactModel(args.trim());
+        if (args.trim() === '') await this.pickCompactModel();
+        else this.runCompactModel(args.trim());
         return;
 
       case 'history':
