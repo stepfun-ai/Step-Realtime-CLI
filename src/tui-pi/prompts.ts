@@ -234,15 +234,15 @@ export class QuestionPrompt {
   private readonly requestRender: () => void;
   private qIdx = 0;
   private settled = false;
-  /** 每题的交互现场：光标、勾选集、自由输入草稿（切题保留）。 */
-  private readonly slots: { cursor: number; checked: Set<number>; other: string }[];
+  /** 每题的交互现场：光标、勾选集、自由输入草稿与光标位置（切题保留）。 */
+  private readonly slots: { cursor: number; checked: Set<number>; other: string; otherCursor: number }[];
   private readonly answers: QuestionAnswers = {};
 
   constructor(req: AskUserRequest, requestRender: () => void, done: (answers: QuestionAnswers) => void) {
     this.req = req;
     this.done = done;
     this.requestRender = requestRender;
-    this.slots = req.questions.map(() => ({ cursor: 0, checked: new Set<number>(), other: '' }));
+    this.slots = req.questions.map(() => ({ cursor: 0, checked: new Set<number>(), other: '', otherCursor: 0 }));
   }
 
   invalidate(): void {
@@ -253,7 +253,7 @@ export class QuestionPrompt {
     return this.req.questions[this.qIdx]!;
   }
 
-  private get slot(): { cursor: number; checked: Set<number>; other: string } {
+  private get slot(): { cursor: number; checked: Set<number>; other: string; otherCursor: number } {
     return this.slots[this.qIdx]!;
   }
 
@@ -324,15 +324,54 @@ export class QuestionPrompt {
       this.commitAndAdvance();
       return;
     }
-    // 自由输入行：字符进草稿
+    // 自由输入行：字符进草稿（支持 ←→/Home/End/Ctrl+W，对标 Ink 版 TextEditField）
     if (slot.cursor === last) {
-      if (matchesKey(data, 'backspace') || matchesKey(data, 'delete')) {
-        slot.other = [...slot.other].slice(0, -1).join('');
+      if (matchesKey(data, 'left')) {
+        if (slot.otherCursor > 0) { slot.otherCursor -= 1; this.requestRender(); }
+        return;
+      }
+      if (matchesKey(data, 'right')) {
+        if (slot.otherCursor < slot.other.length) { slot.otherCursor += 1; this.requestRender(); }
+        return;
+      }
+      if (matchesKey(data, 'home') || matchesKey(data, 'ctrl+a')) {
+        slot.otherCursor = 0;
         this.requestRender();
         return;
       }
+      if (matchesKey(data, 'end') || matchesKey(data, 'ctrl+e')) {
+        slot.otherCursor = slot.other.length;
+        this.requestRender();
+        return;
+      }
+      if (matchesKey(data, 'ctrl+w')) {
+        // 删前一个词（Ctrl+W 是 Ink 版 TextEditField 的快捷键）
+        const before = slot.other.slice(0, slot.otherCursor);
+        const after = slot.other.slice(slot.otherCursor);
+        const trimmed = before.replace(/\s*\S*\s*$/, '');
+        slot.other = trimmed + after;
+        slot.otherCursor = trimmed.length;
+        this.requestRender();
+        return;
+      }
+      if (matchesKey(data, 'backspace')) {
+        if (slot.otherCursor > 0) {
+          slot.other = slot.other.slice(0, slot.otherCursor - 1) + slot.other.slice(slot.otherCursor);
+          slot.otherCursor -= 1;
+          this.requestRender();
+        }
+        return;
+      }
+      if (matchesKey(data, 'delete')) {
+        if (slot.otherCursor < slot.other.length) {
+          slot.other = slot.other.slice(0, slot.otherCursor) + slot.other.slice(slot.otherCursor + 1);
+          this.requestRender();
+        }
+        return;
+      }
       if (data.length === 1 && data.charCodeAt(0) >= 32 && !data.startsWith('\x1b')) {
-        slot.other += data;
+        slot.other = slot.other.slice(0, slot.otherCursor) + data + slot.other.slice(slot.otherCursor);
+        slot.otherCursor += 1;
         this.requestRender();
         return;
       }
@@ -373,8 +412,11 @@ export class QuestionPrompt {
       out.push(truncateToWidth(`${on ? c.toolName('→ ') : '  '}${box}[${i + 1}] ${label}${desc}`, width));
     });
     const onOther = slot.cursor === this.otherIndex;
-    const otherText = slot.other === '' ? c.dim(t('question.otherPlaceholder')) : slot.other;
-    out.push(truncateToWidth(`${onOther ? c.toolName('→ ') : '  '}${otherText}${onOther ? '▌' : ''}`, width));
+    // 光标位置：onOther 时在 otherCursor 处插入 ▌；非 Other 行时无光标
+    const otherDisplay = slot.other === '' ? c.dim(t('question.otherPlaceholder')) : onOther
+      ? slot.other.slice(0, slot.otherCursor) + '▌' + slot.other.slice(slot.otherCursor)
+      : slot.other;
+    out.push(truncateToWidth(`${onOther ? c.toolName('→ ') : '  '}${otherDisplay}`, width));
     out.push(
       c.dim(
         this.req.questions.length > 1
