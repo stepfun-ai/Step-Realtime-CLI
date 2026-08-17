@@ -214,8 +214,14 @@ export class ActivityLine implements Component {
       const contentW = Math.max(8, width - indent.length);
       const contentLines = this.textComponent.render(contentW);
       const tail = contentLines.slice(-PREVIEW_LINES);
-      const styled = tail.map((line) => c.thinking(indent + line));
       // 预览行只加 indent，不加 spin——spinner 已在 head 行显示，重复会出现两个圆圈。
+      //
+      // 逐行 truncateToWidth 是必需的防御：pi-tui Text 的 wrapTextWithAnsi 只按空格折行，
+      // 长 URL / base64 / 无空格代码串不会被断开，单行可能远超终端宽度。pi-tui doRender
+      // 检测到任一行 visibleWidth > width 就直接 throw（2026-08-17 两次因此崩溃：
+      // 一次 line 19 w=89>87，一次 line 399 w=992>67）。这里在着色前钳到 width，是组件层
+      // 的安全阀——不依赖上游 Text 是否真的把每个 token 折到位。
+      const styled = tail.map((line) => c.thinking(truncateToWidth(indent + line, width)));
       out.push(...styled);
     } else if (this.hint !== '') {
       // 思考预览与操作提示互斥占第二行：预览是本轮实时信息，优先级高于常驻提示
