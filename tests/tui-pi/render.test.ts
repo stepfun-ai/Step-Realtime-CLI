@@ -1050,3 +1050,18 @@ describe('dynamic_workflow 阶段渲染', () => {
     expect(bare.join('\n')).not.toContain('阶段');
   });
 });
+
+  it('思考预览：带 spinner 前缀的行不超过终端宽度', () => {
+    const a = new ActivityLine();
+    a.setBusy(true, Date.now());
+    // 长思考文本，确保 Text 组件填满 contentW
+    a.setThinking(true, '这是一段很长的思考内容。'.repeat(50));
+    for (const w of [40, 60, 80, 100, 120]) {
+      const lines = a.render(w);
+      for (const line of lines) {
+        // plain() 去掉 ANSI 后测可见宽度
+        const vis = line.replace(/\x1b\[[0-9;]*m/g, '').length;
+        expect(vis, `width=${w} 时某行可见宽度 ${vis} > ${w}`).toBeLessThanOrEqual(w);
+      }
+    }
+  });

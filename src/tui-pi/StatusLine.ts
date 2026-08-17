@@ -210,14 +210,14 @@ export class ActivityLine implements Component {
       // Text 内部走 wrapTextWithAnsi → 每行 ≤ width 的独立扁平串，进 widthCache 的
       // 字符串永远短且不拖父串。对比旧的 slice(replace(全文)) 方式——SlicedString
       // 拖着整份多 MB 父串进 widthCache，是 2026-08-17 第二次 OOM 的根因。
-      const spin = c.warn(SPINNER[this.frame]!);
       const indent = '  ';
       const contentW = Math.max(8, width - indent.length);
       const contentLines = this.textComponent.render(contentW);
       const tail = contentLines.slice(-PREVIEW_LINES);
       const styled = tail.map((line) => c.thinking(indent + line));
-      // spinner 占第一行前缀位置
-      if (styled.length > 0) styled[0] = `${spin} ${styled[0]}`;
+      // spinner 占第一行前缀位置：spin(1) + space(1) + indent(2) + padded_line(contentW)
+      // = width + 1，超宽 1 字符 → pi-tui 断言崩溃。截断到 width 保底。
+      if (styled.length > 0) styled[0] = truncateToWidth(`${spin} ${styled[0]}`, width);
       out.push(...styled);
     } else if (this.hint !== '') {
       // 思考预览与操作提示互斥占第二行：预览是本轮实时信息，优先级高于常驻提示
