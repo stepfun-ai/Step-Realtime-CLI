@@ -265,10 +265,20 @@ export function modelTabs(config: StepCodeConfig): PickerTab[] {
     const channel = entry.provider ?? config.provider ?? 'default';
     if (!seen.includes(channel)) seen.push(channel);
   }
-  return [{ id: 'all', label: t('modelPicker.tabAll') }, ...seen.sort().map((ch) => ({ id: ch, label: ch }))];
+  return [{ id: 'all', label: t('modelPicker.tabAll') }, ...seen.map((ch) => ({ id: ch, label: ch }))];
 }
 
-/** 把选择器挂成 overlay 并返回结果（取消为 null）。 */
+/**
+ * 把选择器挂成 overlay 并返回结果（取消为 null）。
+ *
+ * 当 opts.container 提供时，改为内联替换输入区模式（对标 Ink 版 / Kimi Code）：
+ * - container.clear() 清空容器
+ * - container.addChild(overlay) 内联挂载选择器
+ * - tui.setFocus(overlay) 路由输入到选择器
+ * - 结束时 container.clear() + opts.onRestore() 恢复输入区
+ *
+ * 当 opts.container 未提供时，走浮层 overlay 模式（向后兼容）。
+ */
 export function showPicker(
   tui: TUI,
   opts: {
@@ -283,13 +293,23 @@ export function showPicker(
     tabs?: PickerTab[];
     itemsForTab?: (tabId: string) => SelectItem[];
     initialTab?: string;
+    /** 内联模式：选择器挂载到此容器（替换输入区）。提供时走内联模式。 */
+    container?: Container;
+    /** 内联模式：选择器关闭时回调，用于恢复输入区（恢复 editor 焦点）。 */
+    onRestore?: () => void;
   },
 ): Promise<string | null> {
+  const inline = opts.container !== undefined;
   return new Promise<string | null>((resolve) => {
     let overlay: PickerOverlay | undefined;
     let handle: OverlayHandle | undefined;
     const finish = (value: string | null): void => {
-      handle?.hide();
+      if (inline) {
+        opts.container!.clear();
+        opts.onRestore?.();
+      } else {
+        handle?.hide();
+      }
       tui.requestRender();
       resolve(value);
     };
@@ -306,7 +326,12 @@ export function showPicker(
         opts.onShiftSelect !== undefined
           ? (item) => {
               const v = item.value;
-              handle?.hide();
+              if (inline) {
+                opts.container!.clear();
+                opts.onRestore?.();
+              } else {
+                handle?.hide();
+              }
               tui.requestRender();
               resolve(null); // shift 路径自带结算，主 promise 置 null 防重复应用
               opts.onShiftSelect!(v);
@@ -316,8 +341,14 @@ export function showPicker(
       itemsForTab: opts.itemsForTab,
       initialTab: opts.initialTab,
     });
-    handle = tui.showOverlay(overlay, { width: '80%', maxHeight: '70%', anchor: 'bottom-center' });
-    handle.focus();
+    if (inline) {
+      opts.container!.clear();
+      opts.container!.addChild(overlay);
+      tui.setFocus(overlay);
+    } else {
+      handle = tui.showOverlay(overlay, { width: '80%', maxHeight: '70%', anchor: 'bottom-center' });
+      handle.focus();
+    }
     tui.requestRender();
   });
 }

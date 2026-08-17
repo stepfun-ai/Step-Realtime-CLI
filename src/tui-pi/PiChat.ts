@@ -178,6 +178,25 @@ export class PiChat {
   private readonly completion: ChatAutocompleteProvider;
   /** 审批等弹层的挂载点：常驻容器，内容按需增删（组件树形状不随消息变化）。 */
   private readonly overlayHost = new Container();
+  /** 输入区容器：选择器内联替换模式时，选择器与 editor 在此互换（对标 Ink 版 / Kimi Code）。 */
+  private readonly inputSlot = new Container();
+
+  /**
+   * 内联选择器：把 PickerOverlay 挂进 inputSlot 替换 editor，关闭时恢复 editor。
+   * 对标 Ink 版 ModelPicker 替换 PromptInput、Kimi Code mountEditorReplacement。
+   */
+  private async showInlinePicker(
+    opts: Omit<Parameters<typeof showPicker>[1], 'container' | 'onRestore'>,
+  ): Promise<string | null> {
+    return showPicker(this.tui, {
+      ...opts,
+      container: this.inputSlot,
+      onRestore: () => {
+        this.inputSlot.addChild(this.editor);
+        this.tui.setFocus(this.editor);
+      },
+    });
+  }
   /** 输入框上方的常驻面板：待办清单 + 发送队列预览（无数据时零行）。 */
   private readonly chrome = new ChromePanels();
   /** 有 overlay 需要按秒重渲（任务弹层的用时）时置真，由 ticker 读。 */
@@ -474,7 +493,10 @@ export class PiChat {
     // 常驻 chrome（待办 + 队列预览）挂在输入框正上方：位置与 Ink 版一致，
     // 但不参与任何高度预算协商——差分渲染没有超屏清屏问题，面板按内容占行
     this.tui.addChild(this.chrome);
-    this.tui.addChild(this.editor);
+    // inputSlot 包住 editor：选择器内联模式下，editor 与 PickerOverlay 在此容器内互换，
+    // 位置不变（对标 Ink 版 ModelPicker 替换 PromptInput、Kimi Code mountEditorReplacement）
+    this.inputSlot.addChild(this.editor);
+    this.tui.addChild(this.inputSlot);
     this.tui.addChild(this.status);
     this.tui.setFocus(this.editor);
   }
@@ -1046,7 +1068,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       return;
     }
     const tabs = modelTabs(this.deps.config);
-    const picked = await showPicker(this.tui, {
+    const picked = await this.showInlinePicker({
       title: '选择压缩模型',
       items,
       hint: '↑↓ 选择 · Enter 确认 · 输入过滤 · Esc 取消',
@@ -1660,7 +1682,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       // Tab = 只把那条输入取回输入框，不动历史（Ink 版同语义）：
       // 「我想改一版重发」与「我要撤销这段对话」是两件事，只给 Enter 会逼用户先撤销
       let recallOnly: string | null = null;
-      const picked = await showPicker(this.tui, {
+      const picked = await this.showInlinePicker({
         title: '回退到哪一条输入之前',
         items: turns.map((t) => ({
           value: String(t.turns),
@@ -1754,7 +1776,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         this.push({ kind: 'note', text: '没有发现任何技能（放到 .step-code/skills/ 或 ~/.step-code/skills/）' });
         return;
       }
-      const picked = await showPicker(this.tui, {
+      const picked = await this.showInlinePicker({
         title: '激活技能',
         items: [...registry.skills.values()].map((d) => ({
           value: d.name,
@@ -1827,7 +1849,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       this.push({ kind: 'note', text: '本会话还没有派生过子 agent' });
       return;
     }
-    const picked = await showPicker(this.tui, {
+    const picked = await this.showInlinePicker({
       title: '本会话的子 agent',
       items: subs.map((m) => ({
         value: m.id,
@@ -2514,7 +2536,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       return;
     }
     const tabs = modelTabs(this.deps.config);
-    const picked = await showPicker(this.tui, {
+    const picked = await this.showInlinePicker({
       title: '选择模型',
       items,
       hint:
@@ -2558,7 +2580,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       return items;
     };
 
-    const picked = await showPicker(this.tui, {
+    const picked = await this.showInlinePicker({
       title: '恢复会话',
       items: buildItems(),
       hint: '↑↓ 选择 · Enter 恢复 · d 删除 · r 重命名 · 输入过滤 · Esc 取消',
@@ -2635,7 +2657,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   }
 
   private async pickThink(): Promise<void> {
-    const picked = await showPicker(this.tui, {
+    const picked = await this.showInlinePicker({
       title: '思考深度',
       items: thinkItems(this.thinkOverride),
       hint: '↑↓ 选择 · Enter 确认 · Esc 取消',
