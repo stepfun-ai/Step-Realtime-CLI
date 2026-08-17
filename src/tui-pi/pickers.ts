@@ -70,6 +70,10 @@ export class PickerOverlay implements Component {
   private activeTab = 0;
   /** 每个 tab 记忆的视图状态：过滤词 + 选中项 value。 */
   private readonly tabStates = new Map<number, { filter: string; selected?: string }>();
+  /** 当前选中索引（用于 ↑↓ 钳制；SelectList 内部回绕，我们在外层拦截改钳制）。 */
+  private selIdx = 0;
+  /** 当前过滤后的候选数（用于 ↑↓ 钳制判断是否到边界）。 */
+  private filteredCount = 0;
 
   constructor(opts: {
     title: string;
@@ -102,6 +106,8 @@ export class PickerOverlay implements Component {
       if (idx >= 0) this.activeTab = idx;
     }
     this.list = this.buildList(opts.items);
+    this.filteredCount = opts.items.length;
+    this.selIdx = 0;
     this.onKey = opts.onKey;
   }
 
@@ -128,6 +134,8 @@ export class PickerOverlay implements Component {
     // 必须传副本：SelectList 内部持有 items 引用，后续 allItems.length=0 会连带清空它
     this.list = this.buildList([...candidates]);
     this.list.setFilter('');
+    this.filteredCount = candidates.length;
+    this.selIdx = 0;
     this.requestRender();
   }
 
@@ -135,6 +143,11 @@ export class PickerOverlay implements Component {
     const list = new SelectList(items, this.maxVisible, selectListTheme);
     list.onSelect = (item) => this.onSelectItem(item);
     list.onCancel = () => this.onCancel();
+    list.onSelectionChange = (item) => {
+      // 同步选中索引：SelectList 内部改了索引，我们也要知道（用于 ↑↓ 钳制）
+      const idx = items.indexOf(item);
+      if (idx >= 0) this.selIdx = idx;
+    };
     return list;
   }
 
@@ -205,6 +218,20 @@ export class PickerOverlay implements Component {
     if (data.length === 1 && data.charCodeAt(0) >= 32 && !data.startsWith('\x1b')) {
       this.filter += data;
       this.applyFilter();
+      return;
+    }
+    // ↑↓ 钳制：SelectList 内部回绕（到顶跳到底），Ink 版是「到边界停住」。
+    // 在外层拦截，用 setSelectedIndex 钳制，不让 SelectList 拿到方向键。
+    if (matchesKey(data, 'up') || matchesKey(data, 'down')) {
+      if (this.filteredCount > 0) {
+        const delta = matchesKey(data, 'up') ? -1 : 1;
+        const next = Math.max(0, Math.min(this.selIdx + delta, this.filteredCount - 1));
+        if (next !== this.selIdx) {
+          this.selIdx = next;
+          this.list.setSelectedIndex(this.selIdx);
+          this.requestRender();
+        }
+      }
       return;
     }
     this.list.handleInput(data);
