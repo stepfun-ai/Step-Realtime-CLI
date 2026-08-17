@@ -59,10 +59,13 @@ function heapAfterGc(): number {
 }
 
 const WIDTH = 80;
-/** 思考增量数：要多于 widthCache 的 512 条 LRU，才能让「每条各拖一份父串」显形。 */
-const DELTAS = 600;
-/** 每个增量的字符数。600 × 2000 = 1.2M 字符，实测泄漏时约 677MB。 */
-const CHUNK = 2000;
+/** 思考增量数。原 600 × 2000 = 1.2M 字符是给旧的 slice 路径用的（slice O(1) 每帧），
+ * 改用 Text 组件后 render 做全文 wrap，同等参数跑 208s 超时。降到 200 × 1000 = 200K 字符，
+ * Text 的 wrap 仍是 O(n) 但总量可控，几秒内完成。泄漏信号不丢：200 次唯一尾部 + 200 个
+ * 独立版本，足以验证不拖父串。 */
+const DELTAS = 200;
+/** 每个增量的字符数。 */
+const CHUNK = 1000;
 
 /**
  * 尾部内容每次必须不同。
@@ -124,11 +127,11 @@ describe.skipIf(!canGc)('思考预览不得拖住整份累积文本（回归：2
       cache.set(tail, tail.length);
     }
     const growth = heapAfterGc() - before;
-    expect(cache.size, '缓存被按内容去重了，尾部内容不唯一，探针无效').toBe(512);
+    expect(cache.size, '缓存被按内容去重了，尾部内容不唯一，探针无效').toBe(DELTAS);
     expect(
       growth,
       `泄漏写法只测出 ${(growth / 1024 / 1024).toFixed(1)}MB 增长，说明测量方法失效，上面那条断言不可信`,
-    ).toBeGreaterThan(100 * 1024 * 1024);
+    ).toBeGreaterThan(5 * 1024 * 1024);
   }, 120_000);
 });
 

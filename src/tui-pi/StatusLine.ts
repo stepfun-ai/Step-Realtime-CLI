@@ -9,8 +9,7 @@
  * 以及流式思考的单行预览。
  */
 import { homedir } from 'node:os';
-import type { Component } from '@earendil-works/pi-tui';
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { Text, type Component, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { PermissionMode } from '../agent/permission/mode.js';
 import type { GoalStatus } from '../agent/goal/mode.js';
 import { c } from './theme.js';
@@ -135,6 +134,8 @@ export class StatusLine implements Component {
 }
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+/** thinking 预览最多显示的行数（尾部 N 行）。 */
+const PREVIEW_LINES = 3;
 
 export class ActivityLine implements Component {
   private busy = false;
@@ -147,6 +148,12 @@ export class ActivityLine implements Component {
   /** 本轮的状态动词与操作提示：busy 上升沿各取一次、整轮固定（不随帧刷新而跳字）。 */
   private verb = '';
   private hint = '';
+  /**
+   * thinking 预览的文本渲染组件（pi-tui Text）。
+   * Text 内部 wrapTextWithAnsi → 每行独立扁平串，进 widthCache 安全。
+   * 旧的 slice(replace(全文)) 方式产出的 SlicedString 会拖住父串导致 OOM。
+   */
+  private readonly textComponent = new Text('', 0, 0);
 
   invalidate(): void {
     // 无缓存
@@ -178,7 +185,10 @@ export class ActivityLine implements Component {
 
   setThinking(active: boolean, preview = ''): void {
     this.thinkingActive = active;
-    if (preview !== '') this.thinkingPreview = preview;
+    if (preview !== '') {
+      this.thinkingPreview = preview;
+      this.textComponent.setText(preview);
+    }
   }
 
   /** 由 PiChat 的 100ms 定时器驱动：只在 busy 时推进帧号。 */
@@ -195,22 +205,20 @@ export class ActivityLine implements Component {
     const head = `${spin} ${c.dim(`${state} · ${elapsed}${tok} · Esc 中断`)}`;
     const out = [truncateToWidth(head, width)];
     if (this.thinkingActive && this.thinkingPreview !== '') {
-      // 思考流式预览：取尾部单行（整段思考在完成后落成定稿块）。
+      // 思考流式预览：用 pi-tui Text 组件渲染尾部 N 行。
       //
-      // **先切窗口，再压空白，顺序不能反。** 原先是对整份 thinkingPreview 跑 replace 再切
-      // 尾部，两个后果：一是每帧（120ms）对一份可能几 MB 的文本跑一遍正则，纯浪费；二是
-      // 更要命的——`flat.slice(-76)` 在 V8 里产出 SlicedString，它持有父串指针，于是这个
-      // 76 字符的短串拖着整份多 MB 的 flat 不放。它随后进 pi-tui 的 widthCache（512 条 LRU，
-      // 短 key 通不过长度过滤），512 条各拖一份不同版本的父串 = GB 级泄漏。2026-08-17 的
-      // 第二次 4GB OOM 就是这条：8.8 分钟、3 轮对话、零后台任务，只因模型一直在思考。
-      //
-      // 反过来先切窗口：切出来的 SlicedString 拖的是 thinkingPreview 本身——它是本轮的
-      // 累积器，本来就活着，不构成额外保留。随后的 replace 产出独立扁平串，父串引用到此断开。
-      // 窗口取 4 倍宽度：压空白后长度会缩，留足余量保证尾部够填满一行。
-      const window = this.thinkingPreview.slice(-Math.max(64, width * 4));
-      const flat = window.replace(/\s+/g, ' ').trimEnd();
-      const tail = flat.slice(-Math.max(0, width - 4));
-      out.push(c.thinking(`  ${truncateToWidth(tail, width - 2)}`));
+      // Text 内部走 wrapTextWithAnsi → 每行 ≤ width 的独立扁平串，进 widthCache 的
+      // 字符串永远短且不拖父串。对比旧的 slice(replace(全文)) 方式——SlicedString
+      // 拖着整份多 MB 父串进 widthCache，是 2026-08-17 第二次 OOM 的根因。
+      const spin = c.warn(SPINNER[this.frame]!);
+      const indent = '  ';
+      const contentW = Math.max(8, width - indent.length);
+      const contentLines = this.textComponent.render(contentW);
+      const tail = contentLines.slice(-PREVIEW_LINES);
+      const styled = tail.map((line) => c.thinking(indent + line));
+      // spinner 占第一行前缀位置
+      if (styled.length > 0) styled[0] = `${spin} ${styled[0]}`;
+      out.push(...styled);
     } else if (this.hint !== '') {
       // 思考预览与操作提示互斥占第二行：预览是本轮实时信息，优先级高于常驻提示
       out.push(c.dim(truncateToWidth(t('input.tipPrefix', { tip: this.hint }), width)));
