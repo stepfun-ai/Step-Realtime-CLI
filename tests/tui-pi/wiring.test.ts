@@ -238,3 +238,32 @@ describe('PiChat 接线：会话切换的清理与恢复', () => {
     expect(piChat.includes('this.queue.push('), 'queue.push 绕过了持久化').toBe(false);
   });
 });
+
+describe('PiChat 接线：compaction 后重建 Transcript（OOM 根因修复）', () => {
+  /**
+   * 2026-08-17 OOM 根因：compaction（自动 + 手动）只压缩 this.history，从不重建 Transcript，
+   * blocks 数组持续累积 ItemBlock（各持 cachedLines + Markdown 实例），4GB 堆全活对象而会话
+   * 才 240KB。修复：appendWire 收到 context.apply_compaction 时用压缩后的 history 重建转录块。
+   *
+   * 本条盯的是「接线存在」——compaction 分支里必须有 transcript.reset。单跑 PiChat 测不了
+   * 行为（构造函数摸真实 tty），沿用本文件源码扫描的糙测试口径。
+   */
+  it('appendWire 的 compaction 分支重建了 Transcript', () => {
+    // 接线点 1：appendWire 里识别 compaction 事件
+    wired(piChat, "event.type === 'context.apply_compaction'", 'compaction 事件识别');
+    // 接线点 2：命中后用压缩后 history 重建转录块（旧块失引用即 GC）
+    wired(piChat, 'this.transcript.reset(historyToDisplayItems(this.history)', 'compaction 后重建 Transcript');
+    // 接线点 3：historyToDisplayItems 已导入（否则上面那行编译不过，但显式守住接线意图）
+    wired(piChat, "historyToDisplayItems", 'historyToDisplayItems 导入');
+  });
+
+  it('手动 /compact 压缩成功后 emit compaction 事件（走 appendWire 的重建出口）', () => {
+    // runCompact 压缩成功后必须 emit context.apply_compaction——appendWire 收到后重建 Transcript。
+    // 若有人删掉这行 emit，Transcript 就不会重建，OOM 回归。PiChat 里这处 emit 是手动压缩的出口。
+    const emits = piChat.match(/type:\s*'context\.apply_compaction'/g) ?? [];
+    expect(emits.length, 'runCompact 应 emit context.apply_compaction，经 appendWire 触发重建').toBeGreaterThanOrEqual(1);
+    // 且 emit 紧跟在 history 原地压缩之后（同一分支内），保证 appendWire 重建时 history 已是压缩后
+    const compactBranch = piChat.slice(piChat.indexOf('compacted !== this.history'), piChat.indexOf('compacted !== this.history') + 400);
+    expect(compactBranch, 'emit 应落在 compacted !== this.history 分支内（history 已压缩）').toContain('context.apply_compaction');
+  });
+});

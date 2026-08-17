@@ -830,6 +830,15 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     } catch {
       // 持久化失败不打断会话
     }
+    // 内存泄漏根因修复（2026-08-17）：compaction（自动 + 手动）只压缩 this.history，
+    // 原来从不重建 Transcript——blocks 数组持续累积 ItemBlock（各持 cachedLines + Markdown
+    // 实例），history 反复压回 ~79 条但渲染快照不解绑，4GB 堆全活对象、会话才 240KB 即此因。
+    // context.apply_compaction 到达时 this.history 已被 replaceMessages 原地改成压缩后
+    // （同一引用），据此重建转录块，旧块失去引用即被 GC。仅 full 压缩发此事件（micro
+    // 不发），且 compaction 只在回合边界、无在途条目，重建安全。
+    if (event.type === 'context.apply_compaction') {
+      this.transcript.reset(historyToDisplayItems(this.history).items);
+    }
   }
 
   // ---------------------------------------------------------------- 输入路由
