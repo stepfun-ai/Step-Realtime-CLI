@@ -11,6 +11,8 @@
  * Esc / Ctrl+C 语义、发送队列、/help /exit /new /clear 四个命令。
  * 审批的完整形态（计划确认、ask_user 多选）在 M2，选择器在 M3，命令全量在 M4。
  */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { Container, ProcessTerminal, TuiMainScreen, matchesKey } from '@earendil-works/pi-tui';
 import type { Component, SelectItem } from '@earendil-works/pi-tui';
 import type { AgentEvent, SubagentProgressEvent, WorkflowStepEvent } from '../agent/events.js';
@@ -21,6 +23,7 @@ import { stored, type StoredMessage } from '../agent/message.js';
 import { notifyDedupKeyFromOrigin, pendingDeliveredEvents } from '../agent/wirelog.js';
 
 import { buildSettleMessage, decideNotifyRoute } from '../agent/background/notify.js';
+import { startHeapWatch } from './heapWatch.js';
 import { emitTerminalNotification } from '../agent/background/terminal-notify.js';
 import { decide, planModeDenyReason, type PermissionMode } from '../agent/permission/mode.js';
 import { createSubagentRunner } from '../agent/subagent/runner.js';
@@ -297,6 +300,8 @@ export class PiChat {
   private backtrackPrimed = false;
   private backtrackPrimedTimer: ReturnType<typeof setTimeout> | undefined;
   private ticker: ReturnType<typeof setInterval> | undefined;
+  /** 堆水位看护的停止函数（见 heapWatch.ts：接近上限时预警并留一份快照）。 */
+  private stopHeapWatch: (() => void) | undefined;
   private resolveExit: ((info: PiChatExit) => void) | undefined;
   /** 弹层（审批/计划/提问）激活中：暂停 spinner，用户此时在读弹层，动画只是噪声与无谓重绘。 */
   private promptActive = false;
@@ -520,6 +525,12 @@ export class PiChat {
       if (this.goal.get() !== null) this.syncGoalBadge();
       this.tui.requestRender();
     }, 120);
+    // 堆水位看护：长会话会持续变重，接近上限前给用户一次「/new 开新会话」的机会，
+    // 更高水位时留一份 heap snapshot——崩溃后的堆没法事后检查，只能在崩之前抓。
+    this.stopHeapWatch = startHeapWatch({
+      notify: (text) => this.push({ kind: 'note', text }),
+      dumpDir: join(homedir(), '.step-code'),
+    });
     this.tui.requestRender();
     return new Promise<PiChatExit>((resolve) => {
       this.resolveExit = resolve;
@@ -1053,6 +1064,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // backtrack 的定时器同样要清：未清的 setTimeout 会让 node 事件循环多挂 5 秒才退
     if (this.backtrackPrimedTimer !== undefined) clearTimeout(this.backtrackPrimedTimer);
     if (this.ticker !== undefined) clearInterval(this.ticker);
+    this.stopHeapWatch?.();
     this.cron.stop();
     this.persist();
     // tab 标题清空，让终端回落自身默认（不清会残留到用户后续的其它命令上）
