@@ -515,14 +515,17 @@ describe('ActivityLine', () => {
     expect(out).toContain('Esc 中断');
   });
 
-  it('思考预览取尾部单行', () => {
+  it('思考预览取尾部 3 行', () => {
     const a = new ActivityLine();
     a.setBusy(true, Date.now());
     a.setThinking(true, 'aaa\nbbb\nccc');
     const out = plain(a.render(60));
-    expect(out.length).toBe(2);
+    // 1 行 head + 3 行预览（PREVIEW_LINES = 3）
+    expect(out.length).toBe(4);
     expect(out[0]).toContain('思考中');
-    expect(out[1]).toContain('ccc');
+    expect(out[1]).toContain('aaa');
+    expect(out[2]).toContain('bbb');
+    expect(out[3]).toContain('ccc');
   });
 });
 
