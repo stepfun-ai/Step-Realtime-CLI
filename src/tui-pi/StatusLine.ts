@@ -195,8 +195,20 @@ export class ActivityLine implements Component {
     const head = `${spin} ${c.dim(`${state} · ${elapsed}${tok} · Esc 中断`)}`;
     const out = [truncateToWidth(head, width)];
     if (this.thinkingActive && this.thinkingPreview !== '') {
-      // 思考流式预览：取尾部单行（整段思考在完成后落成定稿块）
-      const flat = this.thinkingPreview.replace(/\s+/g, ' ').trimEnd();
+      // 思考流式预览：取尾部单行（整段思考在完成后落成定稿块）。
+      //
+      // **先切窗口，再压空白，顺序不能反。** 原先是对整份 thinkingPreview 跑 replace 再切
+      // 尾部，两个后果：一是每帧（120ms）对一份可能几 MB 的文本跑一遍正则，纯浪费；二是
+      // 更要命的——`flat.slice(-76)` 在 V8 里产出 SlicedString，它持有父串指针，于是这个
+      // 76 字符的短串拖着整份多 MB 的 flat 不放。它随后进 pi-tui 的 widthCache（512 条 LRU，
+      // 短 key 通不过长度过滤），512 条各拖一份不同版本的父串 = GB 级泄漏。2026-08-17 的
+      // 第二次 4GB OOM 就是这条：8.8 分钟、3 轮对话、零后台任务，只因模型一直在思考。
+      //
+      // 反过来先切窗口：切出来的 SlicedString 拖的是 thinkingPreview 本身——它是本轮的
+      // 累积器，本来就活着，不构成额外保留。随后的 replace 产出独立扁平串，父串引用到此断开。
+      // 窗口取 4 倍宽度：压空白后长度会缩，留足余量保证尾部够填满一行。
+      const window = this.thinkingPreview.slice(-Math.max(64, width * 4));
+      const flat = window.replace(/\s+/g, ' ').trimEnd();
       const tail = flat.slice(-Math.max(0, width - 4));
       out.push(c.thinking(`  ${truncateToWidth(tail, width - 2)}`));
     } else if (this.hint !== '') {

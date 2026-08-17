@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@earendil-works/pi-tui@0.84.1': 2ecf9ad23a3d405b0adffb006216f62036091b80f0c74259c02684698177dc80
+  '@earendil-works/pi-tui@0.84.1': 911ab1faa1e0e9f846f5ea21ae766580f74fec1b36438be20b265605fd780228
 
 importers:
 
@@ -16,7 +16,7 @@ importers:
         version: 0.112.3(zod@4.4.3)
       '@earendil-works/pi-tui':
         specifier: ^0.84.1
-        version: 0.84.1(patch_hash=2ecf9ad23a3d405b0adffb006216f62036091b80f0c74259c02684698177dc80)
+        version: 0.84.1(patch_hash=911ab1faa1e0e9f846f5ea21ae766580f74fec1b36438be20b265605fd780228)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
@@ -1723,7 +1723,7 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
-  '@earendil-works/pi-tui@0.84.1(patch_hash=2ecf9ad23a3d405b0adffb006216f62036091b80f0c74259c02684698177dc80)':
+  '@earendil-works/pi-tui@0.84.1(patch_hash=911ab1faa1e0e9f846f5ea21ae766580f74fec1b36438be20b265605fd780228)':
     dependencies:
       get-east-asian-width: 1.6.0
       marked: 18.0.5
