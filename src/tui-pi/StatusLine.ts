@@ -215,9 +215,7 @@ export class ActivityLine implements Component {
       const contentLines = this.textComponent.render(contentW);
       const tail = contentLines.slice(-PREVIEW_LINES);
       const styled = tail.map((line) => c.thinking(indent + line));
-      // spinner 占第一行前缀位置：spin(1) + space(1) + indent(2) + padded_line(contentW)
-      // = width + 1，超宽 1 字符 → pi-tui 断言崩溃。截断到 width 保底。
-      if (styled.length > 0) styled[0] = truncateToWidth(`${spin} ${styled[0]}`, width);
+      // 预览行只加 indent，不加 spin——spinner 已在 head 行显示，重复会出现两个圆圈。
       out.push(...styled);
     } else if (this.hint !== '') {
       // 思考预览与操作提示互斥占第二行：预览是本轮实时信息，优先级高于常驻提示

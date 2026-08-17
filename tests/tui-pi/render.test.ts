@@ -527,6 +527,18 @@ describe('ActivityLine', () => {
     expect(out[2]).toContain('bbb');
     expect(out[3]).toContain('ccc');
   });
+
+  it('思考预览行不重复 spinner（只出现在 head 行）', () => {
+    const a = new ActivityLine();
+    a.setBusy(true, Date.now());
+    a.setThinking(true, '思考内容第一行\n思考内容第二行');
+    const out = plain(a.render(60));
+    const spinnerChars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    const spinLine = (l: string) => spinnerChars.some((ch) => l.startsWith(ch));
+    const spinLines = out.filter(spinLine);
+    // 只有 head 行带 spinner，预览行不带
+    expect(spinLines.length).toBe(1);
+  });
 });
 
 describe('ChatEditor 的 Esc / Ctrl+C 路由', () => {
