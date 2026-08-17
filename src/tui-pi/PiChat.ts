@@ -2536,13 +2536,15 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       return;
     }
     const tabs = modelTabs(this.deps.config);
+    const hasHistory = this.history.some((m) => m.origin.kind === "user" || m.origin.kind === "user_verbatim" || m.origin.kind === "assistant");
     const picked = await this.showInlinePicker({
-      title: '选择模型',
+      title: t('modelPicker.title'),
       items,
       hint:
         tabs.length > 1
           ? '↑↓ 选择 · Enter 确认 · Shift+Enter 仅本会话 · Tab 切渠道 · 输入过滤 · Esc 取消'
           : '↑↓ 选择 · Enter 确认 · Shift+Enter 仅本会话 · 输入过滤 · Esc 取消',
+      subtitle: hasHistory ? t('modelPicker.cacheWarning') : undefined,
       tabs,
       itemsForTab: (tabId) => modelItems(this.deps.config, this.currentAlias, tabId),
       // Shift+Enter = 仅本会话生效，不写回默认模型指针（Ink 版 sessionOnly 同语义）
@@ -2659,10 +2661,12 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   }
 
   private async pickThink(): Promise<void> {
+    const hasHistory = this.history.some((m) => m.origin.kind === "user" || m.origin.kind === "user_verbatim" || m.origin.kind === "assistant");
     const picked = await this.showInlinePicker({
-      title: '思考深度',
+      title: t('thinkPicker.title'),
       items: thinkItems(this.thinkOverride),
       hint: '↑↓ 选择 · Enter 确认 · Esc 取消',
+      subtitle: hasHistory ? t('app.think.cacheWarning') : undefined,
     });
     if (picked === null) return;
     this.applyThink(picked === '__default__' ? undefined : picked);
