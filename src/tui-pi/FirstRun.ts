@@ -92,7 +92,8 @@ export async function runFirstRunPi(): Promise<FirstRunResult> {
 async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
   let chosen: ProviderOption | null = null;
   let apiKey = '';
-  let step: 'select' | 'baseUrl' | 'key' | 'model' = 'select';
+  let selectedModel: { alias: string; modelId: string; displayName: string } | null = null;
+  let step: 'select' | 'baseUrl' | 'key' | 'model' | 'confirm' = 'select';
 
   const setBanner = (...extra: string[]): void => {
     banner.setLines([c.accent(t('firstRun.title')), ...extra, '']);
@@ -186,20 +187,46 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
       continue;
     }
     const model = chosen!.models.find((m) => m.alias === picked)!;
-    // 把模型与刚配的渠道显式绑定，并把顶层 model 指向这个别名
-    saveModelAlias(model.alias, {
-      provider: chosen!.name,
-      model: model.modelId,
-      max_context_size: DEFAULT_MAX_CONTEXT,
-      display_name: model.displayName,
-    });
-    saveDefaultModel(model.alias);
-    return { kind: 'configured', apiKey, provider: chosen!.name, model: model.alias };
+    // 记住选择，不立即落盘——到 confirm 步骤确认后再统一保存
+    selectedModel = { alias: model.alias, modelId: model.modelId, displayName: model.displayName };
+    step = 'confirm';
+    continue;
+
+  // confirm 步骤：汇总所有选择让用户最后核对一遍，确认后才落盘
+  if (step === 'confirm') {
+    const masked = apiKey.slice(0, 4) + '...' + apiKey.slice(-4);
+    setBanner(
+      c.ok(t('firstRun.confirmTitle')),
+      c.dim(t('firstRun.confirmProvider', { label: chosen!.name })),
+      c.dim(t('firstRun.confirmBaseUrl', { url: chosen!.baseUrl })),
+      c.dim(t('firstRun.confirmKey', { key: masked })),
+      c.dim(t('firstRun.confirmModel', { model: selectedModel!.displayName })),
+      '',
+    );
+    const answer = await askLine(tui, t('firstRun.confirmHint'), undefined, t('firstRun.confirmEscHint'));
+    if (answer !== null) {
+      const trimmed = answer!.trim().toLowerCase();
+      if (trimmed === 'y' || trimmed === '') {
+        // 确认落盘
+        const model = selectedModel!;
+        saveModelAlias(model.alias, {
+          provider: chosen!.name,
+          model: model.modelId,
+          max_context_size: DEFAULT_MAX_CONTEXT,
+          display_name: model.displayName,
+        });
+        saveDefaultModel(model.alias);
+        return { kind: 'configured', apiKey, provider: chosen!.name, model: model.alias };
+      }
+    }
+    // answer === null（Esc）或非 y 非空 → 返回模型选择步骤
+    step = 'model';
+    continue;
   }
 }
+}
 
-/**
- * 单行输入。Enter 提交，Esc 返回 null（调用方决定回退到哪一步）。
+/** 单行输入。Enter 提交，Esc 返回 null（调用方决定回退到哪一步）。
  *
  * 用 Editor 而不是 Input：Editor 支持 bracketed paste，而 key 这一步几乎总是粘贴进来的
  * （手打 API key 不现实），Input 对粘贴的处理是逐字符插入，长 key 会明显卡顿。
