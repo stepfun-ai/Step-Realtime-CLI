@@ -1,15 +1,7 @@
 /**
- * 组件级渲染缓存。
- *
- * pi-tui 主编排层已有行级差分 + back buffer，但组件内部不做缓存。
- * 对 StatusLine / ActivityLine 这类每帧都被调 render() 的组件，内容没变也在重算——
- * StatusLine 每帧拼接两行字符串，ActivityLine 每帧跑 textComponent.render() 做 markdown wrap。
- * 长会话下这是卡顿和 OOM 的同源压力。
- *
- * 用法：
- * - `shouldRender(width)` 返回 true 时正常计算并 `commit(width, lines)` 存结果
- * - `shouldRender(width)` 返回 false 时直接返回 `cached()`
- * - `invalidate()` 在内容变化时调用
+ * 组件级渲染缓存。pi-tui 主编排层有行级差分，但组件内部不做缓存；对每帧都被调 render()
+ * 的组件，内容没变也在重算，长会话下是卡顿和 OOM 的同源压力。
+ * `shouldRender(width)` 为 false 时直接返回 `cached()`，内容变化时 `invalidate()`。
  */
 export class RenderCache {
   private cachedWidth = -1;
@@ -42,12 +34,9 @@ export class RenderCache {
 /**
  * 状态行与活动行。
  *
- * StatusLine 对应 Ink 版 StatusBar 的两行式布局（第一行徽章 + 路径，第二行提示 + context
- * 用量），但实现从 flexbox 收缩改成显式截断——pi-tui 没有布局引擎，行宽由自己算，这反倒
- * 让「路径先被截断、context 永不截断」这条规则变成一行代码，不必再靠 flexShrink 试出来。
- *
- * ActivityLine 对应 WorkingStatus：busy 时显示 spinner + 已用时 + 本轮估算产出，
- * 以及流式思考的单行预览。
+ * StatusLine 两行式布局（徽章 + 路径 / 提示 + context 用量），行宽自己算，
+ * 路径先被截断、context 永不截断。
+ * ActivityLine：busy 时显示 spinner + 已用时 + 估算产出，以及流式思考的单行预览。
  */
 import { homedir } from 'node:os';
 import { Text, type Component, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
@@ -57,7 +46,7 @@ import { c } from './theme.js';
 import { pickRandomTip, pickWorkingVerb } from '../chat/workingTips.js';
 import { t } from '../i18n.js';
 
-/** 路径缩短：逻辑同 Ink 版 StatusBar.shortenPath（home → ~，段数 > 3 只留尾部 3 段）。 */
+/** 路径缩短：home → ~，段数 > 3 只留尾部 3 段。 */
 export function shortenPath(p: string, max = 48): string {
   let display = p;
   const home = homedir();
@@ -74,12 +63,12 @@ export function shortenPath(p: string, max = 48): string {
   return display;
 }
 
-/** goal 状态圆点着色（与 Ink 版 goalStatusColor 同口径）。 */
+/** goal 状态圆点着色。 */
 function goalDot(status: GoalStatus): string {
   return status === 'active' ? c.ok('●') : status === 'blocked' ? c.warn('●') : c.dim('●');
 }
 
-/** 紧凑计数：4 位以上转 k（与 Ink 版 duration.formatCount 同口径）。 */
+/** 紧凑计数：4 位以上转 k。 */
 export function formatCount(n: number): string {
   if (n < 1000) return String(n);
   const k = n / 1000;
@@ -152,9 +141,7 @@ export class StatusLine implements Component {
       badges.push(c.toolName(`bg:${s.backgroundCount}`) + c.dim(name));
     }
     if (s.queueLen > 0) badges.push(c.accent(`queue:${s.queueLen}`));
-    // goal 与 team 是「当前处于某种自主/协作状态」的提示，必须常驻可见：
-    // 用户看不到 goal 徽标就不知道下一轮会自动续跑。
-    // 形态与 Ink 版一致：goal ● 用时 · 轮次[/预算]，● 按状态着色（绿 active / 黄 blocked / 灰 paused）。
+    // goal 与 team 是「当前处于某种自主/协作状态」的提示，必须常驻可见：看不到徽标就不知道下一轮会自动续跑
     if (s.goal !== undefined) {
       const g = s.goal;
       const turns = g.turnBudget !== undefined ? `${g.turnsUsed}/${g.turnBudget}` : `${g.turnsUsed}`;
@@ -195,25 +182,11 @@ export class ActivityLine implements Component {
   /** 本轮的状态动词与操作提示：busy 上升沿各取一次、整轮固定（不随帧刷新而跳字）。 */
   private verb = '';
   private hint = '';
-  /**
-   * thinking 预览的文本渲染组件（pi-tui Text）。
-   * Text 内部 wrapTextWithAnsi → 每行独立扁平串，进 widthCache 安全。
-   * 旧的 slice(replace(全文)) 方式产出的 SlicedString 会拖住父串导致 OOM。
-   */
+  /** thinking 预览用 pi-tui Text 渲染，它内部按行折行、不拖父串，避免 OOM。 */
   private readonly textComponent = new Text('', 0, 0);
   /**
-   * 全量输出缓存。
-   *
-   * 为什么需要全量缓存而非只缓存 preview：
-   * tick() 每 100ms 推进 spinner 帧号，addOutputChars() 更新 token 计数，
-   * elapsed 也在变化。这些变化都会让 render() 输出不同。
-   * 当用户向上滚动时，pi-tui 检测到 ActivityLine（视口上方）变化，
-   * 会触发 firstChanged < prevViewportTop → 视口跳回顶部。
-   *
-   * 缓存策略：只在 setThinking / setBusy / setTip 时失效（内容实质变化），
-   * tick / addOutputChars 不失效（spinner/token/elapsed 是装饰性更新）。
-   * 效果：流式输出期间 ActivityLine 输出冻结，只在 thinking 文本变化时刷新，
-   * 从根源上消除跳顶触发。
+   * 全量输出缓存。render 输出随 spinner 帧 / token / elapsed 变化，若逐帧刷新会在用户上滚时
+   * 触发视口跳顶，故只在内容实质变化（setThinking / setBusy / setTip）时失效。
    */
   private readonly cache = new RenderCache();
 
@@ -274,22 +247,12 @@ export class ActivityLine implements Component {
     const head = `${spin} ${c.dim(`${state} · ${elapsed}${tok} · Esc 中断`)}`;
     const out = [truncateToWidth(head, width)];
     if (this.thinkingActive && this.thinkingPreview !== '') {
-      // 思考流式预览：用 pi-tui Text 组件渲染尾部 N 行。
-      //
-      // Text 内部走 wrapTextWithAnsi → 每行 ≤ width 的独立扁平串，进 widthCache 的
-      // 字符串永远短且不拖父串。对比旧的 slice(replace(全文)) 方式——SlicedString
-      // 拖着整份多 MB 父串进 widthCache，是 2026-08-17 第二次 OOM 的根因。
+      // 思考流式预览：尾部 N 行。预览行只加 indent 不加 spin（spinner 已在 head 行）。
       const indent = '  ';
       const contentW = Math.max(8, width - indent.length);
-      const contentLines = this.textComponent.render(contentW);
-      const tail = contentLines.slice(-PREVIEW_LINES);
-      // 预览行只加 indent，不加 spin——spinner 已在 head 行显示，重复会出现两个圆圈。
-      //
-      // 逐行 truncateToWidth 是必需的防御：pi-tui Text 的 wrapTextWithAnsi 只按空格折行，
-      // 长 URL / base64 / 无空格代码串不会被断开，单行可能远超终端宽度。pi-tui doRender
-      // 检测到任一行 visibleWidth > width 就直接 throw（2026-08-17 两次因此崩溃：
-      // 一次 line 19 w=89>87，一次 line 399 w=992>67）。这里在着色前钳到 width，是组件层
-      // 的安全阀——不依赖上游 Text 是否真的把每个 token 折到位。
+      const tail = this.textComponent.render(contentW).slice(-PREVIEW_LINES);
+      // 逐行钳到 width：wrapTextWithAnsi 对无空格串（长 URL / base64）不折行，
+      // 任一行超宽会让 pi-tui doRender 直接 throw。这里在着色前钳，作组件层安全阀。
       const styled = tail.map((line) => c.thinking(truncateToWidth(indent + line, width)));
       out.push(...styled);
     } else if (this.hint !== '') {

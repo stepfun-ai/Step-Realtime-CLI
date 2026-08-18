@@ -2,8 +2,6 @@
  * 审批三桥：工具审批、计划确认、向用户提问。
  *
  * 三者共用 ChoiceBlock 的选项列表交互，各自只提供正文与结果语义。
- * 危险命令模式表、diff/写入预览这些纯逻辑从 Ink 版 ApprovalPrompt.tsx 搬过来
- * （Ink 版带 JSX 无法直接引用；Ink 层已于 M5 删除，这里是唯一实现）。
  */
 import { Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { AskUserQuestion, AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
@@ -12,7 +10,7 @@ import { ChoiceBlock, type Choice } from './ChoiceBlock.js';
 import { c, markdownTheme } from './theme.js';
 import { markdownTransform } from '../chat/markdownPrep.js';
 
-/** 预览折叠行数上限（与 Ink 版 PREVIEW_LIMIT 同口径）。 */
+/** 预览折叠行数上限。 */
 const PREVIEW_LIMIT = 10;
 
 /**
@@ -28,10 +26,8 @@ const TITLE_KEYS: Record<string, string> = {
 };
 
 /**
- * bash 危险命令模式表（逐条抄自 Ink 版，宁保守勿误报）。
- * 命中后在命令上方红标一行警告。
- *
- * warn 存 i18n key：危险警告是安全信息，英文用户看不懂中文警告等于警告失效。
+ * bash 危险命令模式表（逐条保守匹配）。命中后在命令上方红标一行警告。
+ * warn 存 i18n key：危险警告是安全信息，英文看不懂等于警告失效。
  */
 const DANGER_PATTERNS: ReadonlyArray<{ pattern: RegExp; warnKey: string }> = [
   {
@@ -74,7 +70,7 @@ export function buildPreview(name: string, input: unknown): PreviewLine[] | null
     return out;
   }
   if (name === 'write_file' && typeof obj.content === 'string') {
-    // 对标 Ink 版 buildWriteLines：行号 padStart(3) + │ 分隔符
+    // 行号 padStart(3) + │ 分隔符
     return obj.content.split('\n').map((l, i) => ({ text: `${String(i + 1).padStart(3)} │ ${l}` }));
   }
   return null;
@@ -100,7 +96,7 @@ export type ApprovalOutcome =
 type ApprovalValue = 'allow' | 'allow-session' | 'deny' | 'deny-feedback';
 
 /**
- * 工具审批块。四选项与 Ink 版一致：允许一次 / 本会话都允许 / 拒绝 / 拒绝并写评论，
+ * 工具审批块。四选项：允许一次 / 本会话都允许 / 拒绝 / 拒绝并写评论，
  * 对应 y / a / n / f 与数字 1-4；Ctrl+E 展开被折叠的预览。
  */
 export class InlineApproval extends ChoiceBlock<ApprovalValue> {
@@ -223,10 +219,8 @@ export class PlanApproval extends ChoiceBlock<PlanValue> {
 
 /**
  * ask_user 的提问块：多题逐题问，答完一次性回传 { 问题原文: 答案 }。
- * 与 Ink 版 QuestionPrompt 语义一致：
- *   ↑↓ 移动光标（末项之后是自由输入行）· 空格勾选（多选）· Enter 确认本题/进下一题
- *   ← → 上一题/下一题 · Esc 取消（回空字典）
- * 自由输入项由系统追加，不要求模型自带 Other。
+ * ↑↓ 移动光标（末项之后是自由输入行）· 空格勾选（多选）· Enter 确认/进下一题
+ * ← → 上一题/下一题 · Esc 取消（回空字典）。自由输入项由系统追加。
  */
 export class QuestionPrompt {
   private readonly req: AskUserRequest;
@@ -327,7 +321,7 @@ export class QuestionPrompt {
       this.commitAndAdvance();
       return;
     }
-    // 自由输入行：字符进草稿（支持 ←→/Home/End/Ctrl+W，对标 Ink 版 TextEditField）
+    // 自由输入行：字符进草稿（支持 ←→/Home/End/Ctrl+W）
     if (slot.cursor === last) {
       if (matchesKey(data, 'left')) {
         if (slot.otherCursor > 0) { slot.otherCursor -= 1; this.requestRender(); }
@@ -348,7 +342,7 @@ export class QuestionPrompt {
         return;
       }
       if (matchesKey(data, 'ctrl+w')) {
-        // 删前一个词（Ctrl+W 是 Ink 版 TextEditField 的快捷键）
+        // 删前一个词（Ctrl+W）
         const before = slot.other.slice(0, slot.otherCursor);
         const after = slot.other.slice(slot.otherCursor);
         const trimmed = before.replace(/\s*\S*\s*$/, '');

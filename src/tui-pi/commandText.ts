@@ -4,7 +4,8 @@
  * 放在 PiChat 之外的理由是可测：这些函数只做「数据 → 展示文本」，
  * 不碰控制器状态，也不需要起终端。需要改会话状态的命令留在 PiChat 里。
  *
- * Ink 版的对应输出散在 App.tsx 的 case 分支里，与 setState 混在一起，
+ * 命令文本输出：把各命令的结果拼成文本行。对应输出原先散在 App.tsx 的 case 分支里，
+ * 与渲染混在一起，抽出成纯函数便于测试与复用。
  * 只能通过起整棵 React 树才能验证；这里拆开后可以直接断言文本。
  */
 import type { BackgroundTask } from '../agent/background/manager.js';
@@ -16,7 +17,7 @@ import { formatCount, formatDuration } from '../chat/duration.js';
 import { t } from '../i18n.js';
 import { getLocale } from '../i18n.js';
 
-/** `/tasks` 的文本清单（Ink 版是 TasksViewer 弹层，pi 版先给只读文本）。 */
+/** `/tasks` 的文本清单。 */
 export function formatTaskList(tasks: readonly BackgroundTask[], now: number): string {
   if (tasks.length === 0) return t('commandText.tasks.empty');
   const order: Record<string, number> = { running: 0, failed: 1, completed: 2, killed: 3 };
@@ -55,7 +56,7 @@ export function formatMemoryList(cwd: string, enabled: boolean, now: number): st
     lines.push(t('commandText.memory.brokenHeader'));
     for (const e of scan.broken) lines.push(`  - ${e.absPath}`);
   }
-  // 回顾提示与 Ink 版同判据：条目过多，或最旧条目超 30 天没动过
+  // 回顾提示判据：条目过多，或最旧条目超 30 天没动过
   const oldest = scan.entries[scan.entries.length - 1];
   const tooOld =
     oldest !== undefined && oldest.updatedAt !== '' && now - Date.parse(oldest.updatedAt) > 30 * 24 * 3600 * 1000;
@@ -72,7 +73,7 @@ export function formatMemoryList(cwd: string, enabled: boolean, now: number): st
  * 先登记进来，用户会看到「pi 版尚未接线」而不是「未知命令」——命令存在与命令
  * 打错是两件事，提示混在一起会让人以为功能被删了。
  *
- * 交互形态上仍有一处不对标 Ink：`/provider add` 的向导只做手动录入，没有「目录导入」
+ * 交互形态上仍有一处限制：`/provider add` 的向导只做手动录入，没有「目录导入」
  * 路径（Ink 版会 fetch 远端 catalog 选供应商后批量导入别名）。手动录入对任何渠道都
  * 走得通，目录导入依赖外部端点可用性且只覆盖少数供应商，记在设计档案的差异清单里。
  */
@@ -84,7 +85,7 @@ export function notWiredText(name: string): string {
   return t('commandText.notWired', { name });
 }
 
-/** `/goal` 无参时的状态面板文本（Ink 版是 GoalPanel 圆角框，pi 版给等价文本）。 */
+/** `/goal` 无参时的状态面板文本。 */
 export function formatGoalPanel(g: GoalState, now: number): string {
   const lines = [t('commandText.goal.objective', { objective: g.objective })];
   if (g.completionCriterion !== undefined && g.completionCriterion !== '') {
@@ -142,7 +143,7 @@ export function formatCronJobs(
 /**
  * `/history` 的可回退轮次清单（最近的排最前）。
  *
- * 与 Ink 版 `collectHistoryItems` 同判据，但那个函数住在 HistoryPanel.tsx 里，
+ * ，但那个函数住在 HistoryPanel.tsx 里，
  * 从 .tsx 取它会把 React 一起拖进 pi 侧的模块图，所以这里按同规则重写一份：
  * 只有 origin.kind === 'user' 的消息算可撤销的轮（hook 注入、cron 触发、
  * 续接注入这些不是用户发的，不占轮次）。

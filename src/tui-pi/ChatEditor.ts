@@ -1,13 +1,8 @@
 /**
  * ChatEditor：pi-tui Editor 的子类，把 Esc 与 Ctrl+C 的判定权交回控制器。
  *
- * 为什么要子类而不是全局 addInputListener（实测结论第一、三条）：
- * 全局钩子确实先于焦点组件执行，但 Esc 的语义依赖状态（busy 中断 / 空闲取回队列 /
- * 补全菜单关闭），写进全局钩子等于把状态机搬到输入层。Editor 内部对 escape 唯一的用途是
- * 关闭自动补全菜单（键位 tui.select.cancel 默认绑定 escape 与 ctrl+c），所以在子类里先问
- * 控制器、控制器不处理再交给父类，两边语义都不破坏。
- *
- * Ctrl+C 同理：父类对它的处理就是 `return`（交给父级），我们在这里接住。
+ * Editor 内部对 escape 的唯一用途是关闭自动补全菜单，故在子类里先问控制器、
+ * 控制器不处理再交给父类，两边语义都不破坏。Ctrl+C 父类也是交回父级，这里接住。
  */
 import {
   Editor,
@@ -20,8 +15,7 @@ import {
 } from '@earendil-works/pi-tui';
 
 /**
- * 输入提示符。用 `›`（U+203A）与 Ink 版 `PromptInput` 一致——它比 `>` 窄一格的视觉重量，
- * 不会跟正文里的引用块（`>`）或 diff 标记混淆。
+ * 输入提示符。用 `›`（U+203A）：比 `>` 窄一格，不与正文引用块（`>`）或 diff 标记混淆。
  */
 export const PROMPT_SYMBOL = '› ';
 /** 提示符占用的列数（`›` 是窄字符，加一个空格共 2 列）。 */
@@ -42,23 +36,14 @@ export class ChatEditor extends Editor {
   /**
    * Ctrl+V：读剪贴板图片。返回 true 表示已消费。
    *
-   * 终端里的 Ctrl+V 通常不是「粘贴」——粘贴由终端软件自己处理并以 bracketed paste
-   * 的形式送进来，Ctrl+V 这个按键本身会原样到达应用。Ink 版据此把它用作贴图入口，
-   * 这里沿用同一约定。
+   * 终端里的 Ctrl+V 通常不是「粘贴」——粘贴由终端软件处理并以 bracketed paste 送进来，
+   * Ctrl+V 这个按键本身原样到达应用，故借作贴图入口。
    */
   onCtrlV?: () => boolean;
   /**
-   * Alt+V：读剪贴板图片，与 `onCtrlV` 同一动作、两个入口。
-   *
-   * Ink 版主仓的贴图键位其实是 **Alt+V**（`App.tsx` 的 `meta.meta && key === 'v'`），
-   * 迁移时只接了 Ctrl+V，于是照肌肉记忆按 Alt+V 的人得到「贴图功能不存在」的结论。
-   * 两个都留：Alt+V 对齐 Ink 版习惯，Ctrl+V 保留给 Alt 被终端/窗口管理器吃掉的场景
-   * （macOS 的 Option 默认作为组字键、部分 Linux 桌面把 Alt 拿去拖窗口）。
-   *
-   * 键位识别实测（`parseKey`，2026-08-16）：legacy 模式下 Alt+V 送的是 `ESC` + `v`，
-   * pi-tui 解析为 `alt+v` 且**不会**误判成 `escape`（`\x1b` 单独到达才是 escape）；
-   * kitty 协议激活时送 `\x1b[118;3u`，同样解析为 `alt+v`。所以 Esc 的中断语义不受影响。
-   * 另有一条局限：Alt+Shift+V（`ESC` + `V`）两种模式下都解析为 undefined，不接。
+   * Alt+V：同 onCtrlV 的另一个入口。Alt+V 是主仓原键位；Ctrl+V 兜住 Alt 被终端/窗口管理器吃掉的场景
+   * （macOS Option 作组字键、部分 Linux 桌面把 Alt 拿去拖窗口）。
+   * 实测两种模式下 Alt+V 都解析为 `alt+v`，不会被误判成 `escape`，故 Esc 语义不受影响。
    */
   onAltV?: () => boolean;
   /**
@@ -98,7 +83,7 @@ export class ChatEditor extends Editor {
    */
   autocompleteOpen = false;
   /**
-   * 提示符着色：由控制器按 busy 状态换（Ink 版 busy 黄、空闲灰）。默认原样返回，
+   * 提示符着色：由控制器按 busy 状态换（busy 黄、空闲灰）。默认原样返回，
    * 测试与不着色场景下输出可读的纯文本。
    */
   promptStyle: (s: string) => string = (s) => s;
@@ -108,8 +93,8 @@ export class ChatEditor extends Editor {
    * 定义成函数而不是字符串字段，与 `promptStyle` 同构：控制器绑一次、内部读 busy，
    * 不需要在每个状态切换点回写一遍（漏一处就出现文案与状态不符）。
    *
-   * busy 态那句（「思考中…输入将加入发送队列」）是**行为说明**而非装饰：此时打字会进
-   * 发送队列而不是立刻发出，不说用户不知道。Ink 版一直有这两句文案，pi 版迁移时没接。
+   * busy 态那句（「思考中…输入将加入发送队列」）是**行为说明**：此时打字会进
+   * 发送队列而非立刻发出，不说用户不知道。
    */
   placeholderText: () => string = () => '';
   /** 占位文案着色，默认原样。 */
@@ -118,17 +103,15 @@ export class ChatEditor extends Editor {
    * 输入框下方的一行瞬时提示（primed 态用）。返回空串表示不占行。
    *
    * 为什么不用转录区的 note：primed 是**瞬时状态**（5 秒自动过期），note 会永久留在
-   * 历史里，用户翻回去看到一堆「再按一次 Esc」的残骸，而当下那条又滚上去了看不见。
-   * Ink 版把它贴在输入框下方就是这个道理——状态提示跟着状态走，状态没了行也没了。
+   * 历史里；下方瞬时提示跟着状态走，状态没了行也没了。
    */
   footerText: () => string = () => '';
   /** 下方提示行的着色，默认原样。 */
   footerStyle: (s: string) => string = (s) => s;
 
   constructor(tui: TUI, theme: EditorTheme, options?: EditorOptions) {
-    // paddingX 固定 2：给提示符腾出 '› ' 的两列。选它而不是「渲染后整行拼前缀」的理由是
-    // 实测（2026-08-16）——paddingX 只给**内容行**加缩进，边框行宽度不动，且折行后的
-    // 续行同样带这 2 列缩进（宽字符也算对），正好复刻 Ink 版「续行对齐到提示符之后」。
+    // paddingX 固定 2：给提示符腾出 '› ' 的两列。选它而非渲染后整行拼前缀，是因为
+    // paddingX 只给内容行加缩进，折行后的续行同样带这 2 列缩进，正好「续行对齐到提示符之后」。
     // 自己拼前缀则要同时改边框宽度与续行缩进，等于重复父类的折行逻辑。
     super(tui, theme, { ...options, paddingX: options?.paddingX ?? PROMPT_WIDTH });
   }
@@ -194,7 +177,7 @@ export class ChatEditor extends Editor {
       this.onOtherKey?.();
     }
     if (matchesKey(data, 'escape')) {
-      // 补全菜单开着时 Esc 归菜单（与 Ink 版「输入框是斜杠命令时 Esc 关菜单、不中断回合」同义）
+      // 补全菜单开着时 Esc 归菜单，不中断回合
       if (!this.autocompleteOpen && this.onEscapeKey?.() === true) return;
     }
     if (matchesKey(data, 'ctrl+c')) {

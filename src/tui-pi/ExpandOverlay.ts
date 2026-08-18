@@ -15,7 +15,7 @@
  * `measureElement` 同步测量（Ink 没有行数组，只有组件树），这里行数组就是事实，
  * 偏移窗口是一次 `slice`。
  *
- * 键位（全量沿用 Ink 版肌肉记忆）：↑/k ↓/j 行滚；PageUp/PageDown 页滚；← → 轮间跳；
+ * 键位（沿用原键位）：↑/k ↓/j 行滚；PageUp/PageDown 页滚；← → 轮间跳；
  * Home/g End/G 首尾；Esc/q/Ctrl+O 关闭。不做自动跟随（Ink 也没有）。
  */
 import { matchesKey, type Component, type TUI } from '@earendil-works/pi-tui';
@@ -112,7 +112,7 @@ export class ExpandOverlay implements Component {
   }
 
   invalidate(): void {
-    // 内容在构造时定稿（打开期间不追增量，与 Ink 版一致），无缓存需要失效
+    // 内容在构造时定稿（打开期间不追增量），无缓存需要失效
   }
 }
 

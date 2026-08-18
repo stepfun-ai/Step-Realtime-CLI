@@ -1,15 +1,8 @@
 /**
- * PiChat：pi-tui 前端的主控制器，对应 Ink 版 App.tsx 的核心子集。
+ * PiChat：pi-tui 前端的主控制器。
  *
- * 与 App.tsx 的心智差异（迁移里变化最大的一处）：
- * Ink 版是「改 state → React 重渲整树 → Ink 算差异」，状态与渲染由 hooks 绑定；
- * 这里是「改数据 → 显式 requestRender() → pi-tui 逐行 diff」。没有 hooks，也没有闭包读到
- * 陈旧值的问题，App.tsx 里那一大批 xxxRef.current 的存在理由（给闭包提供即时值）随之消失，
- * 全部退化成普通字段。
- *
- * M1 范围：主循环（输入 → runAgent → 流式渲染 → 最简审批 → 持久化 → 恢复）、
- * Esc / Ctrl+C 语义、发送队列、/help /exit /new /clear 四个命令。
- * 审批的完整形态（计划确认、ask_user 多选）在 M2，选择器在 M3，命令全量在 M4。
+ * 没有 React hooks，状态是普通字段；改数据后显式 requestRender()，由 pi-tui 逐行 diff。
+ * App.tsx 里那批 xxxRef.current（给闭包提供即时值）随之消失，全部退化成普通字段。
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -115,7 +108,7 @@ import { ItemBlock, summarizeInput } from './blocks.js';
 import { openExpandViewer } from './ExpandOverlay.js';
 import { c, editorTheme } from './theme.js';
 
-/** PiChat 的构造依赖。字段与 Ink 版 AppProps 一一对应，便于 cli 侧共用同一套装配。 */
+/** PiChat 的构造依赖。 */
 export interface PiChatDeps {
   provider: ChatProvider;
   systemPrefix: string;
@@ -177,7 +170,7 @@ const FOLD_KEEP_RECENT_TURNS = 30;
 const FOLD_TRIGGER_TURNS = 200;
 
 /**
- * primed 态（双击确认）的超时：Esc 双击回退与 Ctrl+C 双击退出共用同一档，与 Ink 版一致。
+ * primed 态（双击确认）的超时：Esc 双击回退与 Ctrl+C 双击退出共用同一档。
  * 两处取同值是有意的——用户不该记两个不同的窗口长度。
  */
 const PRIMED_TIMEOUT_MS = 5000;
@@ -192,12 +185,11 @@ export class PiChat {
   private readonly completion: ChatAutocompleteProvider;
   /** 审批等弹层的挂载点：常驻容器，内容按需增删（组件树形状不随消息变化）。 */
   private readonly overlayHost = new Container();
-  /** 输入区容器：选择器内联替换模式时，选择器与 editor 在此互换（对标 Ink 版 / Kimi Code）。 */
+  /** 输入区容器：选择器内联替换模式时，选择器与 editor 在此互换。 */
   private readonly inputSlot = new Container();
 
   /**
    * 内联选择器：把 PickerOverlay 挂进 inputSlot 替换 editor，关闭时恢复 editor。
-   * 对标 Ink 版 ModelPicker 替换 PromptInput、Kimi Code mountEditorReplacement。
    */
   private async showInlinePicker(
     opts: Omit<Parameters<typeof showPicker>[1], 'container' | 'onRestore'>,
@@ -345,7 +337,7 @@ export class PiChat {
     this.provider = deps.provider;
     this.model = deps.model;
     this.maxContextSize = deps.maxContextSize;
-    // 恢复会话时 session.model 存的是「别名 ?? 裸 id」，命中别名则按它重建（与 Ink 版 persist 口径一致）
+    // 恢复会话时 session.model 存的是「别名 ?? 裸 id」，命中别名则按它重建
     const sessionAlias = deps.config.models?.[deps.session.model] !== undefined ? deps.session.model : undefined;
     this.currentAlias = sessionAlias;
     this.modelLabel = (sessionAlias !== undefined ? deps.config.models?.[sessionAlias]?.displayName : undefined) ?? deps.model;
@@ -397,7 +389,7 @@ export class PiChat {
       this.cancelBacktrackPrimed();
       this.cancelExitPrimed();
     };
-    // 提示符着色跟随 busy（Ink 版 PromptInput 同口径：busy 黄、空闲灰，都加粗）。
+    // 提示符着色跟随 busy。
     // 绑一个读 this.busy 的函数，而不是在 6 处 setBusy 调用点各改一次——那种写法
     // 漏一处就出现「回合在跑但提示符还是灰的」这类状态不同步。
     this.editor.promptStyle = (s) => (this.busy ? c.bold(c.warn(s)) : c.bold(c.dim(s)));
@@ -408,7 +400,7 @@ export class PiChat {
     // primed 提示行（Esc 双击回退 / Ctrl+C 双击退出）。同样绑成读状态的函数：
     // 两个 primed 各有进入、超时、按键解除三条出口，逐处回写文案必漏。
     // 只在空闲时显示——busy 态下 Esc 是中断、Ctrl+C 是清空/中断，两条提示都不适用
-    // （与 Ink 版 PromptInput 的 `!busy && primed` 条件同口径）。
+    // 。
     this.editor.footerStyle = (s) => c.warn(s);
     this.editor.footerText = () => {
       if (this.busy) return '';
@@ -418,8 +410,7 @@ export class PiChat {
     };
     // Ctrl+V / Alt+V 读剪贴板图片。busy 时也允许：只往输入框草稿追加占位符，不碰在跑的回合
     // （提交走排队路径，drain 时统一展开成图）。
-    // 两个键位同一动作：Alt+V 是 Ink 版主仓的键位（用户肌肉记忆），Ctrl+V 兜住 Alt 被
-    // 终端或窗口管理器吃掉的场景。判定与实测见 ChatEditor.onAltV 的注释。
+    // 两个键位同一动作：Alt+V 是主仓原键位（用户肌肉记忆），Ctrl+V 兜住 Alt 被终端/窗口管理器吃掉的场景。
     const attach = (): boolean => {
       void this.attachClipboardImage();
       return true;
@@ -513,11 +504,10 @@ export class PiChat {
     this.tui.addChild(this.transcript);
     this.tui.addChild(this.activity);
     this.tui.addChild(this.overlayHost);
-    // 常驻 chrome（待办 + 队列预览）挂在输入框正上方：位置与 Ink 版一致，
-    // 但不参与任何高度预算协商——差分渲染没有超屏清屏问题，面板按内容占行
+    // 常驻 chrome（待办 + 队列预览）挂在输入框正上方，不参与高度预算协商——差分渲染无超屏清屏问题，面板按内容占行
     this.tui.addChild(this.chrome);
     // inputSlot 包住 editor：选择器内联模式下，editor 与 PickerOverlay 在此容器内互换，
-    // 位置不变（对标 Ink 版 ModelPicker 替换 PromptInput、Kimi Code mountEditorReplacement）
+    // 位置不变
     this.inputSlot.addChild(this.editor);
     this.tui.addChild(this.inputSlot);
     this.tui.addChild(this.status);
@@ -526,8 +516,7 @@ export class PiChat {
 
   /** 启动 TUI，返回的 Promise 在退出时 resolve。 */
   start(): Promise<PiChatExit> {
-    // 欢迎框是第一个条目（新建与 resume 都显示，与 Ink 版 WelcomeBox 同语义）：
-    // 放 replayHistory 之前，恢复会话时它也在历史回放之上。
+    // 欢迎框是第一个条目（新建与 resume 都显示），放 replayHistory 之前，恢复会话时它也在历史回放之上。
     this.transcript.push({
       kind: 'welcome',
       data: { cwd: this.deps.ctx.cwd, sessionId: this.session.id, model: this.modelLabel, version: versionLine() },
@@ -628,9 +617,8 @@ export class PiChat {
   }
 
   /**
-   * goal 徽标同步：任何非终态 goal 都显示（含 paused / blocked）。
-   * Ink 版只在 active 时挂数字，那样 paused 的目标彻底消失在界面上，用户以为它没了；
-   * 这里改为按状态着色的圆点常驻，状态本身由颜色表达。
+   * goal 徽标同步：任何非终态 goal 都显示（含 paused / blocked），按状态着色的圆点常驻。
+   * 只在 active 时显示数字会让 paused 的目标从界面消失，用户以为它没了。
    */
   private syncGoalBadge(): void {
     const g = this.goal.get();
@@ -713,8 +701,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    * 把子 agent 进度写进最近一条运行中的 spawn_agent 条目。
    *
    * 只找「运行中」的那条：同一轮可能并行派多个子 agent，但 runner 的 onEvent 不带
-   * 工具调用 id（只有 session id），无法精确路由。取最近一条运行中的条目是与 Ink 版
-   * 相同的近似——并行时进度会挤在最后一条上，这一点如实记在设计档案的差异清单里。
+   * 工具调用 id（只有 session id），无法精确路由。取最近一条运行中的条目作近似——并行时
+   * 进度会挤在最后一条上（如实记在设计档案的差异清单里）。
    */
   private applySubagentProgress(ev: SubagentProgressEvent): void {
     const patch = (
@@ -809,7 +797,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.syncStatus();
   }
 
-  /** 持久化。顺序不变量与 Ink 版一致：先 appendFull 再 save（wireSeq 游标一致性）。 */
+  /** 持久化。顺序不变量：先 appendFull 再 save（wireSeq 游标一致性）。 */
   private persist(): void {
     this.session.messages = this.history;
     this.session.todos = [...this.todos.items];
@@ -868,7 +856,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   // ---------------------------------------------------------------- 输入路由
 
   /**
-   * Esc 三态（与 Ink 版 E3 语义一致）：
+   * Esc 三态：
    *   1. 审批/弹层激活时由弹层自己消费，走不到这里；
    *   2. busy → 中断当前回合；
    *   3. 空闲 + 队列非空 → 取回队列内容进输入框。
@@ -876,11 +864,9 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    */
   /**
    * ↑ 取回队列尾部一条进输入框编辑（busy + 空输入时 ChatEditor.onUpArrow 调用）。
-   *
-   * 语义对照 Ink 版 PromptInput 的 `onRecallQueued`：
-   * - pop 队尾（发送从头部 shift 消费，编辑从尾部 pop 取回，两方向不冲突）
-   * - 系统合成注入不给取回：原位放回、放弃本次取回（不跨过它往前翻，FIFO 顺序不能被打乱）
-   * - 取回成功返回 true（ChatEditor 消费 ↑）；队列空或全是系统注入返回 false（让 ↑ 下传）
+   * pop 队尾（发送从头部 shift 消费，编辑从尾部 pop 取回，两方向不冲突）；
+   * 系统合成注入不给取回（原位放回，不跨过它往前翻，FIFO 顺序不能被打乱）；
+   * 取回成功返回 true，队列空或全是系统注入返回 false（让 ↑ 下传）。
    */
   private recallQueuedOne(): boolean {
     if (!this.busy || this.editor.getText() !== '' || this.queue.length === 0) return false;
@@ -1022,7 +1008,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     if (this.editor.getText() !== '') this.editor.setText('');
     this.exitPrimed = true;
     // 提示走输入框下方的瞬时行，不进转录区：note 会永久留在历史里，用户翻回去看到一堆
-    // 「再按一次 Ctrl+C 退出」的残骸，而当下那条早滚上去看不见了（对齐 Ink 版位置）。
+    // 「再按一次 Ctrl+C 退出」的残骸，而当下那条早滚上去看不见了。
     this.exitPrimedTimer = setTimeout(() => {
       this.exitPrimed = false;
       this.exitPrimedTimer = undefined;
@@ -1131,7 +1117,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   /**
    * 中断当前回合。中断的意图是「停」，所以 active goal 一并暂停并丢弃待派发的续接——
    * 不暂停的话回合收尾点（finishTurn 的 submit-continuation 分支）会把续接又发出去，
-   * 用户按了 Esc 却停不下来（Ink 版 43b92e7 修的反向 bug，pi 版同源）。/goal resume 恢复。
+   * 用户按了 Esc 却停不下来的反向 bug。Esc 必须既暂停 goal 又中止当前回合，/goal resume 恢复。
    */
   private abortTurn(): void {
     if (this.goal.get()?.status === 'active') {
@@ -1180,7 +1166,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         this.push({ kind: 'note', text: '已记下，会在目标的下一轮里一起看到' });
         return;
       }
-      // busy 时提交进队列，回合收尾自动续发（对齐 Ink 版发送队列语义）
+      // busy 时提交进队列，回合收尾自动续发
       this.updateQueue([...this.queue, text]);
       this.push({ kind: 'note', text: `已排队（${this.queue.length} 条），回合结束后自动发送` });
       return;
@@ -1191,9 +1177,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   /**
    * 斜杠命令入口：解析 → busy 分流 → 执行。
    *
-   * 命令名与别名表直接复用 Ink 版的 `SLASH_COMMANDS`（`src/chat/commands.ts` 是纯逻辑，
-   * 不 import react），两版共用一张表，命令集与别名不会漂移。`busyRoute` 决定回合
-   * 进行中是即时执行还是排队到回合边界，判据是该命令是否改动当前 turn 依赖的状态。
+   * 命令名与别名表复用 `SLASH_COMMANDS`（`src/chat/commands.ts` 是纯逻辑，不 import react），
+   * 两版共用一张表，命令集与别名不会漂移。`busyRoute` 决定回合进行中是即时执行还是排队到回合边界。
    */
   private async handleSlash(raw: string): Promise<void> {
     // plugin 命令名（<pluginId>:<cmd>）不在 SLASH_COMMANDS 里，要作为额外名字集喂进去，
@@ -1564,7 +1549,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   /**
    * /provider：无参或 list 列渠道，带 id 切换。
    *
-   * 不做 Ink 版的渠道向导（`/provider add` 是多步表单，属独立交互块）；
+   * 不做渠道向导（`/provider add` 是多步表单，属独立交互块）；
    * 无参也不开管理面板，直接给只读清单，比弹一个只能看的面板更直接。
    */
   private runProvider(args: string): void {
@@ -1728,9 +1713,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    * 只动对话（历史与转录区），不碰文件改动——文件级回滚是 /restore，两者互补。
    * 轮次切割与截断点由 computeUndo 算（纯函数，两版共用），这一层只落副作用。
    *
-   * 与 Ink 版的一处实差：Ink 版另有一套 undo 快照栈，能把 todos 与计划模式一起回滚到
-   * 那一轮之前；pi 版没有这个栈，所以附带状态保持现状（Ink 版在快照被清空时也是这个
-   * 行为，比如 resume 或压缩之后）。
+   * 一处限制：没有把 todos 与计划模式一起回滚到那轮之前的快照栈，故附带状态保持现状。
    */
   private async runHistory(args: string): Promise<void> {
     if (this.busy) {
@@ -1745,7 +1728,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const arg = args.trim();
     let n: number;
     if (arg === '') {
-      // Tab = 只把那条输入取回输入框，不动历史（Ink 版同语义）：
+      // Tab = 只把那条输入取回输入框，不动历史：
       // 「我想改一版重发」与「我要撤销这段对话」是两件事，只给 Enter 会逼用户先撤销
       let recallOnly: string | null = null;
       const picked = await this.showInlinePicker({
@@ -1905,9 +1888,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   /**
    * /agents：列出当前会话派生的子 agent 会话。
    *
-   * Ink 版选中后在弹层里只读回看完整历史。pi 版这一步只给摘要与进入方式：
-   * 把子会话历史铺进当前转录区会盖掉主会话现场，而弹层滚动浏览是独立一块交互，
-   * 不在这次范围内。
+   * 这一步只给摘要与进入方式：把子会话历史铺进当前转录区会盖掉主会话现场，
+   * 而弹层滚动浏览是独立一块交互，不在这次范围内。
    */
   private async pickSubagent(): Promise<void> {
     const subs = this.deps.subagentStore.list(this.deps.ctx.cwd).filter((m) => m.parentId === this.session.id);
@@ -2312,8 +2294,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   private async runCompact(): Promise<void> {
     if (this.busy) return;
     // 短历史直接挡在门外：fullCompact 对 length - keepRecent <= 1 的输入原样返回同引用，
-    // 与「摘要请求失败」走同一出口。Ink 版据此打「多次尝试均未产出可用摘要」，
-    // 但这种情况下一次请求都没发过——文案指向了不存在的失败。这里先判长度，给准确原因。
+    // 与「摘要请求失败」走同一出口，但这次一次请求都没发过——文案不应指向不存在的失败。这里先判长度，给准确原因。
     if (this.history.length - COMPACT_KEEP_RECENT <= 1) {
       this.push({
         kind: 'note',
@@ -2358,8 +2339,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         this.status.setState({ usedTokens: after });
         this.persist();
         // after >= before 的情况真实存在：摘要本身要占 token，短对话下它可能比被替换的
-        // 原文更长。Ink 版无条件打「已压缩：X → Y」，用户看到 Y 比 X 大只会以为程序算错了。
-        // 这里分开说，并给出真正能腾空间的动作。
+        // 摘要本身要占 token，短对话下它可能比被替换的原文更长（Y 比 X 大）。分开说，并给出真正能腾空间的动作。
         if (after < before) {
           this.push({ kind: 'note', text: `已压缩：${before} → ${after} tokens（省 ${before - after}）` });
         } else {
@@ -2425,7 +2405,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // 仅在 turn 数超 FOLD_TRIGGER_TURNS 时触发（低频安全阀，避免每回合全屏重绘代价）。
     this.transcript.foldOldTurns(FOLD_KEEP_RECENT_TURNS, FOLD_TRIGGER_TURNS);
     // 清单全部完成即清空：待办面板是「还有什么没做」的提示，全绿之后继续常驻只是占行。
-    // 有未完成项则跨回合保留（Ink 版 allTodosDone 同语义）。
+    // 有未完成项则跨回合保留。
     if (allTodosDone(this.todos.items)) this.todos.items = [];
     const plan = planTurnEnd({
       continuation: this.continuation,
@@ -2514,7 +2494,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     persistPointer();
     this.push({ kind: 'note', text: `已切换到 ${arg}（${resolved.model}）` });
     // 切到显式声明不收图（-image_in）的模型且历史含图时提醒：图片以占位文本投影，
-    // 原图保留，切回多模态模型即恢复（对齐 Ink 版 ed717c6）。
+    // 原图保留，切回多模态模型即恢复。
     if (resolved.capabilities?.includes('-image_in') === true) {
       const n = countHistoryImages(this.history);
       if (n > 0) this.push({ kind: 'note', text: t('app.model.noImageInHint', { count: n }) });
@@ -2616,14 +2596,14 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       subtitle: hasHistory ? t('modelPicker.cacheWarning') : undefined,
       tabs,
       itemsForTab: (tabId) => modelItems(this.deps.config, this.currentAlias, tabId),
-      // Shift+Enter = 仅本会话生效，不写回默认模型指针（Ink 版 sessionOnly 同语义）
+      // Shift+Enter = 仅本会话生效，不写回默认模型指针
       onShiftSelect: (value) => this.applyModel(value, { persistDefault: false }),
     });
     if (picked !== null) this.applyModel(picked);
   }
 
   /**
-   * 会话选择器。除恢复之外还有三件事（对标 Ink 版 SessionPicker）：
+   * 会话选择器。除恢复之外还有三件事：
    * d 删除（二次确认，当前会话不可删）、r 重命名（行内单行输入）、
    * 子 agent 会话作为只读分组列在末尾——它们不能被恢复成主会话，选中只提示。
    */
@@ -2774,7 +2754,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         }
         // 计轮不在这里：闸门只裁决不记账。注入要到 finishTurn 的 submit-continuation
         // 分支才真的发出去，中途被中断/被队列抢先时若已计轮，turnsUsed 就虚高
-        // （Ink 版 43b92e7 同一修法）。
+        // （同源修法）。
         return { inject: d.inject };
       },
       authorizeToolCall: async (req) => {
@@ -2830,8 +2810,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
 
   /**
    * 弹层挂载的统一路径：把块挂进常驻 overlayHost、焦点交给它，结算后恢复编辑器焦点。
-   * 三桥（工具审批 / 计划确认 / 向用户提问）共用，弹层互斥由「同一个 host 只放一个」保证——
-   * 这比 Ink 版靠 9 个 useInput 早退分支实现互斥要短得多。
+   * 三桥（工具审批 / 计划确认 / 向用户提问）共用，弹层互斥由「同一个 host 只放一个」保证。
    */
   private showPrompt<T>(make: (settle: (value: T) => void) => Component): Promise<T> {
     return new Promise<T>((resolve) => {
@@ -2894,7 +2873,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // 转录区显示的是折叠掉占位符的正文，不把 base64 摊到屏幕上。
     const extracted = extractImageContent(text, this.images);
     // 能力拦截：当前模型显式声明不收图（capabilities 含 -image_in）时带图提交直接拦下——
-    // 防新图被投影层静默占位、用户误以为模型看到了图（对齐 Ink 版 ed717c6）。
+    // 防新图被投影层静默占位、用户误以为模型看到了图。
     // 必须在压栈之前拦：拦下后本轮等于没发生，压了栈就会给 /history 留一个空快照。
     if (extracted.imageCount > 0 && this.deps.ctx.capabilities?.includes('-image_in') === true) {
       this.push({ kind: 'error', text: t('app.image.modelNoImageIn', { count: extracted.imageCount }) });
@@ -2936,8 +2915,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       apiKey: this.deps.ctx.apiKey,
       baseUrl: this.deps.ctx.baseUrl,
       capabilities: this.deps.ctx.capabilities,
-      // 媒体限额随主控透传：迁移时漏了这三项，子 agent 因此一直按内置缺省处理图片/视频，
-      // 主控上调 image_budget_bytes 对子 agent 无效（Ink 版 App.tsx 一直传，pi 版补齐）。
+      // 媒体限额随主控透传：迁移时漏了这三项，子 agent 一直按内置缺省处理图片/视频
       imageMaxEdgePx: this.deps.ctx.imageMaxEdgePx,
       imageBudgetBytes: this.deps.ctx.imageBudgetBytes,
       videoBudgetBytes: this.deps.ctx.videoBudgetBytes,
@@ -2960,9 +2938,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       parentSessionId: this.session.id,
       skills: this.deps.skillsRef.current,
       subagentStore: this.deps.subagentStore,
-      // 子 agent 进度回填到 spawn_agent 条目上：Ink 版为此维护了一个独立的 AgentGroup
-      // 面板，pi 这边直接把进度写进那条工具卡片——差分渲染下条目内嵌就是实时面板，
-      // 不需要第二个组件（也就不需要「终态后撤下面板」那套生命周期）。
+      // 子 agent 进度直接写进那条 spawn_agent 工具卡片——差分渲染下条目内嵌就是实时面板
       onEvent: (_id, ev) => {
         if (ev.kind === 'start') this.activity.setTip(`子 agent ${ev.subagentType}：${ev.description}`);
         if (ev.kind === 'end') this.activity.setTip('');
@@ -2993,8 +2969,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
           depth: 0,
           runSubagent,
           // dynamic_workflow 的阶段进度：phase 事件按 title 追加（index 是哨兵 -1，
-          // 阶段在运行时才知道，不能按 index 定位）。Ink 版为此有独立面板，
-          // 这里同样挂在工具卡片上。
+          // 阶段在运行时才知道，不能按 index 定位），同样挂在工具卡片上。
           onWorkflowStep: (info) => this.applyWorkflowStep(info),
           todos: this.todos,
           background: this.background,
@@ -3064,7 +3039,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       // 会话标题 AI 生成：首轮回答后触发一次，fire-and-forget 不阻塞收尾
       this.maybeGenerateTitle();
       this.tui.requestRender();
-      // 队列续发：回合收尾后自动发下一条（对齐 Ink 版 drain 语义）。
+      // 队列续发：回合收尾后自动发下一条。
       // 队列里可能混着排队的斜杠命令（busyRoute 判为 queue 的那些），
       // 统一走 drainQueue 分流，否则命令会被当成普通消息发给模型。
       await this.finishTurn();
@@ -3073,7 +3048,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
 
   // ---------------------------------------------------------------- 事件应用
 
-  /** AgentEvent → 转录区变更。逻辑对齐 Ink 版 applyEvent，去掉 React setState 的批处理考虑。 */
+  /** AgentEvent → 转录区变更。 */
   private applyEvent(ev: AgentEvent): void {
     if (ev.type === 'thinking_start') {
       this.activity.setThinking(true);

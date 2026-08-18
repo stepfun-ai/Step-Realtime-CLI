@@ -2,7 +2,7 @@ import type { AgentEvent } from '../agent/events.js';
 
 /**
  * 流式渲染节流：高频增量事件（text / thinking_delta / usage）不逐条 setState（那会每事件
- * 触发一次 Ink 全帧重绘），而是缓冲合并，50ms 内最多渲染一次；结构事件（tool_start /
+ * 触发一次全帧重绘），而是缓冲合并，50ms 内最多渲染一次；结构事件（tool_start /
  * tool_end / retry / error / aborted / continuation / turn_done 等）必须立即反馈，先强制
  * flush 已缓冲的残篇再立即消费，不进入 50ms 等待。
  *
@@ -22,7 +22,7 @@ import type { AgentEvent } from '../agent/events.js';
  * 下游 `PiChat.applyEvent` 以「任何非思考事件 = 思考段结束」判定落定，于是正文先落地、
  * 迟到的思考尾巴另起一个 thinking 块排在正文**之后**；若之后还有 text，末块已不是 assistant，
  * 正文还会被劈成两段。这就是 thinking 泄漏到正文附近、块序错乱的根因
- * （现象与 Ink 版《thinking 泄漏到正文-Static 定稿时序》同族，那边在下游打补丁，这边在源头修）。
+ * （thinking 泄漏到正文的时序问题同族，那边在下游打补丁，这边在源头修）。
  *
  * 现在改为**保序段缓冲**：一个 `segments` 数组，相邻同类合并进末段、异类新开一段，
  * flush 按段序吐出。合帧收益不变（连续 text 仍合并成一条），但顺序由数据结构保证，

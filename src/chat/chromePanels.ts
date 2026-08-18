@@ -1,7 +1,7 @@
 /**
  * 常驻 chrome 面板的纯逻辑：TODO 清单裁剪与队列预览裁剪。
  *
- * 从已删除的 Ink 版 TodoPanel.tsx / QueuePreview.tsx 抽出（那边逻辑与 JSX 混在一起）。
+ * 从旧版的 TodoPanel / QueuePreview 抽出（那边逻辑与 JSX 混在一起）。
  * 渲染在 tui-pi/ChromePanels.ts，这里只做「显示哪些、怎么裁」的决策，可单测。
  */
 import type { TodoItem } from '../tools/types.js';

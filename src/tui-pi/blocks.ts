@@ -1,24 +1,17 @@
 /**
  * 转录区的消息块组件：把 DisplayItem 渲染成行数组。
- *
- * 与 Ink 版的结构差异（迁移设计里最值得记的一处简化）：
- * Ink 版必须把消息区拆成 <Static>（定稿）+ LiveViewport（在途）两段，因为 Ink 每帧整树
- * 重绘，不拆就会把已定稿的历史反复重画。pi-tui 是行级差分渲染，未变化的行天然不重画，
- * 所以定稿块与在途块用同一个组件即可，不需要 LiveBlock 这个单独概念——流式期就是最后
- * 一个 ItemBlock 在反复 setItem，前面的块因为渲染结果逐行相同而不产生任何终端写入。
- *
- * 每个块自带缓存（item 引用 + width 未变则复用上次行数组），这样 render() 在长会话下
- * 是「取缓存 + 数组拼接」而非重新排版。
+ * 行级差分渲染下，未变化的行不重画，所以定稿块与在途块共用同一组件。
+ * 每个块自带缓存（width 未变则复用上次行数组），render() 是取缓存 + 拼接。
  */
 import type { Component } from '@earendil-works/pi-tui';
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { DisplayItem, WelcomeData } from '../chat/types.js';
 
-/** Braille 转圈帧序列（与 Ink 版 BRAILLE_FRAMES 同口径），供 running 状态动态 spinner。 */
+/** Braille 转圈帧序列，供 running 状态动态 spinner。 */
 const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_INTERVAL_MS = 80;
 
-/** 当前 braille 帧：由时间派生（与 Ink 版 useSpinnerFrame 同口径），不存计数器。 */
+/** 当前 braille 帧：由时间派生，不存计数器。 */
 function spinnerFrame(): string {
   return BRAILLE_FRAMES[Math.floor(Date.now() / SPINNER_INTERVAL_MS) % BRAILLE_FRAMES.length] ?? BRAILLE_FRAMES[0]!;
 }
@@ -29,7 +22,7 @@ import { formatDuration } from '../chat/duration.js';
 import { formatCount } from './StatusLine.js';
 import { t } from '../i18n.js';
 
-// 顶部 logo：FIGlet "Small" 风格的 S（紧凑双线）。与 Ink 版 WelcomeBox 同字形。
+// 顶部 logo：FIGlet "Small" 风格的 S（紧凑双线）。
 const LOGO_LINES = [' ___ ', '/ __|', '\\__ \\', '|___/'];
 
 /**
@@ -63,9 +56,9 @@ export function renderWelcome(data: WelcomeData, width: number): string[] {
   return [top, ...body, bottom, ''];
 }
 
-/** 工具结果折叠口径（与 Ink 版 ToolCall.tsx 一致）：错误输出预览行数。 */
+/** 错误输出预览行数。 */
 const ERROR_PREVIEW_LINES = 4;
-/** diff 结果完整展示的行数上限，超出截断（与 Ink 版 EXPANDED_MAX_LINES 同口径）。 */
+/** diff 结果完整展示的行数上限，超出截断。 */
 const DIFF_MAX_LINES = 200;
 
 /**
@@ -75,20 +68,7 @@ const DIFF_MAX_LINES = 200;
  */
 const CTRL_B_TOOLS = new Set(['bash', 'spawn_agent', 'dynamic_workflow']);
 
-/**
- * 工具入参的单行摘要（折叠态标题行与 Ctrl+O 条目标题共用口径）。
- *
- * 字段顺序即优先级，取第一个命中的字符串字段。两处与 Ink 版不同，属 pi 版有意差异：
- *
- * 1. `pattern` 排在 `path` 前。grep/glob 同时有这两个字段，搜索词比搜索目录更能说明
- *    这次调用在干什么；Ink 版顺序反了，显式传 path 的 grep 卡片只显示目录。
- * 2. 补了 query/url/task_id/mission_id/objective/subject 六个字段。Ink 版只认前四个，
- *    于是搜索类、web_fetch、任务类、team、goal 的卡片全都只剩一个工具名——「调用了
- *    web_search」不告诉任何信息，「web_search  pi-tui 源码」才是。
- *
- * 入参是数组或对象的工具（todo_list 的 todos、ask_user 的 questions）不在这里凑摘要：
- * 它们的结果体本身就会把内容列出来，标题行再塞一遍是重复。
- */
+/** 工具入参的单行摘要（折叠态标题行与 Ctrl+O 条目标题共用）。字段顺序即优先级。 */
 export function summarizeInput(input: unknown): string {
   if (input === null || typeof input !== 'object') return '';
   const obj = input as Record<string, unknown>;
@@ -179,7 +159,7 @@ function hanging(lines: readonly string[], prefix: string, plainWidth: number): 
 }
 
 /**
- * 子 agent 统计段：`N tools · 时长[ · X tok]`（对齐 Ink 版 AgentGroup 的行内统计）。
+ * 子 agent 统计段：`N tools · 时长[ · X tok]`。
  * 运行中用现算时长（startedAt），终态用 runner 回传的定格值（subagentDurationMs）。
  * tok 为 0 或缺省时不显示——开头一片「0 tok」只是噪音。
  */
@@ -276,23 +256,19 @@ export class ItemBlock implements Component {
       case 'welcome':
         return renderWelcome(it.data, width);
       case 'user': {
-        // 蓝色前缀 + 黄色正文 + 整行深灰背景，对齐 Ink 版 MessageList user 分支
-        // （Ink 用 backgroundColor="#262600" 深灰底，pi 用 SGR 48;5;236）。
-        // 背景必须覆盖整行：前缀和正文都套 c.userBg，长对话靠背景块区分用户/助手输出。
+        // 蓝色前缀 + 黄色正文 + 整行深灰背景（SGR 48;5;236）。
+        // 背景覆盖整行：前缀和正文都套 c.userBg，长对话靠背景块区分用户/助手输出。
         const bg = c.userBg;
         const body = wrap(it.text, width - 2).map((l) => bg(c.userText(l)));
         return [...indent(body, bg(c.user('│ '))), ''];
       }
       case 'assistant': {
-        // 前缀灰色 ●，对齐 Ink 版 MessageList assistant 分支（Ink 前缀灰色 ●）。
-        // 第一行带前缀，续行对齐（与 thinking 的 ┊ 同口径）。
+        // 前缀灰色 ●，第一行带前缀，续行对齐
         const md = this.renderMarkdown(it.text, width - 2, false);
         return [...hanging(md, c.dim('● '), 2), ''];
       }
       case 'thinking': {
-        // 长 thinking 在主界面折叠为前 N 行 + 「还有 N 行（Ctrl+O 查看）」，
-        // 全文进 ExpandViewer（Ctrl+O）。与 Ink 版同语义；阈值 3 行（Ink 是 2，
-        // pi 流式预览只有尾部 1 行，定稿多给一行，从流式到定稿的视觉落差更小）。
+        // 长 thinking 折叠为前 N 行 + 「还有 N 行（Ctrl+O 查看）」，全文进查看器
         const rendered = dimAll(this.renderMarkdown(it.text, width - 2, true));
         if (rendered.length <= THINKING_FOLD_LINES) return [...hanging(rendered, c.thinking('┊ '), 2), ''];
         const head = rendered.slice(0, THINKING_FOLD_LINES);
@@ -328,13 +304,8 @@ export class ItemBlock implements Component {
       it.status === 'running' && it.startedAt !== undefined
         ? c.dim(t('toolCall.elapsed', { s: Math.max(0, Math.round((Date.now() - it.startedAt) / 1000)) }))
         : '';
-    // 前台任务运行中才提示可转后台。Ctrl+B（applyCtrlB）转的是**全部前台任务**，
-    // 不只是 bash——子 agent 与 dynamic_workflow 同样在列。Ink 版这里只判 bash，是因为
-    // 它有独立的 AgentGroup 面板单独显示子 agent 的转后台提示；pi 版按有意差异把进度
-    // 内嵌进卡片，提示也就该落在卡片上（等价物，不是漏抄）。
-    //
-    // key 名里的 bash 是历史包袱，文案本身「（Ctrl+B 转后台运行）」是通用的。不改名以
-    // 免与主仓 i18n 表无谓分叉。
+    // 前台任务运行中才提示可转后台。Ctrl+B 转全部前台任务（bash / spawn_agent / dynamic_workflow），
+    // 故提示统一落在卡片上。key 名里的 bash 是历史包袱，文案通用，保留不改以免 i18n 分叉。
     const bgHint = it.status === 'running' && CTRL_B_TOOLS.has(it.name) ? c.dim(t('toolCall.bashBackgroundHint')) : '';
     const subagent =
       it.subagentType !== undefined || it.description !== undefined
@@ -356,9 +327,7 @@ export class ItemBlock implements Component {
       }
     }
 
-    // 子 agent 进度：统计段 + 嵌套工具事件（运行中显示最近 3 条，完成后折叠计数）。
-    // Ink 版把这些放在独立的 AgentGroup 面板里（还要处理「终态后撤下面板」的生命周期），
-    // 这里直接挂在工具卡片上——差分渲染下条目内嵌就是实时面板。
+    // 子 agent 进度：统计段 + 嵌套工具事件（运行中显示最近 3 条，完成后折叠计数），直接挂在卡片上
     const stats = subagentStats(it);
     if (stats !== '') out.push(c.dim(`    ${stats}`));
     const sub = it.subagentToolEvents;
@@ -415,17 +384,11 @@ export class ItemBlock implements Component {
   }
 }
 
-/**
- * 工具参数摘要的着色文本（主界面卡片与 Ctrl+O 展开态共用口径）。
- *
- * 抽成函数是因为这两处标题行历史上就容易漂移：Ink 版靠注释约定「共用口径」，
- * pi 版早先是两份各自拼接的字符串，改一处漏一处。
- */
+/** 工具参数摘要的着色文本（主界面卡片与 Ctrl+O 展开态共用，避免两处漂移）。 */
 function toolArgText(it: Extract<DisplayItem, { kind: 'tool' }>): string {
   const arg = summarizeInput(it.input);
   if (arg === '') return '';
-  // 两个空格：单空格时 `write_file src/x.ts` 读起来像一个词组，双空格才分得出
-  // 「工具」与「操作对象」两段（Ink 版同口径）。
+  // 两个空格：单空格时 `write_file src/x.ts` 读起来像一个词组，双空格才分得出「工具」与「操作对象」
   return it.name === 'skill' ? c.toolArgSkill(`  ${arg}`) : c.toolArg(`  ${arg}`);
 }
 

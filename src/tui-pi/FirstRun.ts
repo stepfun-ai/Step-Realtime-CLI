@@ -64,7 +64,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
 const DOCS_VALUE = '__docs__';
 const DOCS_URL =
   'https://github.com/li-xiu-qi/Step-Realtime-CLI/blob/step-code-explore/docs/zh/quickstart.md#2-%E9%85%8D%E7%BD%AE-api-key';
-/** 自定义渠道的模型别名与默认上下文窗口（与 Ink 版同值）。 */
+/** 自定义渠道的模型别名与默认上下文窗口。 */
 const CUSTOM_ALIAS = 'custom';
 const DEFAULT_MAX_CONTEXT = 262144;
 
@@ -148,7 +148,7 @@ async function wizard(tui: TUI, banner: Banner): Promise<FirstRunResult> {
       }
       if (key.trim() === '') continue;
       apiKey = key.trim();
-      // 渠道段先落盘（与 Ink 版同顺序）：模型别名在下一步写
+      // 渠道段先落盘：模型别名在下一步写
       saveProviderKey(chosen!.name, 'base_url', chosen!.baseUrl);
       saveProviderKey(chosen!.name, 'api_key', apiKey);
       step = 'model';

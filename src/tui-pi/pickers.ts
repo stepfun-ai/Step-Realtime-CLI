@@ -1,13 +1,6 @@
 /**
- * 选择器（M3）：会话 / 模型 / 思考深度。
- *
- * 与 Ink 版的实现差异：三个选择器在 Ink 侧各自维护「候选列表 + 过滤串 + 选中位 + 视口跟随」
- * （ModelPicker 还专门修过一次「选中项滚出可视区不跟随」），这里全部交给 pi-tui 的
- * SelectList——它自带过滤、滚动信息与视口跟随，我们只提供候选项与结算回调。
- *
- * 挂载方式用 tui.showOverlay：overlay 在 diff 之前被合成进行数组，本身参与同一套差分渲染，
- * 不存在 Ink 的 Static/动态区之分，所以选择器不需要额外的行数预算计算
- * （Ink 版为此维护了 estimateChromeRows / planBoxRows 这类与渲染结构一一对应的公式）。
+ * 选择器（M3）：会话 / 模型 / 思考深度。候选与过滤交给 pi-tui 的 SelectList
+ * （自带过滤、视口跟随），本层只提供候选项、tab 与结算回调，以 overlay 挂载。
  */
 import { Container, Editor, SelectList, matchesKey, visibleWidth, type Component, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui';
 import type { SessionMeta } from '../session/store.js';
@@ -15,7 +8,7 @@ import type { StepCodeConfig } from '../config/config.js';
 import { c, editorTheme, selectListTheme } from './theme.js';
 import { t } from '../i18n.js';
 
-/** 相对时间（与 Ink 版 SessionPicker.relativeTime 同口径）。 */
+/** 相对时间。 */
 export function relativeTime(iso: string, now = Date.now()): string {
   const parsed = Date.parse(iso);
   if (Number.isNaN(parsed)) return '';
@@ -37,11 +30,9 @@ export interface PickerTab {
 
 /**
  * 带标题与过滤输入的选择器外壳。
- * SelectList 自己处理 ↑↓/Enter，过滤串由本壳收字符后 setFilter 下推。
- *
- * 渠道 tab（对应 Ink 版 ModelPicker 的 tab 条）：tabs 多于一个时渲染 tab 条，
- * Tab / Shift+Tab 取模回卷切换；每个 tab 独立记忆过滤词与选中项，切换时保存/恢复。
- * Esc 语义与 Ink 对齐：有过滤词先清词，再按一次才取消。
+ * SelectList 自己处理 ↑↓/Enter，过滤串由本壳收字符后下推。
+ * 渠道 tab：tabs 多于一个时渲染 tab 条，Tab / Shift+Tab 取模回卷切换，
+ * 每个 tab 独立记忆过滤词与选中项。Esc 有过滤词先清词，再按一次才取消。
  */
 export class PickerOverlay implements Component {
   private readonly title: string;
@@ -54,13 +45,7 @@ export class PickerOverlay implements Component {
   /** 额外按键处理（如会话选择器的 d 删除）；返回 true 表示已消费。 */
   private readonly onKey?: (data: string, selected: SelectItem | null) => boolean;
   private readonly hint: string;
-  /**
-   * 标题下方的说明行（可选）。
-   *
-   * 和 hint 分开是因为它们竞争同一个位置：hint 在底部承担操作键提示（↑↓/Enter/Esc），
-   * 调用方一旦传业务说明进 hint，操作键提示就被顶掉了。首次运行向导先前正是如此——
-   * 第一屏只有「未检测到 API key」，没有任何键位提示，而那是新用户见到的第一个界面。
-   */
+  /** 标题下方的说明行。与底部 hint 分开：hint 承担操作键提示，subtitle 放业务说明。 */
   private readonly subtitle?: string;
   private readonly maxVisible: number;
   /** Shift+Enter 确认（如模型选择器的「仅本会话生效」）；不设则 shift+enter 走普通确认。 */
@@ -112,12 +97,9 @@ export class PickerOverlay implements Component {
   }
 
   /**
-   * 自定义过滤：对标 Ink 版，对 value + label + description 做空格分词 AND 子串匹配
-   * （大小写不敏感）。pi-tui SelectList 自带过滤只做 value 前缀匹配，这里在应用层补全。
-   *
-   * 做法：先用本函数筛出候选，再把完整候选集喂给 SelectList 并 setFilter('') 让它原样展示。
-   * 不能直接 setFilter(filter)——那会触发 SelectList 内部的 value.startsWith 前缀过滤，
-   * 把我们的子串匹配结果再砍一遍。
+   * 自定义过滤：对 value + label + description 做空格分词 AND 子串匹配（大小写不敏感）。
+   * SelectList 自带过滤只做 value 前缀匹配，故先在本层筛出候选，再喂给 SelectList 并
+   * setFilter('') 原样展示；直接 setFilter 会再触发它的前缀过滤，把结果砍一遍。
    */
   private applyFilter(): void {
     const tokens = this.filter.toLowerCase().split(/\s+/).filter((t) => t !== '');
@@ -169,7 +151,7 @@ export class PickerOverlay implements Component {
     return this.filter;
   }
 
-  /** 切 tab：保存当前 tab 的过滤词与选中项，恢复目标 tab 的（对应 Ink 版 switchTab）。 */
+  /** 切 tab：保存当前 tab 的过滤词与选中项，恢复目标 tab 的。 */
   private switchTab(dir: 1 | -1): void {
     this.tabStates.set(this.activeTab, { filter: this.filter, selected: this.list.getSelectedItem()?.value });
     this.activeTab = (this.activeTab + dir + this.tabs.length) % this.tabs.length;
@@ -194,7 +176,7 @@ export class PickerOverlay implements Component {
       return;
     }
     if (matchesKey(data, 'escape')) {
-      // 与 Ink 对齐：有过滤词先清词，再按一次才取消
+      // 有过滤词先清词，再按一次才取消
       if (this.filter !== '') {
         this.filter = '';
         this.applyFilter();
@@ -220,8 +202,7 @@ export class PickerOverlay implements Component {
       this.applyFilter();
       return;
     }
-    // ↑↓ 钳制：SelectList 内部回绕（到顶跳到底），Ink 版是「到边界停住」。
-    // 在外层拦截，用 setSelectedIndex 钳制，不让 SelectList 拿到方向键。
+    // ↑↓ 钳制：SelectList 内部回绕（到顶跳到底），这里在外层拦截钳制
     if (matchesKey(data, 'up') || matchesKey(data, 'down')) {
       if (this.filteredCount > 0) {
         const delta = matchesKey(data, 'up') ? -1 : 1;
@@ -243,9 +224,8 @@ export class PickerOverlay implements Component {
     const lines = [head];
     if (this.subtitle !== undefined) lines.push(c.dim(this.subtitle));
     if (this.tabs.length > 1) {
-      // tab 条滚动窗口：放不下时保证 activeTab 可见——从 active 向两侧贪心扩展（先右后左），
-      // 两端有隐藏 tab 时各预留 2 列给 ‹ / … 指示符。旧版是固定从头排到放不下为止，
-      // 选中靠后 tab 时高亮直接不可见（Ink 版 2026-08-11 用户现场专门修过，这里对齐）。
+      // tab 条滚动窗口：放不下时保证 activeTab 可见——从 active 向两侧贪心扩展，
+      // 两端有隐藏 tab 时各留 2 列给 ‹ / … 指示符
       const segWidth = (from: number, to: number): number => {
         let w = 0;
         for (let i = from; i < to; i++) {
@@ -315,7 +295,7 @@ export function modelItems(config: StepCodeConfig, currentAlias?: string, channe
     if (channel !== undefined && channel !== 'all' && ch !== channel) continue;
     for (const it of list) {
       const ctxText = it.ctx !== undefined ? ` · ${Math.round(it.ctx / 1000)}k` : '';
-      // 对标 Ink 版：当前生效后缀 ← 当前（绿色），前缀 ● 改为后缀
+      // 当前生效模型标「当前」（绿色后缀）
       const mark = it.alias === currentAlias ? ` ${c.ok(t('modelPicker.current'))}` : '';
       items.push({
         value: it.alias,
@@ -338,7 +318,7 @@ export function thinkItems(current?: string): SelectItem[] {
   ];
   return rows.map((r) => {
     const isCurrent = current === r.value || (current === undefined && r.value === '__default__');
-    // 对标 Ink ThinkPicker：当前生效后缀 ← 当前（绿色）
+    // 当前生效项标「当前」（绿色后缀）
     return {
       ...r,
       label: isCurrent ? `${r.label} ${c.ok(t('modelPicker.current'))}` : r.label,
@@ -359,7 +339,7 @@ export function modelTabs(config: StepCodeConfig): PickerTab[] {
 /**
  * 把选择器挂成 overlay 并返回结果（取消为 null）。
  *
- * 当 opts.container 提供时，改为内联替换输入区模式（对标 Ink 版 / Kimi Code）：
+ * 当 opts.container 提供时，改为内联替换输入区模式：
  * - container.clear() 清空容器
  * - container.addChild(overlay) 内联挂载选择器
  * - tui.setFocus(overlay) 路由输入到选择器
@@ -480,14 +460,13 @@ export class Banner implements Component {
 /**
  * 单行输入。hint 在输入框上方说明填什么，keyHint 在下方说明按什么键。
  *
- * 键位提示放输入框下方而不是拼进 hint：位置与主界面输入框的 footer 提示同口径，
+ * 键位提示放输入框下方而不是拼进 hint：位置与主界面输入框的 footer 提示一致。
  * 用户找键位提示时看的是同一个地方。
  */
 /**
  * 带校验的单行输入：非法值当场报错重问，不推进流程。
  *
- * 语义对齐 Ink 版 ProviderWizard 的 `submitText`——**校验失败只置行内错误，不清输入现场**。
- * pi 版的 askLine 是一次性 Promise，所以循环里把上次输入回填成 initial 来还原现场，
+ * 校验失败只置行内错误、不清输入现场（把上次输入回填成 initial 还原），
  * 否则用户填错一个字符要整条重打。
  *
  * 没有这层时，新增渠道向导的行为是：非法值静默接受（base_url 少了 http:// 也照写盘），
@@ -504,7 +483,7 @@ export async function askValidated(
   let initial = opts.initial;
   let error: string | undefined;
   for (;;) {
-    // 错误占的是键位提示那一行：位置与主界面输入框的 footer 提示同口径，用户找反馈看同一处
+    // 错误占的是键位提示那一行：位置与主界面输入框的 footer 提示一致
     const footer = error !== undefined ? c.error(error) : (opts.keyHint ?? t('providerWizard.hint.text'));
     const raw = await askLine(tui, hint, initial, footer);
     if (raw === null) return null;

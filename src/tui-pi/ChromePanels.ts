@@ -1,9 +1,9 @@
 /**
  * 输入框正上方的常驻 chrome 面板：TODO 清单 + 发送队列预览。
  *
- * 对应 Ink 版的 TodoPanel 与 QueuePreview 两个组件。两处差异：
+ * 常驻 chrome：待办面板 + 队列预览，挂在输入框上方。
  *
- * 1. **不参与高度预算降级。** Ink 版这两块要在 busy 时按 liveBudget 让位（先丢
+ * 1. **不参与高度预算降级。** 常驻不收缩，busy 时也不让位
  *    QueuePreview 再丢 TodoPanel），因为动态区超屏会触发清屏事故。pi-tui 差分渲染没有
  *    这个失效模式，面板按内容决定行数，不需要预算协商。
  * 2. **合并成一个组件。** 两块内容都是「输入框上方的状态区」，行数都由数据决定，
@@ -87,7 +87,7 @@ export function renderQueue(queue: readonly string[], width: number, busy = fals
   }
   if (rest > 0) out.push(c.dim(t('panel.queue.more', { count: rest })));
   // 取回提示分两种态：busy 时 Esc 中断而非取回，改用 ↑ 逐条取回；
-  // 空闲时 Esc 把队列合并回输入框（与 Ink 版 QueuePreview recallHint 同语义）。
+  // 空闲时 Esc 把队列合并回输入框。
   out.push(c.dim(busy ? t('panel.queue.recallBusy') : t('panel.queue.recall')));
   return out;
 }

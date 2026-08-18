@@ -5,16 +5,11 @@
 // `await import` 本模块，保证赋值发生在任何模块求值之前；bundle 形态另由 esbuild
 // `define` 把 `process.env.NODE_ENV` 静态折叠为 production。
 //
-// 这条禁令来自 Ink 时代的一次静默事故：曾经这里有一行 `import './env.js'` 当兜底，而 tsc 的
-// JSX transform 会在编译产物顶部注入 `import 'react/jsx-runtime'`，排在本文件所有源码
-// import 之前，让 react 主包先按当时的 `NODE_ENV` 分流；本文件里的赋值只够得到随后由 ink
-// 拉起的 react-reconciler，恰好制造 react(dev) + reconciler(prod) 的错配，后果是 reconciler
-// 调度静默失效（render() 正常返回、根组件一次没被调用、stdout 零字节、不抛异常）。
-// 2026-08-03 实测：有那行 → 0 字节；令两包一致 → 2000+ 字节。
+// 这条禁令来自一次静默事故：若 env 兜底 import 排在源码 import 之后，会导致 React 包与
+// reconciler 的 dev/prod 错配，后果是调度静默失效（render() 正常返回、根组件一次没被
+// 调用、stdout 零字节、不抛异常）。实测：有那行 → 0 字节，两包一致 → 2000+ 字节。
 //
-// M5 删掉 Ink 与 react 之后（本文件也随之由 .tsx 改回 .ts），那个具体错配不再可能，但
-// 「设置点唯一、且在引导层」这条结构约束保留：它使分发形态与开发形态拿到一致的默认值。
-// 回归护栏见 tests/env.test.ts。
+// 「设置点唯一、且在引导层」这条结构约束保留：它使分发形态与开发形态拿到一致的默认值。回归护栏见 tests/env.test.ts。
 import { copyFileSync, existsSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -86,8 +81,8 @@ program
   .option('--output-format <fmt>', '非交互输出格式：text（默认）、stream-json 或 json', 'text')
   .option('--model <name>', '覆盖模型（config.model）')
   .option('--provider <name>', '覆盖服务商（stepfun|anthropic|openai|openai_responses），未同时指定 model/base_url 时按其预设补默认')
-  // pi-tui 实验仓专用：交互 TUI 走 src/tui-pi/ 的 pi-tui 前端而非 Ink。M5 拆除 Ink 后此开关一并移除。
-  .option('--pi', '实验：用 pi-tui 前端替代 Ink 渲染交互界面')
+  // pi-tui 前端是默认交互界面，--pi 为旧兼容开关
+  .option('--pi', '用 pi-tui 前端渲染交互界面')
   .option('--no-skills', '禁用 skill 清单注入（调试用：排除 skill 路由对模型的干扰）')
   .option('--no-agents-md', '禁用 AGENTS.md 加载（调试用：排除项目约定对模型的干扰）')
   .parse();
@@ -119,7 +114,7 @@ if (opts.yolo === true && opts.auto === true) {
 // flag > config.permission_mode > 会话存储 mode > manual 的链解析（见 resolveStartupMode）。
 const flagMode: PermissionMode | undefined = opts.yolo === true ? 'yolo' : opts.auto === true ? 'auto' : undefined;
 
-// 顶层 `export-debug-zip [sessionId]` 子命令：完全脱离 Ink/TTY 的无头导出路径，供 CI/脚本断言 zip 产出。
+// 顶层 `export-debug-zip [sessionId]` 子命令：脱离 TTY 的无头导出路径，供 CI/脚本断言 zip 产出。
 // 与 TUI 斜杠命令共用 exportDebugBundle。放在 config/provider 加载之前，避免坏配置阻塞调试包导出。
 if (program.args[0] === 'export-debug-zip') {
   configureLogger({ mode: 'headless' });
@@ -159,8 +154,7 @@ try {
   // 非交互模式（-p/--reflect）照旧报错退出，不阻塞脚本。
   if (e instanceof TomlParseError && opts.print === undefined && opts.reflect !== true) {
     const recovered = await runBrokenConfigRecovery(e);
-    // 用户取消：process.exit(0) 退出。Ink 已在 runFirstRunSetup 内 unmount，
-    // 此处无悬挂资源；main 顶层 await 因进程退出而中断属预期（取消路径本就不回 main）。
+    // 用户取消：process.exit(0) 退出，此处无悬挂资源
     if (recovered === null) process.exit(0);
     config = recovered.config;
     configDiagnostics = recovered.diagnostics;
@@ -189,11 +183,11 @@ configureWebResultCache(config);
 // 配置启动自检：把 loadConfig 静默跳过/降级的项摆到用户面前（正常配置下零输出）。
 // 规则与 `step doctor config` 共用 collectConfigWarnings，两个入口不会给出不同结论。
 // 必须放在 setLocale 之后——文案走 i18n 查表。呈现通道按运行模式分流（见下方两处）：
-// 交互 TUI 走 App 转录区 note（Ink 独占终端，绝不写 stderr/stdout），非交互走 stderr。
+// 交互 TUI 走转录区 note（交互模式独占终端，绝不写 stderr/stdout），非交互走 stderr。
 const configWarnings = configDiagnostics !== undefined ? collectConfigWarnings(configDiagnostics.rawToml) : [];
 const ignoredBadConfig = configDiagnostics?.ignoredBadFile;
 // 非交互模式（-p / --reflect / stream-json）的呈现通道：只写 stderr。stdout 是数据/协议
-// 通道，混入诊断会破坏下游解析。交互模式不在此处输出（Ink 独占终端），改由 App 呈现。
+// 通道，混入诊断会破坏下游解析。交互模式不在此处输出（交互模式独占终端），改由 App 呈现。
 if (opts.print !== undefined || opts.reflect === true) {
   const diagText = renderConfigDiagnostics(configWarnings, ignoredBadConfig);
   if (diagText !== undefined) process.stderr.write(`${diagText}\n`);
@@ -548,7 +542,7 @@ async function pickSession(): Promise<string | null> {
   const sessions = store.list(cwd);
   if (sessions.length === 0) return null;
   // 选择器自己起一个 pi-tui 主屏并在结束时停掉，屏幕随后让给 PiChat。
-  // 上限 200 条与 Ink 版一致：更早的会话只能按 id 恢复。
+  // 上限 200 条：更早的会话只能按 id 恢复。
   return await pickSessionStandalone(sessions.slice(0, 200));
 }
 

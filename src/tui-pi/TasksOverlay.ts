@@ -1,7 +1,7 @@
 /**
  * `/tasks` 交互弹层：任务列表 + 输出预览 + 停止确认。
  *
- * 对应 Ink 版 TasksViewer 的核心交互，形态简化为「上列表 + 下输出预览」的单栏（Ink 是三栏）：
+ * 任务查看器：上列表 + 下输出预览的单栏形态。
  * 终端宽度常态 80-120 列，三栏切下来每栏放不下一条命令行，纵向分区信息密度更高。
  *
  * 保留的交互：↑↓/jk 选任务、Tab 循环过滤（全部→运行中→已完成→失败）、s 停止（y/n 二次
@@ -136,7 +136,7 @@ export class TasksOverlay implements Component {
   }
 
   /**
-   * 选中任务的详情栏（对齐 Ink 版 TasksViewer DetailLines）。
+   * 选中任务的详情栏。
    * 固定行序，无值的字段整行省略；内容缩进 2 列，截断到 width。
    */
   private renderDetail(task: BackgroundTask, width: number): string[] {
@@ -204,7 +204,7 @@ export class TasksOverlay implements Component {
     }
     const task = this.selected();
     if (task !== undefined) {
-      // 详情栏：选中任务的元信息（对齐 Ink 版 TasksViewer DetailLines）。
+      // 详情栏：选中任务的元信息。
       // 放在列表与输出预览之间，用圆角框视觉区分。
       out.push('');
       out.push(...this.renderDetail(task, width));

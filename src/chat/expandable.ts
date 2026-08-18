@@ -1,7 +1,7 @@
 /**
  * 收集可在全屏查看器（Ctrl+O）中展开的条目——纯逻辑，无渲染。
  *
- * 口径对齐已删除的 Ink 版 ExpandViewer.collectExpandable / isExpandable：
+ * 可展开条目判定与收集：被折叠的工具输出、长 thinking 等进入全屏查看器。
  * - 工具条目：已完成（非 running）且有被折叠的结果体；spawn_agent 带嵌套子调用也算
  * - thinking 条目：行数超过折叠阈值（主界面只显示前 N 行，其余「还有 N 行」）
  * - 其它类型（user/assistant/note/error/goalPanel/cron）不进查看器
