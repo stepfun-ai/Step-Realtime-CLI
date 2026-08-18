@@ -91,6 +91,58 @@ export class Transcript implements Component {
   }
 
   /**
+   * 逐回合折叠旧块为摘要（OOM 第二道防线，设计文档 `前端设计-pi版/20260818-Transcript逐回合折叠与块释放设计.md`）。
+   *
+   * 与 {@link trim} 的区别：trim 是删行（触发全屏重绘+清 scrollback，见文件头注释，仅 2000 轮安全阀用）；
+   * 本方法是把旧轮次的 tool/thinking 块**折成一行摘要**并 dispose 释放渲染资源，更温和但仍减少行数。
+   * 保留最近 `keepRecentTurns` 个 turn 的完整块；更早的 turn 里，user/assistant/note 保留（用户最常回看），
+   * tool/thinking 折成 `foldSummary`。同一旧轮里连续的可折块合并成一个摘要。
+   *
+   * 返回是否真的折叠了（块数未超阈值时 no-op，接线方据此避免无谓调用）。
+   *
+   * 约束与代价（诚实登记）：折叠顶部旧块会改变行号，pi-tui 差分渲染可能触发一次全屏重绘 +
+   * 清 scrollback（与 trim 同源的已知代价）。因此接线方应低频调用（回合边界 + 阈值保护），非每帧。
+   */
+  foldOldTurns(keepRecentTurns: number, triggerTurns = 0): { folded: boolean; count: number } {
+    if (keepRecentTurns < 0) return { folded: false, count: 0 };
+    // turn 起点 = user 块下标（与 trim 同一切分口径）
+    const starts: number[] = [];
+    for (let i = 0; i < this.blocks.length; i++) {
+      if (this.blocks[i]!.getItem().kind === 'user') starts.push(i);
+    }
+    if (starts.length <= keepRecentTurns) return { folded: false, count: 0 };
+    // 触发闸门：turn 数未超阈值则不折。折叠顶部旧块会改行号，可能触发一次全屏重绘+清 scrollback
+    // （与 trim 同源代价），故接线方传高闸门让它只在块数严重超标时触发一次，而非每回合。
+    // triggerTurns=0 = 不设闸门（turn 一超 keepRecentTurns 就折，仅供单测）。
+    if (triggerTurns > 0 && starts.length <= triggerTurns) return { folded: false, count: 0 };
+    // cutAt：最近 keepRecentTurns 个 turn 的起点；[0, cutAt) 都是待折叠的旧块
+    const cutAt = starts[starts.length - keepRecentTurns]!;
+    if (cutAt <= 0) return { folded: false, count: 0 };
+
+    const kept: ItemBlock[] = [];
+    let pending = 0;
+    let totalFolded = 0;
+    for (let i = 0; i < cutAt; i++) {
+      const it = this.blocks[i]!.getItem();
+      if (it.kind === 'tool' || it.kind === 'thinking') {
+        pending++;
+        totalFolded++;
+        this.blocks[i]!.dispose(); // 释放 markdown 解析缓存，旧块失引用即 GC
+      } else {
+        // user/assistant/note 等非可折块：先落地待折摘要，再保留本块
+        if (pending > 0) {
+          kept.push(new ItemBlock({ kind: 'foldSummary', count: pending }));
+          pending = 0;
+        }
+        kept.push(this.blocks[i]!);
+      }
+    }
+    if (pending > 0) kept.push(new ItemBlock({ kind: 'foldSummary', count: pending }));
+    this.blocks = [...kept, ...this.blocks.slice(cutAt)];
+    return { folded: totalFolded > 0, count: totalFolded };
+  }
+
+  /**
    * 两级裁剪。turn 边界按 user 条目切分：
    * 1. turn 数超过 MAX_TURNS + HYSTERESIS 时，丢弃最老的若干 turn，只累计计数；
    * 2. 末尾 turn 内块数超过 MAX_BLOCKS_PER_TURN 时，丢弃该 turn 靠前的块。

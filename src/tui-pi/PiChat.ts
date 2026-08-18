@@ -163,6 +163,18 @@ const HINTS = 'Enter 发送 · Esc 中断 · Ctrl+C 退出 · /help 命令';
 const COMPACT_KEEP_RECENT = 6;
 
 /**
+ * Transcript 逐回合折叠参数（OOM 第二道防线，设计文档 `前端设计-pi版/20260818-Transcript逐回合折叠与块释放设计.md`）。
+ *
+ * - FOLD_KEEP_RECENT_TURNS：折叠后保留的最近完整轮数。30 与参考方案同口径。
+ * - FOLD_TRIGGER_TURNS：触发闸门。折叠顶部旧块会改行号、可能触发一次全屏重绘+清 scrollback，
+ *   故不每回合折——只在 turn 数超过此值时才折一次，把代价摊薄。200 是保守高阈值：日常会话
+ *   远达不到（compaction reset 已处理常规清理），只有长跑无 compaction 的极端场景才触发。
+ *   折一次后块数回落到 FOLD_KEEP_RECENT_TURNS 附近，很久才会再超闸门。
+ */
+const FOLD_KEEP_RECENT_TURNS = 30;
+const FOLD_TRIGGER_TURNS = 200;
+
+/**
  * primed 态（双击确认）的超时：Esc 双击回退与 Ctrl+C 双击退出共用同一档，与 Ink 版一致。
  * 两处取同值是有意的——用户不该记两个不同的窗口长度。
  */
@@ -2364,6 +2376,9 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    */
   private async finishTurn(): Promise<void> {
     const goalActive = this.goal.get()?.status === 'active';
+    // OOM 第二道防线：每回合边界折叠超闸门的旧块为摘要（折旧轮 tool/thinking，保留对话骨架）。
+    // 仅在 turn 数超 FOLD_TRIGGER_TURNS 时触发（低频安全阀，避免每回合全屏重绘代价）。
+    this.transcript.foldOldTurns(FOLD_KEEP_RECENT_TURNS, FOLD_TRIGGER_TURNS);
     // 清单全部完成即清空：待办面板是「还有什么没做」的提示，全绿之后继续常驻只是占行。
     // 有未完成项则跨回合保留（Ink 版 allTodosDone 同语义）。
     if (allTodosDone(this.todos.items)) this.todos.items = [];

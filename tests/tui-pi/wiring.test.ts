@@ -267,3 +267,17 @@ describe('PiChat 接线：compaction 后重建 Transcript（OOM 根因修复）'
     expect(compactBranch, 'emit 应落在 compacted !== this.history 分支内（history 已压缩）').toContain('context.apply_compaction');
   });
 });
+
+describe('PiChat 接线：逐回合折叠旧块（OOM 第二道防线）', () => {
+  /**
+   * 2026-08-18 加。设计文档 `前端设计-pi版/20260818-Transcript逐回合折叠与块释放设计.md`。
+   * finishTurn 每回合边界调用 transcript.foldOldTurns，超闸门时折旧轮 tool/thinking 为摘要释放内存。
+   * 本条盯接线存在，沿用本文件源码扫描口径。
+   */
+  it('finishTurn 调用了 transcript.foldOldTurns', () => {
+    wired(piChat, 'this.transcript.foldOldTurns(', 'finishTurn 接线逐回合折叠');
+    // 折成摘要依赖 ItemBlock.dispose 释放 markdown；折叠阈值常量在位
+    wired(piChat, 'FOLD_KEEP_RECENT_TURNS', '折叠保留轮数常量');
+    wired(piChat, 'FOLD_TRIGGER_TURNS', '折叠触发闸门常量');
+  });
+});

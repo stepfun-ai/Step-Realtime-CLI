@@ -53,6 +53,16 @@ export type DisplayItem =
        */
       boundary?: boolean;
     }
+  | {
+      /**
+       * 折叠摘要块：Transcript 逐回合折叠旧块时产出（OOM 第二道防线，`5cb73d3` 之外）。
+       * 它是一行的结构性占位，代表「更早的 N 轮已被折成摘要」，不是流式内容也不构成消息边界。
+       * 历史本身不丢（仍在 this.history 与日志），只是渲染块被替换。
+       */
+      kind: 'foldSummary';
+      /** 被折叠的旧块数（供摘要行与测试断言用）。 */
+      count: number;
+    }
   | { kind: 'error'; text: string }
   | { kind: 'goalPanel'; data: GoalPanelData }
   | { kind: 'cron'; data: CronCardData };

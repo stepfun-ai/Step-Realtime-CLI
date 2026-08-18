@@ -1077,3 +1077,105 @@ describe('dynamic_workflow 阶段渲染', () => {
       }
     }
   });
+
+/** 造一个含 tool+thinking 的完整轮次（折叠测试用，比 pushTurns 更贴近真实转录）。 */
+function pushRichTurn(t: Transcript, i: number): void {
+  t.push({ kind: 'user', text: `问题 ${i}` });
+  t.push({ kind: 'thinking', text: `思考 ${i}：分析这个问题的多个方面，考虑边界条件与实现路径。`.repeat(20) });
+  t.push({ kind: 'tool', id: `t${i}`, name: 'read_file', input: { path: `src/f${i}.ts` }, status: 'ok', result: 'x'.repeat(2000) });
+  t.push({ kind: 'assistant', text: `回答 ${i}：结论如下。` });
+}
+
+describe('Transcript.foldOldTurns（OOM 第二道防线）', () => {
+  it('块数未超阈值时不动（no-op）', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 5; i++) pushRichTurn(t, i);
+    const before = t.size();
+    const r = t.foldOldTurns(30);
+    expect(r.folded).toBe(false);
+    expect(r.count).toBe(0);
+    expect(t.size()).toBe(before); // 20 = 5 轮 × 4 块
+  });
+
+  it('超阈值时只折旧轮的 tool/thinking，保留 user/assistant 与最近 N 轮完整块', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 10; i++) pushRichTurn(t, i); // 10 轮 × 4 块 = 40 块
+    const r = t.foldOldTurns(3); // 保留最近 3 轮，折前 7 轮
+    expect(r.folded).toBe(true);
+    // 每旧轮折 2 块（thinking + tool），7 轮 = 14 块折成 7 个 foldSummary；user+assistant 7 轮 × 2 = 14 保留
+    // 最近 3 轮 12 块完整保留。总计 = 14(保留) + 7(摘要) + 12(最近) = 33
+    expect(r.count).toBe(14);
+    expect(t.size()).toBe(33);
+  });
+
+  it('foldSummary 摘要块正确渲染（带折叠数量）', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 5; i++) pushRichTurn(t, i);
+    t.foldOldTurns(1); // 折前 4 轮，每轮 2 个可折块
+    const out = plain(t.render(80)).join('\n');
+    expect(out).toContain('折叠了 2 个旧块');
+    // 最近 1 轮的完整内容仍在
+    expect(out).toContain('问题 4');
+    expect(out).toContain('回答 4');
+  });
+
+  it('折叠释放旧块的渲染资源（dispose 后 markdown 实例丢弃）', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 5; i++) pushRichTurn(t, i);
+    const bigBefore = t.size();
+    t.foldOldTurns(1);
+    // 折叠后块数显著下降（旧轮 tool/thinking 被摘要替代）
+    expect(t.size()).toBeLessThan(bigBefore);
+    // 摘要块仍可正常 render（不因 dispose 抛错）
+    const lines = t.render(80);
+    expect(lines.length).toBeGreaterThan(0);
+  });
+
+  it('无 tool/thinking 的旧轮（纯对话）不产生多余摘要', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 6; i++) {
+      t.push({ kind: 'user', text: `q${i}` });
+      t.push({ kind: 'assistant', text: `a${i}` });
+    }
+    t.foldOldTurns(2); // 折前 4 轮，但旧轮只有 user/assistant，无 tool/thinking
+    expect(t.size()).toBe(12); // 6 轮 × 2，无折叠发生
+  });
+
+  it('每回合旧块折成各自的摘要（不跨轮合并成一个大摘要）', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 5; i++) pushRichTurn(t, i);
+    t.foldOldTurns(1); // 折前 4 轮
+    const summaries = t.items().filter((it) => it.kind === 'foldSummary');
+    // 每个旧轮独立一个摘要（4 轮 = 4 个摘要，每个 count=2）
+    expect(summaries.length).toBe(4);
+    expect(summaries.every((s) => s.kind === 'foldSummary' && s.count === 2)).toBe(true);
+  });
+});
+
+describe('Transcript.foldOldTurns 触发闸门（避免每回合全屏重绘）', () => {
+  it('turn 数未超 triggerTurns 时不折（即使超过 keepRecentTurns）', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 50; i++) pushRichTurn(t, i); // 50 轮
+    // keepRecent=10 本应折，但 triggerTurns=200 闸门拦住
+    const r = t.foldOldTurns(10, 200);
+    expect(r.folded).toBe(false);
+    expect(t.size()).toBe(200); // 50 轮 × 4 块，原样不动
+  });
+
+  it('turn 数超过 triggerTurns 时才折', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 60; i++) pushRichTurn(t, i); // 60 轮
+    const r = t.foldOldTurns(10, 50); // 60 > 50 闸门放行，折到最近 10 轮
+    expect(r.folded).toBe(true);
+    // 前 50 轮折成摘要（每轮 2 可折块 → 50 摘要），user+assistant 50 轮保留；最近 10 轮完整
+    const summaries = t.items().filter((it) => it.kind === 'foldSummary');
+    expect(summaries.length).toBe(50);
+  });
+
+  it('triggerTurns=0（默认）不设闸门，一超 keepRecent 就折（单测口径）', () => {
+    const t = new Transcript();
+    for (let i = 0; i < 10; i++) pushRichTurn(t, i);
+    const r = t.foldOldTurns(3); // 不传 trigger，10 > 3 即折
+    expect(r.folded).toBe(true);
+  });
+});

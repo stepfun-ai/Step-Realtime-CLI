@@ -186,6 +186,19 @@ export class ItemBlock implements Component {
     this.markdown?.invalidate();
   }
 
+  /**
+   * 显式释放渲染资源：清缓存行 + 丢弃 Markdown 实例。
+   *
+   * 与 invalidate() 的区别：invalidate 只清 cachedLines、保留 markdown 实例（下次 render 复用）；
+   * dispose 连 markdown 实例一起丢弃——Transcript 折叠旧块时对被替换的块调用，让 pi-tui Markdown
+   * 的解析缓存随块一起被 GC。只 invalidate 不 dispose，折叠等于没释放（OOM 第二道防线的前提）。
+   * dispose 后该块不应再 render；若误用，render 会按 markdown===undefined 分支重新建实例。
+   */
+  dispose(): void {
+    this.cachedLines = undefined;
+    this.markdown = undefined;
+  }
+
   render(width: number): string[] {
     if (this.cachedLines !== undefined && this.cachedWidth === width) return this.cachedLines;
     const lines = this.renderItem(width);
@@ -254,6 +267,10 @@ export class ItemBlock implements Component {
         return this.renderTool(it, width);
       case 'goalPanel':
         return [...wrap(`goal: ${it.data.objective}`, width - 2).map((l) => c.accent(l)), ''];
+      case 'foldSummary':
+        // 逐回合折叠的摘要占位：一行 dim，告知更早的块已被折成摘要释放内存。
+        // 正文/user/assistant 不折叠（用户最常回看），只有 tool/thinking 等旧块进摘要。
+        return [...hanging(wrap(c.dim(`↳ 折叠了 ${it.count} 个旧块（更早的轮次，仍在历史中）`), width - 2), c.dim('· '), 2), ''];
       case 'cron':
         // cron prompt 可能很长（几百字符），必须先 wrap 再逐行着色。
         // 原来直接 `c.accent(prompt)` 整段当一行返回，992 字符 > 67 列终端宽度
