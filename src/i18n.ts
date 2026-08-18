@@ -777,6 +777,8 @@ const zh = {
   'factory.unknownProvider': "未知服务商 provider='{provider}'。当前支持：{list}。",
   'factory.missingApiKey':
     '缺少 API key（provider={provider}）。请设置环境变量 STEP_CODE_API_KEY、该服务商的惯例环境变量（anthropic→ANTHROPIC_API_KEY、openai→OPENAI_API_KEY），或在 ~/.step-code/config.toml 的 [providers] 渠道 / [models] 别名下写入 api_key（也可用 api_key_env 指定环境变量名）。',
+  'config.apiKey.channelMismatch':
+    '渠道「{channel}」（type={channelType}）未配置自己的 key，但当前回落目标是顶层 provider（{topProvider}）的全局 key。跨服务商借用 key 会泄露到错误端点，已拒绝。请为该渠道配置 api_key 或 api_key_env，或将顶层 provider 改为 {channelType}。',
 
   // --- 首次运行引导（FirstRunSetup）---
   'firstRun.title': '欢迎使用 Step Code！',
@@ -1509,6 +1511,8 @@ const en: Record<keyof typeof zh, string> = {
   'factory.unknownProvider': "Unknown provider provider='{provider}'. Supported: {list}.",
   'factory.missingApiKey':
     'Missing API key (provider={provider}). Set the STEP_CODE_API_KEY environment variable, the conventional variable for this provider (anthropic→ANTHROPIC_API_KEY, openai→OPENAI_API_KEY), or write api_key under a [providers] channel / under a [models] alias in ~/.step-code/config.toml (api_key_env may name an environment variable instead).',
+  'config.apiKey.channelMismatch':
+    'Channel "{channel}" (type={channelType}) has no key of its own, but the fallback is the top-level provider ({topProvider}) global key. Borrowing a key across providers would send it to the wrong endpoint; refused. Configure api_key or api_key_env for this channel, or change the top-level provider to {channelType}.',
 
   // --- First-run setup (FirstRunSetup) ---
   'firstRun.title': 'Welcome to Step Code!',

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import type { PermissionMode } from '../agent/permission/mode.js';
 import { CAPABILITY_KEYS } from '../provider/capability-registry.js';
-import type { Locale } from '../i18n.js';
+import { t, type Locale } from '../i18n.js';
 
 /**
  * 子 agent 限制。设计三件套：可配 + 硬编码默认 + clamp 上限。
@@ -1136,6 +1136,31 @@ export function resolveModelEntry(config: StepCodeConfig, name: string): StepCod
   if (channel !== undefined) {
     // 自定义渠道：协议实现由渠道 type 决定；端点渠道优先、回落 entry → 顶层；密钥走渠道分支回落链
     provider = channel.type;
+    // 若该 key 实为全局回落（渠道/entry 都没配 key），校验渠道 type 与顶层 provider type 一致——
+    // 否则会把给另一服务商的全局 key 发到本渠道端点（跨渠道泄露）。一致才允许借用，不一致直接报错。
+    const fellBackToGlobal =
+      channel.apiKey === undefined &&
+      envValue(channel.apiKeyEnv) === undefined &&
+      envValue(conventionalApiKeyEnvVar(channel.type)) === undefined &&
+      entry.apiKey === undefined &&
+      envValue(entry.apiKeyEnv) === undefined;
+    if (fellBackToGlobal && config.apiKey !== undefined && provider !== config.provider) {
+      // config.apiKey 有两种归属，跨渠道借用的危险性不同，分开处理：
+      // - 若它等于「顶层 provider 的惯例 env 值」→ 该 key 绑死顶层 type（如顶层 anthropic 的
+      //   ANTHROPIC_API_KEY），借给别的 type 渠道 = 把 A 服务商的 key 发到 B 端点 = 泄露，拒绝；
+      // - 否则（通用 STEP_CODE_API_KEY 或直接赋值的 key）→ 不绑单一 type，放行。
+      const conventionalKey = envValue(conventionalApiKeyEnvVar(config.provider));
+      const boundToTopType = conventionalKey !== undefined && conventionalKey === config.apiKey;
+      if (boundToTopType) {
+        throw new Error(
+          t('config.apiKey.channelMismatch', {
+            channel: entry.provider ?? '',
+            channelType: provider,
+            topProvider: config.provider,
+          }),
+        );
+      }
+    }
     apiKey =
       channel.apiKey ??
       envValue(channel.apiKeyEnv) ??

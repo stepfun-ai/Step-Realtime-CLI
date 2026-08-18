@@ -592,6 +592,85 @@ describe('resolveModelEntry（自定义渠道合并）', () => {
   });
 });
 
+describe('resolveModelEntry（跨渠道 key 回落校验）', () => {
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    saved.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+    saved.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    saved.STEP_CODE_API_KEY = process.env.STEP_CODE_API_KEY;
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  // channelConfig 把顶层写死成 stepfun（无惯例 env），测不出拒绝分支，这里显式构造 anthropic 顶层。
+  const anthropicTop = (extra?: Partial<StepCodeConfig>): StepCodeConfig => ({
+    provider: 'anthropic',
+    apiKey: 'k-top',
+    baseUrl: 'https://api.anthropic.com',
+    model: 'claude-x',
+    maxContextSize: 262_144,
+    maxTokens: 32768,
+    subagent: resolveSubagentLimits(undefined),
+    compaction: resolveCompactionConfig(undefined),
+    ...extra,
+  });
+
+  it('渠道缺 key 且回落目标 = 顶层惯例 env（绑死顶层 type）→ 跨 type 借用被拒绝', () => {
+    // 顶层 anthropic，ANTHROPIC_API_KEY 就是 config.apiKey；渠道 openai 没配 key，
+    // 回落会把 anthropic 的 key 发到 openai 端点 = 跨服务商泄露。
+    process.env.ANTHROPIC_API_KEY = 'k-top';
+    expect(() =>
+      resolveModelEntry(
+        anthropicTop({ providers: { gw: { type: 'openai' } }, models: { c: { provider: 'gw' } } }),
+        'c',
+      ),
+    ).toThrow(/channelMismatch|跨/);
+  });
+
+  it('渠道缺 key 但回落目标是通用 STEP_CODE_API_KEY → 放行（不绑 type）', () => {
+    // config.apiKey 来自通用 STEP_CODE_API_KEY，不等于 anthropic 惯例 env → 不绑 type，放行。
+    process.env.STEP_CODE_API_KEY = 'k-generic';
+    process.env.ANTHROPIC_API_KEY = 'k-other'; // 与 config.apiKey 不同，boundToTopType 为 false
+    const merged = resolveModelEntry(
+      anthropicTop({
+        apiKey: 'k-generic',
+        providers: { gw: { type: 'openai' } },
+        models: { c: { provider: 'gw' } },
+      }),
+      'c',
+    );
+    expect(merged).not.toBeNull();
+    expect(merged!.apiKey).toBe('k-generic');
+  });
+
+  it('渠道自己配了 key → 不触发回落校验', () => {
+    process.env.ANTHROPIC_API_KEY = 'k-top';
+    const merged = resolveModelEntry(
+      anthropicTop({
+        providers: { gw: { type: 'openai', apiKey: 'k-gw-own' } },
+        models: { c: { provider: 'gw' } },
+      }),
+      'c',
+    );
+    expect(merged!.apiKey).toBe('k-gw-own');
+  });
+
+  it('渠道 type 与顶层相同时回落惯例 env → 不报错（同服务商）', () => {
+    // 顶层 anthropic，渠道也是 anthropic，回落 ANTHROPIC_API_KEY 是同服务商，合法。
+    process.env.ANTHROPIC_API_KEY = 'k-top';
+    const merged = resolveModelEntry(
+      anthropicTop({ providers: { gw: { type: 'anthropic' } }, models: { c: { provider: 'gw' } } }),
+      'c',
+    );
+    expect(merged).not.toBeNull();
+    expect(merged!.apiKey).toBe('k-top');
+  });
+});
+
 describe('conventionalApiKeyEnvVar（惯例环境变量映射）', () => {
   it('已知 type → 对应惯例变量名', () => {
     expect(conventionalApiKeyEnvVar('anthropic')).toBe('ANTHROPIC_API_KEY');
