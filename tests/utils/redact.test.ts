@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { redactByKeyName, redactSecrets } from '../../src/utils/redact.js';
+import {
+  redactByKeyName,
+  redactPaths,
+  redactSecrets,
+  looksLikeAgentsMd,
+  redactWireLineVendor,
+} from '../../src/utils/redact.js';
 
 describe('redactSecrets', () => {
   it('擦除 sk- 风格密钥', () => {
@@ -89,5 +95,144 @@ describe('redactSecrets 的裸 key 规则（会话正文/日志路径）', () =>
   it('TOML 与 JSON 两种赋值形态都覆盖', () => {
     expect(redactSecrets('key="Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0Fe"')).toContain('[REDACTED]');
     expect(redactSecrets('"key": "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0Fe"')).toContain('[REDACTED]');
+  });
+});
+
+// ── vendor 级别：路径与内容脱敏 ──
+
+describe('redactPaths', () => {
+  it('替换 Windows 完整路径（含用户名）', () => {
+    const input = 'Reading C:\\Users\\ke\\Documents\\projects\\obsidian_projects\\pkm-hub\\Projects\\test.md';
+    const out = redactPaths(input);
+    expect(out).not.toContain('C:\\Users\\ke');
+    expect(out).not.toContain('pkm-hub');
+    expect(out).toContain('[VAULT_PATH]');
+  });
+
+  it('替换 Git Bash 路径', () => {
+    const input = 'file at /c/Users/ke/Documents/projects/obsidian_projects/pkm-hub/skills/test.md';
+    const out = redactPaths(input);
+    expect(out).not.toContain('/c/Users/ke');
+    expect(out).not.toContain('pkm-hub');
+    expect(out).toContain('[VAULT_PATH]');
+  });
+
+  it('替换裸 pkm-hub 系列目录名', () => {
+    expect(redactPaths('see pkm-hub-skills for details')).toContain('VAULT');
+    expect(redactPaths('see pkm-hub-agents-md for details')).toContain('VAULT');
+    expect(redactPaths('the pkm-hub repo')).toContain('VAULT');
+  });
+
+  it('替换 .step-code 和 .pi 目录中的用户名', () => {
+    expect(redactPaths('C:\\Users\\ke\\.step-code\\config.toml')).not.toContain('C:\\Users\\ke');
+    expect(redactPaths('C:\\Users\\ke\\.pi\\agent')).not.toContain('C:\\Users\\ke');
+  });
+
+  it('不触碰非知识库路径', () => {
+    const clean = 'C:\\Users\\ke\\Documents\\projects\\CodeProjects\\step-code\\src\\cli.ts';
+    expect(redactPaths(clean)).toBe(clean);
+  });
+
+  it('替换 obsidian_projects 目录名', () => {
+    expect(redactPaths('obsidian_projects/pkm-hub')).not.toContain('obsidian_projects');
+  });
+});
+
+describe('looksLikeAgentsMd', () => {
+  it('命中 AGENTS.md 标记', () => {
+    expect(looksLikeAgentsMd('## 输出约束\n严禁泄露')).toBe(true);
+    expect(looksLikeAgentsMd('## 项目体系\n...')).toBe(true);
+    expect(looksLikeAgentsMd('<!-- pkm-hub-agents-md 分发 -->')).toBe(true);
+  });
+
+  it('普通文件不误报', () => {
+    expect(looksLikeAgentsMd('const x = 1;\nfunction foo() {}')).toBe(false);
+    expect(looksLikeAgentsMd('# My Notes\nsome content')).toBe(false);
+  });
+});
+
+describe('redactWireLineVendor', () => {
+  it('knowledge base 文件的 tool_result 替换为 [VAULT_CONTENT]', () => {
+    const line = JSON.stringify({
+      type: 'context.append_message',
+      message: {
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu_1', name: 'read_file', input: { path: 'C:\\Users\\ke\\Documents\\projects\\obsidian_projects\\pkm-hub\\Projects\\note.md' } },
+            { type: 'tool_result', tool_use_id: 'tu_1', content: 'sensitive vault content here' },
+          ],
+        },
+      },
+    });
+    const out = redactWireLineVendor(line);
+    expect(out).toContain('[VAULT_CONTENT]');
+    expect(out).not.toContain('sensitive vault content');
+    expect(out).toContain('[VAULT_PATH]');
+  });
+
+  it('AGENTS.md 的 tool_result 替换为 [SYSTEM_CONFIG]', () => {
+    const line = JSON.stringify({
+      type: 'context.append_message',
+      message: {
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu_2', name: 'read_file', input: { path: 'C:\\Users\\ke\\Documents\\projects\\obsidian_projects\\pkm-hub\\AGENTS.md' } },
+            { type: 'tool_result', tool_use_id: 'tu_2', content: '## 输出约束\n严禁泄露\n## 项目体系\n保密内容' },
+          ],
+        },
+      },
+    });
+    const out = redactWireLineVendor(line);
+    expect(out).toContain('[SYSTEM_CONFIG]');
+    expect(out).not.toContain('严禁泄露');
+    expect(out).not.toContain('保密内容');
+  });
+
+  it('非知识库文件的 tool_result 保留内容', () => {
+    const line = JSON.stringify({
+      type: 'context.append_message',
+      message: {
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu_3', name: 'read_file', input: { path: 'C:\\Users\\ke\\Documents\\projects\\CodeProjects\\step-code\\src\\cli.ts' } },
+            { type: 'tool_result', tool_use_id: 'tu_3', content: 'source code content' },
+          ],
+        },
+      },
+    });
+    const out = redactWireLineVendor(line);
+    expect(out).toContain('source code content');
+    expect(out).not.toContain('[VAULT_CONTENT]');
+  });
+
+  it('非 append_message 行退回路径脱敏', () => {
+    const line = JSON.stringify({ type: 'other.event', data: 'check pkm-hub path' });
+    const out = redactWireLineVendor(line);
+    expect(out).toContain('VAULT');
+    expect(out).not.toContain('pkm-hub');
+  });
+
+  it('AGENTS.md 内容指纹兜底：没有 tool_use 但有标记', () => {
+    // 场景：wire 里只有 tool_result 没有 tool_use（unlikely 但兜底）
+    const line = JSON.stringify({
+      type: 'context.append_message',
+      message: {
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tu_4', content: '## 输出约束\n正文内容\n## 项目体系\n更多' },
+          ],
+        },
+      },
+    });
+    const out = redactWireLineVendor(line);
+    expect(out).toContain('[SYSTEM_CONFIG]');
+    expect(out).not.toContain('正文内容');
+  });
+
+  it('解析失败时退回纯文本脱敏', () => {
+    const line = 'not json at all but has pkm-hub in it';
+    const out = redactWireLineVendor(line);
+    expect(out).toContain('VAULT');
+    expect(out).not.toContain('pkm-hub');
   });
 });

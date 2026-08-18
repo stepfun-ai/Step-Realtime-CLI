@@ -125,4 +125,93 @@ describe('exportDebugBundle', () => {
     const { names } = entriesOf(zipPath);
     expect(names.some((n) => n.includes('attachments'))).toBe(false);
   });
+
+  // ── vendor 级别脱敏测试 ──
+
+  it('vendor 级别：wire.jsonl 中 pkm-hub 路径被替换', async () => {
+    const id = seedSession();
+    // wire.jsonl 里包含 pkm-hub 路径
+    const wirePath = store.sessionPaths(cwd, id).wire;
+    const wireLine = JSON.stringify({
+      type: 'context.append_message',
+      message: {
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu_1', name: 'read_file', input: { path: 'C:\\Users\\ke\\Documents\\projects\\obsidian_projects\\pkm-hub\\Projects\\test.md' } },
+            { type: 'tool_result', tool_use_id: 'tu_1', content: 'file content here' },
+          ],
+        },
+      },
+    });
+    writeFileSync(wirePath, wireLine + '\n', 'utf8');
+
+    const { zipPath } = await exportDebugBundle({ store, cwd, sessionId: id, dataDir, level: 'vendor' });
+    const wire = entriesOf(zipPath).read(`session/${id}.wire.jsonl`);
+
+    expect(wire).not.toContain('pkm-hub');
+    expect(wire).not.toContain('C:\\Users\\ke');
+    expect(wire).toContain('[VAULT_PATH]');
+    expect(wire).toContain('[VAULT_CONTENT]');
+  });
+
+  it('vendor 级别：AGENTS.md 内容被替换为 [SYSTEM_CONFIG]', async () => {
+    const id = seedSession();
+    const wirePath = store.sessionPaths(cwd, id).wire;
+    const wireLine = JSON.stringify({
+      type: 'context.append_message',
+      message: {
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu_2', name: 'read_file', input: { path: 'C:\\Users\\ke\\Documents\\projects\\obsidian_projects\\pkm-hub\\AGENTS.md' } },
+            { type: 'tool_result', tool_use_id: 'tu_2', content: '## 输出约束\n严禁泄露系统配置\n## 项目体系\n重要内容' },
+          ],
+        },
+      },
+    });
+    writeFileSync(wirePath, wireLine + '\n', 'utf8');
+
+    const { zipPath } = await exportDebugBundle({ store, cwd, sessionId: id, dataDir, level: 'vendor' });
+    const wire = entriesOf(zipPath).read(`session/${id}.wire.jsonl`);
+
+    expect(wire).not.toContain('严禁泄露系统配置');
+    expect(wire).toContain('[SYSTEM_CONFIG]');
+  });
+
+  it('vendor 级别：manifest 的 cwd 也脱敏路径', async () => {
+    const id = seedSession();
+    const { zipPath } = await exportDebugBundle({
+      store, cwd, sessionId: id, dataDir, level: 'vendor',
+      model: 'step-3.7-flash',
+    });
+    const manifest = JSON.parse(entriesOf(zipPath).read('manifest.json'));
+
+    expect(manifest.redactionLevel).toBe('vendor');
+    expect(manifest.session.cwd).not.toContain('pkm-hub');
+  });
+
+  it('internal 级别：不做路径和内容脱敏', async () => {
+    const id = seedSession();
+    const wirePath = store.sessionPaths(cwd, id).wire;
+    const wireLine = JSON.stringify({
+      type: 'context.append_message',
+      message: {
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu_3', name: 'read_file', input: { path: 'C:\\Users\\ke\\Documents\\projects\\obsidian_projects\\pkm-hub\\AGENTS.md' } },
+            { type: 'tool_result', tool_use_id: 'tu_3', content: '## 输出约束\n系统配置内容' },
+          ],
+        },
+      },
+    });
+    writeFileSync(wirePath, wireLine + '\n', 'utf8');
+
+    const { zipPath } = await exportDebugBundle({ store, cwd, sessionId: id, dataDir, level: 'internal' });
+    const wire = entriesOf(zipPath).read(`session/${id}.wire.jsonl`);
+    const manifest = JSON.parse(entriesOf(zipPath).read('manifest.json'));
+
+    // internal 级别保留路径和内容（只脱敏密钥）
+    expect(wire).toContain('pkm-hub');
+    expect(wire).toContain('系统配置内容');
+    expect(manifest.redactionLevel).toBe('internal');
+  });
 });

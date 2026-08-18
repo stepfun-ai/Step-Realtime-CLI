@@ -13,6 +13,13 @@
 /** 替换占位符。 */
 export const REDACTED = '[REDACTED]';
 
+/** vendor 级别占位符：知识库文件内容。 */
+export const VAULT_CONTENT = '[VAULT_CONTENT]';
+/** vendor 级别占位符：AGENTS.md 内容。 */
+export const SYSTEM_CONFIG = '[SYSTEM_CONFIG]';
+/** vendor 级别占位符：知识库路径。 */
+export const VAULT_PATH = '[VAULT_PATH]';
+
 /** 正文擦除规则：按顺序应用；先擦具体密钥形态，再擦 key=value 结构。 */
 const TEXT_RULES: { re: RegExp; replace: string }[] = [
   // OpenAI / StepFun 风格密钥：sk-xxxx（含项目式 sk-proj-xxx）
@@ -82,4 +89,181 @@ export function redactByKeyName(value: unknown, seen: WeakSet<object> = new Weak
     }
   }
   return obj;
+}
+
+// ── vendor 级别：内容与路径脱敏 ──────────────────────────────────
+
+/**
+ * 路径脱敏规则：把知识库路径替换为占位符。
+ *
+ * 按顺序匹配，先长后短：
+ * 1. Windows 完整路径（含用户名）
+ * 2. Git Bash 路径
+ * 3. 含 pkm-hub 的长路径
+ * 4. 裸路径段
+ */
+const PATH_RULES: { re: RegExp; replace: string }[] = [
+  // Windows 完整路径（含用户名）
+  { re: /C:\\Users\\[^\\]+\\Documents\\projects\\obsidian_projects\\pkm-hub[^\s"'\]]*/gi, replace: VAULT_PATH },
+  // Git Bash / MSYS 路径
+  { re: /\/c\/Users\/[^/]+\/Documents\/projects\/obsidian_projects\/pkm-hub[^\s"'\]]*/g, replace: VAULT_PATH },
+  // 其它 C: 开头的 pkm-hub 相关路径
+  { re: /C:\\Users\\[^\\]+\\.step-code\b/g, replace: 'C:\\Users\\USER\\.step-code' },
+  { re: /C:\\Users\\[^\\]+\\.pi\b/g, replace: 'C:\\Users\\USER\\.pi' },
+  // pkm-hub 系列目录名
+  { re: /\bpkm-hub(?:-skills|-agents-md|-runtime|-recon|-wealth|-books|-lab|-archive)\b/g, replace: 'VAULT' },
+  // 裸 pkm-hub
+  { re: /\bpkm-hub\b/g, replace: 'VAULT' },
+  // obsidian_projects 目录
+  { re: /\bobsidian_projects\b/g, replace: 'vault_projects' },
+];
+
+/**
+ * AGENTS.md 内容指纹：检测文本是否包含 AGENTS.md 特征标记。
+ *
+ * 选这些标记的理由：
+ * - `## 输出约束`：AGENTS.md 核心章节，知识库其他文件不会出现
+ * - `## 项目体系`：AGENTS.md 独有
+ * - `## 前置 Skill 加载`：AGENTS.md 独有
+ * - `pkm-hub-agents-md 分发`：文件头注释，唯一
+ *
+ * 命中任意一个即判定为 AGENTS.md 内容。误报面极小——这些标题组合在普通文档里不会同时出现。
+ */
+const AGENTS_MARKERS = [
+  '## 输出约束',
+  '## 项目体系',
+  '## 前置 Skill 加载',
+  'pkm-hub-agents-md 分发',
+];
+
+/**
+ * vendor 级别：对文本做路径替换。
+ * 只替换路径，不动内容结构——tool_result 的代码内容对排查有价值。
+ */
+export function redactPaths(text: string): string {
+  let out = text;
+  for (const { re, replace } of PATH_RULES) {
+    out = out.replace(re, replace);
+  }
+  return out;
+}
+
+/**
+ * 检测一段文本是否是 AGENTS.md 内容（内容指纹匹配）。
+ */
+export function looksLikeAgentsMd(text: string): boolean {
+  return AGENTS_MARKERS.some((m) => text.includes(m));
+}
+
+/**
+ * 判断路径是否属于知识库（pkm-hub 下的文件）。
+ */
+function isVaultPath(p: string): boolean {
+  const lower = p.toLowerCase();
+  return (
+    lower.includes('pkm-hub') ||
+    lower.includes('obsidian_projects') ||
+    lower.includes('agents.md') ||
+    lower.includes('pkm-hub-skills') ||
+    lower.includes('pkm-hub-agents-md')
+  );
+}
+
+/**
+ * wire.jsonl 行级结构化脱敏（vendor 级别）。
+ *
+ * 解析每行 JSON，对 context.append_message 的 tool_result 做指纹检测：
+ * - 来源是 AGENTS.md → 内容替换为 [SYSTEM_CONFIG]
+ * - 来源是 pkm-hub 文件 → 内容替换为 [VAULT_CONTENT]
+ *
+ * 检测来源的方法：看同一条消息里 tool_use 块的 input 是否包含
+ * pkm-hub 路径或 agents.md。如果 wire 里只有 tool_result 没有 tool_use，
+ * 退回到内容指纹检测。
+ *
+ * 非 append_message 行做纯路径脱敏。
+ */
+export function redactWireLineVendor(line: string): string {
+  try {
+    const obj = JSON.parse(line) as Record<string, unknown>;
+    if (obj.type !== 'context.append_message') return redactSecrets(redactPaths(line));
+
+    const msg = (obj.message as Record<string, unknown>) ?? {};
+    const inner = (msg.message as Record<string, unknown>) ?? {};
+    const content = inner.content;
+    if (!Array.isArray(content)) {
+      // content 是字符串（如 user 消息）——结构化脱敏不适用，退回密钥 + 路径脱敏
+      return redactSecrets(redactPaths(line));
+    }
+
+    // 先收集这条消息里所有 tool_use 的路径
+    const toolPaths: string[] = [];
+    for (const block of content) {
+      if (typeof block !== 'object' || block === null) continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === 'tool_use') {
+        const input = b.input as Record<string, unknown> | undefined;
+        const path = (input?.path ?? input?.file_path ?? input?.file) as string | undefined;
+        if (path !== undefined) toolPaths.push(path);
+      }
+    }
+
+    // 对 tool_result 做脱敏
+    let resultIdx = 0;
+    for (let i = 0; i < content.length; i++) {
+      const block = content[i];
+      if (typeof block !== 'object' || block === null) continue;
+      const b = block as Record<string, unknown>;
+      if (b.type !== 'tool_result') continue;
+
+      const text = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '');
+      // 1. AGENTS.md 指纹检测（最优先）
+      if (looksLikeAgentsMd(text)) {
+        content[i] = { ...b, content: SYSTEM_CONFIG };
+        continue;
+      }
+      // 2. tool_use 路径匹配
+      const sourcePath = toolPaths[resultIdx] ?? '';
+      if (sourcePath !== '' && isVaultPath(sourcePath)) {
+        content[i] = { ...b, content: VAULT_CONTENT };
+      }
+      resultIdx++;
+    }
+
+    // JSON.stringify 会把字符串里的 \ 转义成 \\，导致 redactPaths 的正则匹配不上。
+    // 所以在序列化之前，先对所有 string 值跑路径脱敏。
+    redactPathsInObject(obj);
+    return redactSecrets(redactPaths(JSON.stringify(obj)));
+  } catch {
+    // 解析失败，退回纯文本脱敏
+    return redactSecrets(redactPaths(line));
+  }
+}
+
+/**
+ * 递归遍历对象，对所有 string 值应用 redactPaths。
+ * 在 JSON.stringify 之前调用，避免反斜杠被双重转义导致路径正则失配。
+ */
+function redactPathsInObject(obj: unknown, seen: WeakSet<object> = new WeakSet()): void {
+  if (obj === null || typeof obj !== 'object') return;
+  if (seen.has(obj)) return;
+  seen.add(obj);
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      if (typeof obj[i] === 'string') {
+        obj[i] = redactPaths(obj[i] as string);
+      } else if (typeof obj[i] === 'object' && obj[i] !== null) {
+        redactPathsInObject(obj[i], seen);
+      }
+    }
+    return;
+  }
+  const record = obj as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    const val = record[key];
+    if (typeof val === 'string') {
+      record[key] = redactPaths(val);
+    } else if (typeof val === 'object' && val !== null) {
+      redactPathsInObject(val, seen);
+    }
+  }
 }

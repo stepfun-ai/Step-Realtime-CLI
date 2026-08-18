@@ -16,6 +16,8 @@ export interface RunExportDebugZipOptions {
   sessionId?: string;
   /** ~/.step-code 数据根覆盖（测试用），透传给 exportDebugBundle。 */
   dataDir?: string;
+  /** 脱敏级别透传。缺省 vendor。 */
+  level?: import('./debugBundle.js').RedactLevel;
 }
 
 export interface RunExportDebugZipResult {
@@ -35,7 +37,7 @@ export interface RunExportDebugZipResult {
  * - 导出抛异常 → code 1 + stderr=错误 message。
  */
 export async function runExportDebugZip(opts: RunExportDebugZipOptions): Promise<RunExportDebugZipResult> {
-  const { store, cwd, sessionId, dataDir } = opts;
+  const { store, cwd, sessionId, dataDir, level } = opts;
   const target = sessionId !== undefined ? store.load(cwd, sessionId) : store.latest(cwd);
   if (target === null) {
     return { code: 1, stderr: 'No session found for current directory\n' };
@@ -47,6 +49,7 @@ export async function runExportDebugZip(opts: RunExportDebugZipOptions): Promise
       sessionId: target.id,
       ...(target.model ? { model: target.model } : {}),
       ...(dataDir !== undefined ? { dataDir } : {}),
+      ...(level !== undefined ? { level } : {}),
     });
     return { code: 0, stdout: `${zipPath}\n` };
   } catch (e) {

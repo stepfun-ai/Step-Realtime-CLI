@@ -18,7 +18,14 @@ import AdmZip from 'adm-zip';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type { SessionStore } from './store.js';
 import { dumpLogBuffer } from '../utils/logger.js';
-import { redactByKeyName, redactSecrets } from '../utils/redact.js';
+import { redactByKeyName, redactPaths, redactSecrets, redactWireLineVendor } from '../utils/redact.js';
+
+/**
+ * 脱敏级别：
+ * - internal：只擦密钥（现有行为，给内部排查用）
+ * - vendor：擦密钥 + 路径 + 知识库内容 + AGENTS.md（默认，给外部厂商排查用）
+ */
+export type RedactLevel = 'internal' | 'vendor';
 
 export interface ExportDebugBundleOptions {
   store: SessionStore;
@@ -28,6 +35,8 @@ export interface ExportDebugBundleOptions {
   model?: string;
   /** ~/.step-code 数据根，用于定位 config.toml/mcp.json 与产物落点。测试可覆盖。 */
   dataDir?: string;
+  /** 脱敏级别，缺省 vendor。 */
+  level?: RedactLevel;
 }
 
 export interface ExportDebugBundleResult {
@@ -97,56 +106,78 @@ export async function exportDebugBundle(opts: ExportDebugBundleOptions): Promise
   const { store, cwd, sessionId } = opts;
   const dataDir = opts.dataDir ?? join(homedir(), '.step-code');
   const model = opts.model ?? 'unknown';
+  const level: RedactLevel = opts.level ?? 'vendor';
+  const isVendor = level === 'vendor';
 
   const zip = new AdmZip();
   const included: string[] = [];
 
   // 1) 当前会话落盘产物：快照 + 事件日志（wire.jsonl，会话状态机的事实源）。
-  // 正文做 best-effort 脱敏（不保证完全）。
+  // internal 级别：正文 best-effort 脱敏。
+  // vendor 级别：wire.jsonl 逐行结构化脱敏（路径 + 知识库内容 + AGENTS.md）。
   const paths = store.sessionPaths(cwd, sessionId);
   if (existsSync(paths.json)) {
-    zip.addFile(`session/${sessionId}.json`, Buffer.from(redactSecrets(readFileSync(paths.json, 'utf8')), 'utf8'));
+    const raw = readFileSync(paths.json, 'utf8');
+    const content = isVendor ? redactPaths(redactSecrets(raw)) : redactSecrets(raw);
+    zip.addFile(`session/${sessionId}.json`, Buffer.from(content, 'utf8'));
     included.push(`session/${sessionId}.json`);
   }
   if (existsSync(paths.wire)) {
-    zip.addFile(
-      `session/${sessionId}.wire.jsonl`,
-      Buffer.from(redactSecrets(readFileSync(paths.wire, 'utf8')), 'utf8'),
-    );
+    const raw = readFileSync(paths.wire, 'utf8');
+    let content: string;
+    if (isVendor) {
+      // vendor 级别逐行处理：结构化脱敏（知识库内容 / AGENTS.md / 路径）
+      content = raw
+        .split('\n')
+        .map((line) => (line.trim() ? redactWireLineVendor(line) : line))
+        .join('\n');
+    } else {
+      content = redactSecrets(raw);
+    }
+    zip.addFile(`session/${sessionId}.wire.jsonl`, Buffer.from(content, 'utf8'));
     included.push(`session/${sessionId}.wire.jsonl`);
   }
 
   // 2) 配置文件：按 key 名确定性脱敏后纳入（可能含 api_key）。
+  // vendor 级别：再跑一轮路径脱敏。
   const configPath = join(dataDir, 'config.toml');
   if (existsSync(configPath)) {
-    zip.addFile('config.toml', Buffer.from(redactToml(readFileSync(configPath, 'utf8')), 'utf8'));
+    let content = redactToml(readFileSync(configPath, 'utf8'));
+    if (isVendor) content = redactPaths(content);
+    zip.addFile('config.toml', Buffer.from(content, 'utf8'));
     included.push('config.toml');
   }
   const mcpPath = join(dataDir, 'mcp.json');
   if (existsSync(mcpPath)) {
-    zip.addFile('mcp.json', Buffer.from(redactJson(readFileSync(mcpPath, 'utf8')), 'utf8'));
+    let content = redactJson(readFileSync(mcpPath, 'utf8'));
+    if (isVendor) content = redactPaths(content);
+    zip.addFile('mcp.json', Buffer.from(content, 'utf8'));
     included.push('mcp.json');
   }
 
   // 3) 运行日志现场：环形缓冲 dump（写入时已脱敏）。
-  zip.addFile('errors.log', Buffer.from(dumpLogBuffer(), 'utf8'));
+  // vendor 级别：再跑一轮路径脱敏。
+  const logContent = dumpLogBuffer();
+  zip.addFile('errors.log', Buffer.from(isVendor ? redactPaths(logContent) : logContent, 'utf8'));
   included.push('errors.log');
 
   // 4) manifest：环境自描述，只放元数据、不放敏感值。
   const now = new Date();
   included.push('manifest.json');
-  const manifest = {
+  const manifest: Record<string, unknown> = {
     generatedAt: now.toISOString(),
     app: { name: 'step-code', version: readAppVersion() },
     os: { platform: platform(), release: release(), arch: arch() },
     node: process.version,
     model,
-    session: { id: sessionId, cwd },
+    session: { id: sessionId, cwd: isVendor ? redactPaths(cwd) : cwd },
     terminal: { TERM: process.env['TERM'] ?? null, SHELL: process.env['SHELL'] ?? null },
     files: [...included],
     redacted: true,
-    redactionNote:
-      'config/mcp 按 key 名确定性脱敏；会话正文与日志为 best-effort 正则脱敏，不保证完全。请勿公开分享。',
+    redactionLevel: level,
+    redactionNote: isVendor
+      ? 'config/mcp 按 key 名确定性脱敏 + 路径脱敏；wire.jsonl 做结构化脱敏（知识库内容与 AGENTS.md 已擦除）。仍为 best-effort，请勿公开分享。'
+      : 'config/mcp 按 key 名确定性脱敏；会话正文与日志为 best-effort 正则脱敏，不保证完全。请勿公开分享。',
   };
   zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
 
