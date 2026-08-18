@@ -162,6 +162,9 @@ describe('skill 工具', () => {
     const r = await skillTool.execute({ skill: 'nope' }, { cwd: process.cwd(), skills: reg });
     expect(r.isError).toBe(true);
     expect(r.content).toContain('未知技能');
+    // 报错须给出路：指引用 read_file 读跨仓 SKILL.md（注册表只认 cwd）
+    expect(r.content).toContain('read_file');
+    expect(r.content).toContain('.step-code/skills/');
   });
 
   it('ctx 无 skills 报不支持', async () => {

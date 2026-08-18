@@ -29,7 +29,12 @@ export const skillTool: ToolDef<z.infer<typeof schema>> = {
     const def = ctx.skills.skills.get(input.skill);
     if (def === undefined) {
       const available = [...ctx.skills.skills.keys()].join(', ') || '（无）';
-      return fail(`未知技能「${input.skill}」。可用：${available}`);
+      return fail(
+        `未知技能「${input.skill}」。注册表只含当前工作目录（cwd）的 skill。\n` +
+          `若该 skill 属于其他仓库（如某 AGENTS.md 引用的项目 skill），skill 工具跨仓激活不到，` +
+          `改用 read_file 读其 SKILL.md 绝对路径（通常在该仓库的 .step-code/skills/${input.skill}/SKILL.md），内容与激活等价。\n` +
+          `可用：${available}`,
+      );
     }
     return ok(renderSkillActivation(def, input.args ?? ''));
   },
