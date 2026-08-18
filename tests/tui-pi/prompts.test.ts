@@ -215,6 +215,17 @@ describe('QuestionPrompt', () => {
     expect(settled).toHaveLength(0);
   });
 
+  it('自由输入行渲染成 [n] 其他 标签，而不是 [？] 问号（否则用户看不出这是个可选入口）', () => {
+    // 缺口：此前 pi 版把自由输入项画成 [?] 一个问号，选项是 [1][2]，突然冒出 [?] 像个
+    // 提示符而非选项。对齐 ink 版（[n] 其他）与某 pi-tui 对照实现（❯ 粗光标）。
+    const { block } = mk();
+    const lines = plain(block.render(80));
+    const otherLine = lines.find((l) => l.includes('Other'));
+    expect(otherLine, '自由输入行应带 Other 标签').toBeDefined();
+    expect(otherLine!).toMatch(/\[\d+\]\s+Other/);
+    expect(lines.some((l) => l.includes('[?]')), '不应再用 [?] 问号占位').toBe(false);
+  });
+
   it('多选：空格勾选，Enter 一次提交数组', () => {
     const { block, settled } = mk({
       questions: [

@@ -414,16 +414,19 @@ export class QuestionPrompt {
       const box = q.multi_select === true ? (slot.checked.has(i) ? c.ok('[✓] ') : c.dim('[ ] ')) : '';
       const desc = opt.description !== undefined && opt.description !== '' ? c.dim(`  — ${opt.description}`) : '';
       const label = on ? c.toolName(opt.label) : opt.label;
-      const prefix = on ? c.toolName('→ ') : '  ';
+      const prefix = on ? c.toolName('❯ ') : '  ';
       inner.push(truncateToWidth(`${prefix}${box}[${i + 1}] ${label}${desc}`, innerWidth));
     });
 
-    // 自由输入行
+    // 自由输入行：与上方选项同款 [n] label 结构（ink 版显示 [5] 其他，此前 pi 版只画个 [?
+    // 问号，用户看不出这是个可选入口）。选中态对齐选项——黄色标签 + ❯ 粗光标。
     const onOther = slot.cursor === this.otherIndex;
-    const otherText = slot.other === '' ? c.dim(t('question.otherPlaceholder')) : slot.other;
+    const otherLabel = t('question.other');
+    // 空草稿时把「自己写一个答案」作为暗提示跟在标签后，与对照版的占位同效
+    const otherText = slot.other !== '' ? slot.other : c.dim(t('question.otherPlaceholder'));
     const otherCursor = onOther && slot.other !== '' ? '▌' : '';
-    const otherPrefix = onOther ? c.toolName('→ ') : '  ';
-    const otherLine = `${otherPrefix}${onOther ? c.toolName('[?] ') : c.dim('[?] ')}${otherText}${otherCursor}`;
+    const otherPrefix = onOther ? c.toolName('❯ ') : '  ';
+    const otherLine = `${otherPrefix}[${this.otherIndex + 1}] ${onOther ? c.toolName(otherLabel) : otherLabel} ${otherText}${otherCursor}`;
     inner.push(truncateToWidth(otherLine, innerWidth));
 
     // 空行分隔
