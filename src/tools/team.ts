@@ -106,7 +106,7 @@ export function workerBriefing(m: TeamMission, worktreeAbs: string): string {
     ``,
     `【绝对纪律——没有模糊空间】`,
     `① 文件改动：必须用写文件工具（write_file 等）落在工作间内。write guard 会硬拦工作间外的写工具调用，不可绕过。`,
-    `② 禁止用 bash 在工作间外写文件。cat / sed / cp / tee / heredoc 重定向到工作间外路径都算。bash 不是隔离的漏洞通道，是信任边界——踩穿即事故。`,
+    `② 禁止用 bash 在工作间外写文件。cat / sed / cp / tee / heredoc 重定向到工作间外路径都算。bash 不能绕过 write_file 的拦截——系统会扫描命令中的写入语法并拒绝，违规即终止。`,
     `③ git 操作（add / commit）只能在工作间内、提交到任务分支。禁止对基准仓主目录执行任何 git 写命令（git -C <主仓> commit、cd 主仓 && git commit 等）。`,
     `④ 验证脚本（node 脚本、临时文件）写在工作间内跑；需要对照主仓最新代码可以读，不能写。`,
     ``,

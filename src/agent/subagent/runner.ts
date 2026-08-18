@@ -25,15 +25,21 @@ const SUMMARY_MIN_LEN = 200;
 const SPAWN_TOOL = 'spawn_agent';
 
 /**
- * per-worker 写根约束包装：write_file/edit_file 的目标必须落在 allowRoot 内，bash 的
- * 写入目标由 checkBashWrite 做静态判定，其余调用透传给 base。
- * 提取为独立函数以便单测（team worker 的硬隔离靠它）。
+ * per-worker 写根约束包装：在 team 多 worker 协作模式下，每个 worker 被分配一个独立的
+ * git worktree 作为工作间（allowRoot），此函数包装工具授权钩子，确保 worker 只能写
+ * 自己的工作间。
  *
- * bash 为什么也要拦：不拦的话 worker 可以用一句重定向或 cp 写到工作间外，范围互斥
- * 就只剩 team_merge 合并时的 diff 事后检查兜着——已经发生过踩穿。
- * 而拦 bash 曾被担心会拦死 git（worker 要在工作间里提交），实测不会：守卫只看命令行里
- * 的显式写入语法（重定向、cp/mv/rm/tee/sed -i/dd/truncate），git 子命令与 npm/npx
- * 一律判为无写入迹象放行。接线前用 21 条 worker 典型命令验证过误报面。
+ * 为什么需要拦 bash：
+ * write_file / edit_file 的参数里有显式 path 字段，检查它是否在 allowRoot 内即可。
+ * 但 bash 工具的参数是一整条命令字符串，写入目标藏在命令里——
+ * `echo x > /主仓/foo.ts`、`cp a /主仓/b.ts`、`sed -i ... /主仓/c.ts` 都能绕过
+ * write_file 的拦截。如果不拦 bash，范围互斥就只剩 team_merge 合并时的事后 diff
+ * 检查兜底——而 2026-08-12 实测中曾有一个 worker 通过 bash 重定向写到了工作间外。
+ *
+ * checkBashWrite 做什么：扫描命令字符串，找出重定向、cp/mv/rm/tee/sed -i/dd/truncate
+ * 等写入语法，检查目标路径是否在 allowRoot 内。git 子命令（add/commit）和 npm/npx
+ * 一律判为无写入迹象放行——worker 要在工作间里提交，不能误拦。接线前用 21 条 worker
+ * 典型命令验证过误报面。
  */
 export function wrapWriteGuard(
   base: NonNullable<LoopHooks['authorizeToolCall']>,

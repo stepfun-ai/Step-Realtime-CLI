@@ -617,7 +617,8 @@ describe('workerBriefing', () => {
     expect(text).toContain('禁止');
     expect(text).toContain('任务分支');
     // 硬纪律四条也应在场
-    expect(text).toContain('踩穿即事故');
+    expect(text).toContain('不可绕过');
+    expect(text).toContain('违规即终止');
     expect(text).toContain('基准仓');
     expect(text).toContain('git -C');
   });
