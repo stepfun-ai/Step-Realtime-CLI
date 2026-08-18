@@ -145,16 +145,24 @@ function colorDiffLine(line: string): string {
   return c.dim(line);
 }
 
-/** 一行文本按宽度折行；空串返回单个空行（保住段间空行）。 */
+/**
+ * 一行文本按宽度折行；空串返回单个空行（保住段间空行）。
+ *
+ * 安全网：`wrapTextWithAnsi` 只按空格/换行折行，长 URL / base64 / 无空格代码串不会被断开，
+ * 单行可能远超终端宽度。pi-tui doRender 检测到 visibleWidth > width 就直接 throw。
+ * 2026-08-17 两次因此崩溃（line 19 w=89>87、line 399 w=992>67）。
+ * 折行后逐行 `truncateToWidth` 钳到 width，是组件层最后一道防线。
+ */
 function wrap(text: string, width: number): string[] {
   if (text === '') return [''];
+  const w = Math.max(1, width);
   const out: string[] = [];
   for (const raw of text.split('\n')) {
     if (raw === '') {
       out.push('');
       continue;
     }
-    out.push(...wrapTextWithAnsi(raw, Math.max(1, width)));
+    out.push(...wrapTextWithAnsi(raw, w).map((l) => truncateToWidth(l, w)));
   }
   return out;
 }
@@ -241,7 +249,10 @@ export class ItemBlock implements Component {
     } else {
       this.markdown.setText(text);
     }
-    return this.markdown.render(width);
+    // 安全网：Markdown 组件内部 wrapTextWithAnsi 对长 URL/base64/无空格串不折行，
+    // 可能产出宽于 width 的行，触发 pi-tui doRender 的宽度断言。逐行钳到 width。
+    const w = Math.max(1, width);
+    return this.markdown.render(w).map((l) => truncateToWidth(l, w));
   }
 
   /**
@@ -252,7 +263,8 @@ export class ItemBlock implements Component {
     if (item.kind === 'thinking') {
       const md = new Markdown(item.text, 0, 0, thinkingMarkdownTheme, undefined, { transform: markdownTransform });
       // 压灰同主界面：查看器里也不该出现半灰半白
-      return dimAll(md.render(width - 2));
+      const w = Math.max(1, width - 2);
+      return dimAll(md.render(w).map((l) => truncateToWidth(l, w)));
     }
     return renderToolExpanded(item, width);
   }

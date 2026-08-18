@@ -1232,3 +1232,38 @@ describe('Transcript.foldOldTurns 触发闸门（避免每回合全屏重绘）'
     expect(r.folded).toBe(true);
   });
 });
+
+describe('宽度溢出安全网（2026-08-17 两次 doRender 崩溃）', () => {
+  it('wrap 将 992 字符无空格长串截断到指定宽度', () => {
+    // 复刻 crash log line 399: w=992>67，单个无空格长串
+    const longStr = 'A'.repeat(992);
+    const width = 67;
+    // 通过 ItemBlock 的 user 渲染路径走 wrap（user 分支用 wrap(it.text, width-2)）
+    const block = new ItemBlock({ kind: 'user', text: longStr } as DisplayItem);
+    const lines = block.render(width);
+    for (const l of lines) {
+      expect(visibleWidth(l), `行宽 ${visibleWidth(l)} 超过 ${width}，会触发 doRender throw`).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('renderMarkdown 对长 URL/base64 逐行截断到 width', () => {
+    // 思考预览与 assistant 渲染都走 renderMarkdown，长串不能逃过
+    const longUrl = 'https://example.com/' + 'x'.repeat(980);
+    const block = new ItemBlock({ kind: 'assistant', text: longUrl } as DisplayItem);
+    const width = 67;
+    const lines = block.render(width);
+    for (const l of lines) {
+      expect(visibleWidth(l), `Markdown 输出行宽 ${visibleWidth(l)} 超过 ${width}`).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('renderMarkdown(thinking) 折叠态同样截断', () => {
+    const longThink = '│ ' + 'thinking '.repeat(200); // 无空格长串变体
+    const block = new ItemBlock({ kind: 'thinking', text: longThink } as DisplayItem);
+    const width = 67;
+    const lines = block.render(width);
+    for (const l of lines) {
+      expect(visibleWidth(l), `thinking 输出行宽 ${visibleWidth(l)} 超过 ${width}`).toBeLessThanOrEqual(width);
+    }
+  });
+});
