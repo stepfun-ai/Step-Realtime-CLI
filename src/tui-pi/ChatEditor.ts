@@ -72,6 +72,14 @@ export class ChatEditor extends Editor {
    */
   onCtrlO?: () => boolean;
   /**
+   * Ctrl+G：拉起外部编辑器写长 prompt。
+   * 返回 true 表示已消费（编辑器启动成功）；false 让按键下传。
+   *
+   * Claude Code 和 Codex CLI 都具备的能力。终端输入框写长 prompt / 多行代码是痛点，
+   * 外部编辑器是公认解法。返回 false 的典型场景：$EDITOR 未配置且找不到 fallback。
+   */
+  onCtrlG?: () => boolean;
+  /**
    * ↑：busy + 空输入时取回队列尾部一条进输入框编辑。
    *
    * 返回 true 表示已消费（队列非空且取回成功）；false 让按键下传父类做历史导航。
@@ -205,6 +213,9 @@ export class ChatEditor extends Editor {
     }
     if (matchesKey(data, 'ctrl+o')) {
       if (this.onCtrlO?.() === true) return;
+    }
+    if (matchesKey(data, 'ctrl+g')) {
+      if (this.onCtrlG?.() === true) return;
     }
     if (matchesKey(data, 'up')) {
       if (this.onUpArrow?.() === true) return;

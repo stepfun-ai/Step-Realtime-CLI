@@ -11,7 +11,9 @@
  * Esc / Ctrl+C 语义、发送队列、/help /exit /new /clear 四个命令。
  * 审批的完整形态（计划确认、ask_user 多选）在 M2，选择器在 M3，命令全量在 M4。
  */
-import { homedir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Container, ProcessTerminal, TuiMainScreen, matchesKey } from '@earendil-works/pi-tui';
 import type { Component, SelectItem } from '@earendil-works/pi-tui';
@@ -442,6 +444,10 @@ export class PiChat {
     };
     // Ctrl+O 全屏查看器：收集最近 ≤10 条被折叠的工具输出 / 长 thinking，没内容时不消费按键
     this.editor.onCtrlO = () => this.openExpandViewer();
+    // Ctrl+G 外部编辑器：把当前输入框内容丢进 $EDITOR 编辑，保存后回填。
+    // busy 时也允许——编辑的是草稿，不碰在跑的回合。终端输入框写长 prompt 是痛点，
+    // Claude Code / Codex CLI 都具备。找不到编辑器时返回 false（不消费按键）。
+    this.editor.onCtrlG = () => this.openExternalEditor();
 
     // cron 装配：到点把 prompt 静默注入跑一轮；isIdle 闸门保证回合进行中不触发
     // （错过的会在下个空闲 tick 合并补投，coalesced 计数进卡片）。
@@ -3162,6 +3168,131 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   /** 测试用：暴露组件树根（FakeTerminal 下断言渲染输出）。 */
   rootComponents(): Component[] {
     return [this.transcript, this.activity, this.overlayHost, this.editor, this.status];
+  }
+
+  /**
+   * Ctrl+G：拉起外部编辑器编辑当前输入框内容。
+   *
+   * 流程：
+   * 1. 把当前输入框文本写入临时文件
+   * 2. this.tui.stop() 恢复终端
+   * 3. spawnSync 启动编辑器（阻塞等待退出）
+   * 4. 读回文件内容，setText 回输入框
+   * 5. this.tui.start() 重新进入 raw mode
+   * 6. 清理临时文件
+   *
+   * 编辑器选择优先级：$VISUAL > $EDITOR > 平台 fallback
+   * GUI 编辑器需要 --wait 标志才能阻塞；终端类编辑器天然阻塞。
+   *
+   * 返回 true 表示已消费（编辑器成功启动并回读）；false 表示无法启动。
+   */
+  openExternalEditor(): boolean {
+    const text = this.editor.getText();
+    const tmpFile = join(tmpdir(), `step-code-prompt-${Date.now()}.md`);
+    try {
+      writeFileSync(tmpFile, text, 'utf8');
+    } catch {
+      return false;
+    }
+
+    // 选编辑器：$VISUAL 优先（Unix 惯例），其次 $EDITOR，最后平台 fallback
+    const editor = process.env['VISUAL'] ?? process.env['EDITOR'] ?? null;
+    let cmd: string;
+    let args: string[];
+    if (editor !== null && editor.trim() !== '') {
+      // 用户配置的编辑器，直接信任（支持复合命令如 "code --wait"）
+      const parts = this.parseEditorCommand(editor, tmpFile);
+      cmd = parts.cmd;
+      args = parts.args;
+    } else {
+      // 平台 fallback：Windows 优先 code --wait（如果有 VS Code），其次 notepad
+      // macOS/Linux 优先 vi（一定能找到）
+      if (process.platform === 'win32') {
+        const codePath = this.findVSCode();
+        if (codePath !== null) {
+          cmd = codePath;
+          args = ['--wait', tmpFile];
+        } else {
+          cmd = 'notepad';
+          args = [tmpFile];
+        }
+      } else {
+        cmd = process.env['TERM'] !== undefined ? 'vi' : 'vi';
+        args = [tmpFile];
+      }
+    }
+
+    // 停止 TUI：恢复终端到正常模式，否则编辑器的 UI 会画在 pi-tui 的 raw mode 上面
+    this.tui.stop();
+    try {
+      const result = spawnSync(cmd, args, {
+        stdio: 'inherit', // 编辑器直接用 stdin/stdout/stderr
+        windowsHide: false, // Windows 上 notepad 需要可见窗口
+      });
+      if (result.status !== 0 && result.error === undefined) {
+        // 编辑器非零退出（如 notepad 用户点了取消/关闭）——这不算失败，读回可能的内容
+      }
+    } finally {
+      // 无论成功失败都要重启 TUI
+      this.tui.start();
+    }
+
+    // 读回文件内容
+    try {
+      if (existsSync(tmpFile)) {
+        const newText = readFileSync(tmpFile, 'utf8');
+        this.editor.setText(newText);
+      }
+    } catch {
+      // 读回失败不阻塞——用户的原始输入还在输入框里
+    } finally {
+      // 清理临时文件
+      try {
+        if (existsSync(tmpFile)) unlinkSync(tmpFile);
+      } catch {
+        // 清理失败不阻塞
+      }
+    }
+
+    this.tui.requestRender();
+    return true;
+  }
+
+  /**
+   * 解析 $EDITOR 环境变量。
+   * 支持简单命令（"vim"）和带参数命令（"code --wait"）。
+   * 将文件路径追加为最后一个参数。
+   */
+  private parseEditorCommand(editor: string, filePath: string): { cmd: string; args: string[] } {
+    const trimmed = editor.trim();
+    if (trimmed === '') return { cmd: 'vi', args: [filePath] };
+    // 简单处理：按空格分割，第一个是命令，剩下是参数
+    const parts = trimmed.split(/\s+/);
+    const cmd = parts[0]!;
+    const args = [...parts.slice(1), filePath];
+    return { cmd, args };
+  }
+
+  /**
+   * 查找 VS Code 路径（Windows 上 `code` 不在 PATH 里时需要补全路径）。
+   * 检查 VS Code 的标准安装位置。
+   */
+  private findVSCode(): string | null {
+    if (process.platform !== 'win32') return null;
+    const candidates = [
+      join(homedir(), 'AppData', 'Local', 'Programs', 'Microsoft VS Code', 'bin', 'code.cmd'),
+      'code', // 也许在 PATH 里
+    ];
+    for (const c of candidates) {
+      try {
+        // 用 where 命令检查 code 是否可用
+        const result = spawnSync('where', [c], { stdio: 'ignore' });
+        if (result.status === 0) return c;
+      } catch {
+        // ignore
+      }
+    }
+    return null;
   }
 }
 
