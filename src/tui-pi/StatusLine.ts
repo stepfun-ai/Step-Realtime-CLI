@@ -1,4 +1,45 @@
 /**
+ * 组件级渲染缓存。
+ *
+ * pi-tui 主编排层已有行级差分 + back buffer，但组件内部不做缓存。
+ * 对 StatusLine / ActivityLine 这类每帧都被调 render() 的组件，内容没变也在重算——
+ * StatusLine 每帧拼接两行字符串，ActivityLine 每帧跑 textComponent.render() 做 markdown wrap。
+ * 长会话下这是卡顿和 OOM 的同源压力。
+ *
+ * 用法：
+ * - `shouldRender(width)` 返回 true 时正常计算并 `commit(width, lines)` 存结果
+ * - `shouldRender(width)` 返回 false 时直接返回 `cached()`
+ * - `invalidate()` 在内容变化时调用
+ */
+export class RenderCache {
+  private cachedWidth = -1;
+  private cachedLines: string[] = [];
+  private valid = false;
+
+  /** 内容是否需要重新计算。width 变了或缓存已失效 → true。 */
+  shouldRender(width: number): boolean {
+    return !this.valid || this.cachedWidth !== width;
+  }
+
+  /** 存入本次渲染结果。 */
+  commit(width: number, lines: string[]): void {
+    this.cachedWidth = width;
+    this.cachedLines = lines;
+    this.valid = true;
+  }
+
+  /** 返回缓存的渲染结果。 */
+  cached(): string[] {
+    return this.cachedLines;
+  }
+
+  /** 标记缓存失效（内容变化时调用）。 */
+  invalidate(): void {
+    this.valid = false;
+  }
+}
+
+/**
  * 状态行与活动行。
  *
  * StatusLine 对应 Ink 版 StatusBar 的两行式布局（第一行徽章 + 路径，第二行提示 + context
@@ -78,6 +119,7 @@ export interface StatusState {
 
 export class StatusLine implements Component {
   private state: StatusState;
+  private readonly cache = new RenderCache();
 
   constructor(state: StatusState) {
     this.state = state;
@@ -85,6 +127,7 @@ export class StatusLine implements Component {
 
   setState(next: Partial<StatusState>): void {
     this.state = { ...this.state, ...next };
+    this.cache.invalidate();
   }
 
   getState(): StatusState {
@@ -92,10 +135,12 @@ export class StatusLine implements Component {
   }
 
   invalidate(): void {
-    // 无缓存：状态行每帧都可能变（busy/token），重排成本是两行字符串拼接
+    this.cache.invalidate();
   }
 
   render(width: number): string[] {
+    if (!this.cache.shouldRender(width)) return this.cache.cached();
+
     const s = this.state;
     const badges: string[] = [];
     badges.push(s.planMode ? c.accent('plan') : c.mode(s.mode)(s.mode));
@@ -129,7 +174,9 @@ export class StatusLine implements Component {
     const hints = hintRoom > 4 ? c.dim(truncateToWidth(s.hints, hintRoom)) : '';
     const gap = Math.max(1, width - visibleWidth(hints) - ctxWidth);
     const line2 = hints + ' '.repeat(gap) + ctx;
-    return [line1, line2];
+    const lines = [line1, line2];
+    this.cache.commit(width, lines);
+    return lines;
   }
 }
 
@@ -154,9 +201,24 @@ export class ActivityLine implements Component {
    * 旧的 slice(replace(全文)) 方式产出的 SlicedString 会拖住父串导致 OOM。
    */
   private readonly textComponent = new Text('', 0, 0);
+  /**
+   * 全量输出缓存。
+   *
+   * 为什么需要全量缓存而非只缓存 preview：
+   * tick() 每 100ms 推进 spinner 帧号，addOutputChars() 更新 token 计数，
+   * elapsed 也在变化。这些变化都会让 render() 输出不同。
+   * 当用户向上滚动时，pi-tui 检测到 ActivityLine（视口上方）变化，
+   * 会触发 firstChanged < prevViewportTop → 视口跳回顶部。
+   *
+   * 缓存策略：只在 setThinking / setBusy / setTip 时失效（内容实质变化），
+   * tick / addOutputChars 不失效（spinner/token/elapsed 是装饰性更新）。
+   * 效果：流式输出期间 ActivityLine 输出冻结，只在 thinking 文本变化时刷新，
+   * 从根源上消除跳顶触发。
+   */
+  private readonly cache = new RenderCache();
 
   invalidate(): void {
-    // 无缓存
+    this.cache.invalidate();
   }
 
   setBusy(busy: boolean, startedAt = Date.now()): void {
@@ -173,14 +235,17 @@ export class ActivityLine implements Component {
       this.thinkingPreview = '';
       this.outputChars = 0;
     }
+    this.cache.invalidate();
   }
 
   setTip(tip: string): void {
     this.tip = tip;
+    this.cache.invalidate();
   }
 
   addOutputChars(n: number): void {
     this.outputChars += n;
+    // 不失效缓存：token 计数是装饰性更新，不触发视觉变化
   }
 
   setThinking(active: boolean, preview = ''): void {
@@ -189,15 +254,19 @@ export class ActivityLine implements Component {
       this.thinkingPreview = preview;
       this.textComponent.setText(preview);
     }
+    this.cache.invalidate();
   }
 
-  /** 由 PiChat 的 100ms 定时器驱动：只在 busy 时推进帧号。 */
+  /** 由 PiChat 的 100ms 定时器驱动：只在 busy 时推进帧号。不失效缓存。 */
   tick(): void {
     if (this.busy) this.frame = (this.frame + 1) % SPINNER.length;
+    // 不失效缓存：spinner 帧变化是装饰性的，render 返回缓存输出
   }
 
   render(width: number): string[] {
     if (!this.busy) return [];
+    if (!this.cache.shouldRender(width)) return this.cache.cached();
+
     const spin = c.warn(SPINNER[this.frame]!);
     const elapsed = formatElapsed(Date.now() - this.startedAt);
     const tok = this.outputChars > 0 ? ` · ↓ ${formatCount(Math.round(this.outputChars / 4))} tok` : '';
@@ -227,6 +296,7 @@ export class ActivityLine implements Component {
       // 思考预览与操作提示互斥占第二行：预览是本轮实时信息，优先级高于常驻提示
       out.push(c.dim(truncateToWidth(t('input.tipPrefix', { tip: this.hint }), width)));
     }
+    this.cache.commit(width, out);
     return out;
   }
 }

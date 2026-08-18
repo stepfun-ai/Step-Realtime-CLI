@@ -12,7 +12,7 @@ import { TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import { Transcript } from '../../src/tui-pi/Transcript.js';
 import { ItemBlock } from '../../src/tui-pi/blocks.js';
-import { ActivityLine, StatusLine, formatCount, shortenPath } from '../../src/tui-pi/StatusLine.js';
+import { ActivityLine, RenderCache, StatusLine, formatCount, shortenPath } from '../../src/tui-pi/StatusLine.js';
 import { subagentStats } from '../../src/tui-pi/blocks.js';
 import { ChatEditor } from '../../src/tui-pi/ChatEditor.js';
 import type { DisplayItem } from '../../src/chat/types.js';
@@ -1265,5 +1265,100 @@ describe('宽度溢出安全网（2026-08-17 两次 doRender 崩溃）', () => {
     for (const l of lines) {
       expect(visibleWidth(l), `thinking 输出行宽 ${visibleWidth(l)} 超过 ${width}`).toBeLessThanOrEqual(width);
     }
+  });
+});
+
+describe('RenderCache', () => {
+  it('首次 shouldRender 返回 true，commit 后返回 false', () => {
+    const cache = new RenderCache();
+    expect(cache.shouldRender(80)).toBe(true);
+    cache.commit(80, ['line1', 'line2']);
+    expect(cache.shouldRender(80)).toBe(false);
+    expect(cache.cached()).toEqual(['line1', 'line2']);
+  });
+
+  it('width 变化时失效', () => {
+    const cache = new RenderCache();
+    cache.commit(80, ['a']);
+    expect(cache.shouldRender(80)).toBe(false);
+    expect(cache.shouldRender(100)).toBe(true);
+  });
+
+  it('invalidate 后失效', () => {
+    const cache = new RenderCache();
+    cache.commit(80, ['a']);
+    expect(cache.shouldRender(80)).toBe(false);
+    cache.invalidate();
+    expect(cache.shouldRender(80)).toBe(true);
+  });
+});
+
+describe('StatusLine renderCache', () => {
+  const base = {
+    mode: 'agent' as const,
+    planMode: false,
+    model: 'test-model',
+    busy: false,
+    cwd: '/test',
+    usedTokens: 100,
+    maxContextSize: 1000,
+    hints: 'test hints',
+    backgroundCount: 0,
+    queueLen: 0,
+  };
+
+  it('setState 后 render 重新计算', () => {
+    const s = new StatusLine(base);
+    const lines1 = s.render(80);
+    // 第二次 render，width 相同，应该返回缓存（同一引用）
+    const lines2 = s.render(80);
+    expect(lines2).toBe(lines1); // 引用相等 = 走了缓存
+    // setState 后缓存失效
+    s.setState({ busy: true });
+    const lines3 = s.render(80);
+    expect(lines3).not.toBe(lines1); // 不是同一引用 = 重新计算了
+  });
+});
+
+describe('ActivityLine renderCache', () => {
+  it('setThinking 之间 render 缓存 thinking preview wrap', () => {
+    const a = new ActivityLine();
+    a.setBusy(true);
+    a.setThinking(true, '这是 thinking 内容 **加粗** 和 `代码`');
+    // 第一次 render 计算 contentLines
+    const lines1 = a.render(80);
+    expect(lines1.length).toBeGreaterThan(1);
+    // 第二次 render，thinkingPreview 没变，走缓存
+    const lines2 = a.render(80);
+    // spinner/elapsed 不同所以行内容不同，但 thinking preview 行的 truncateToWidth 结果应该相同
+    // 验证缓存生效的方式：setThinking 后 render 应该重新计算
+    a.setThinking(true, '新的 thinking 内容');
+    const lines3 = a.render(80);
+    // 内容变了，不可能是缓存
+    expect(lines3).not.toEqual(lines2);
+  });
+
+  it('tick 不失效 previewCache（流式冻结：spinner 帧冻结直到 setThinking）', () => {
+    const a = new ActivityLine();
+    a.setBusy(true);
+    a.setThinking(true, 'thinking content');
+    const lines1 = a.render(80);
+    // tick 推进帧号——但不失效 previewCache
+    a.tick();
+    a.tick();
+    a.tick();
+    // render 应该返回缓存（同样的行），spinner 帧被冻结
+    const lines2 = a.render(80);
+    expect(lines2).toBe(lines1); // 同一引用 = 走缓存
+  });
+
+  it('addOutputChars 不失效 previewCache（token 计数冻结直到 setThinking）', () => {
+    const a = new ActivityLine();
+    a.setBusy(true);
+    a.setThinking(true, 'thinking');
+    const lines1 = a.render(80);
+    a.addOutputChars(1000);
+    const lines2 = a.render(80);
+    expect(lines2).toBe(lines1); // 同一引用 = 走缓存
   });
 });
