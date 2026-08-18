@@ -287,17 +287,17 @@ export class ItemBlock implements Component {
         // 前缀灰色 ●，对齐 Ink 版 MessageList assistant 分支（Ink 前缀灰色 ●）。
         // 第一行带前缀，续行对齐（与 thinking 的 ┊ 同口径）。
         const md = this.renderMarkdown(it.text, width - 2, false);
-        return [...indent(md, c.dim('● ')), ''];
+        return [...hanging(md, c.dim('● '), 2), ''];
       }
       case 'thinking': {
         // 长 thinking 在主界面折叠为前 N 行 + 「还有 N 行（Ctrl+O 查看）」，
         // 全文进 ExpandViewer（Ctrl+O）。与 Ink 版同语义；阈值 3 行（Ink 是 2，
         // pi 流式预览只有尾部 1 行，定稿多给一行，从流式到定稿的视觉落差更小）。
         const rendered = dimAll(this.renderMarkdown(it.text, width - 2, true));
-        if (rendered.length <= THINKING_FOLD_LINES) return [...indent(rendered, c.thinking('┊ ')), ''];
+        if (rendered.length <= THINKING_FOLD_LINES) return [...hanging(rendered, c.thinking('┊ '), 2), ''];
         const head = rendered.slice(0, THINKING_FOLD_LINES);
         const folded = c.thinking(`┊ … 还有 ${rendered.length - THINKING_FOLD_LINES} 行（Ctrl+O 查看）`);
-        return [...indent(head, c.thinking('┊ ')), folded, ''];
+        return [...hanging(head, c.thinking('┊ '), 2), folded, ''];
       }
       case 'note':
         return [...hanging(wrap(c.note(it.text), width - 2), c.note('· '), 2), ''];
