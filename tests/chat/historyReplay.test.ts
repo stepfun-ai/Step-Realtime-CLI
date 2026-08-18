@@ -128,13 +128,17 @@ describe('historyToDisplayItems', () => {
       expect(items.some((i) => (i.text ?? '').includes('这不是系统错误'))).toBe(false);
     });
 
-    it('压缩摘要不渲染成用户气泡', () => {
+    it('压缩摘要投影为提示 note，不冒充用户输入', () => {
       const messages: StoredMessage[] = [
         m({ role: 'user', content: '之前聊到的内容摘要……' }, 'compaction_summary', 'cs1'),
         m({ role: 'user', content: '继续' }, 'user', 'u1'),
       ];
       const { items } = historyToDisplayItems(messages);
-      expect(items).toEqual([{ kind: 'user', text: '继续' }]);
+      // 摘要不渲染成用户气泡，而是降为一条提示 note，告知历史已压缩进上下文（非丢失）
+      expect(items).toHaveLength(2);
+      expect(items[0]?.kind).toBe('note');
+      expect(items[0]?.text).toContain('压缩');
+      expect(items[1]).toEqual({ kind: 'user', text: '继续' });
     });
 
     it('后台任务通知降级为 note，XML 信封正文不外泄', () => {
@@ -154,12 +158,21 @@ describe('historyToDisplayItems', () => {
       expect(items[0]?.text).not.toContain('<notification'); // 给模型看的信封不摆给用户
     });
 
-    it('user_verbatim（压缩保真的真人原话）仍作为用户输入保留', () => {
+    it('user_verbatim（压缩保真的真人原话）带 verbatim 标记，供渲染层降权', () => {
       const messages: StoredMessage[] = [
         m({ role: 'user', content: '这是我当初说的话' }, 'user_verbatim', 'uv1'),
       ];
       const { items } = historyToDisplayItems(messages);
-      expect(items).toEqual([{ kind: 'user', text: '这是我当初说的话' }]);
+      // 保留为用户条目，但带 verbatim 标记——渲染层据此去掉黄底、改 dim，与真人输入区分
+      expect(items).toEqual([{ kind: 'user', text: '这是我当初说的话', verbatim: true }]);
+    });
+
+    it('真人输入不带 verbatim 标记，保持高亮', () => {
+      const messages: StoredMessage[] = [
+        m({ role: 'user', content: '我现在说的话' }, 'user', 'u1'),
+      ];
+      const { items } = historyToDisplayItems(messages);
+      expect(items).toEqual([{ kind: 'user', text: '我现在说的话' }]);
     });
 
     it('工具结果回灌（tool origin）不渲染成用户气泡', () => {

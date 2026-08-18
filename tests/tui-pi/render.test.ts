@@ -107,6 +107,25 @@ describe('ItemBlock 渲染', () => {
     }
   });
 
+  it('压缩保真原话（verbatim）降权：dim 灰色、无黄底、带「原话」标记，与真人输入区分', () => {
+    // 压缩过的长会话 resume 后，保真原话若与真人输入同高亮会「满屏用户消息」掩盖模型输出。
+    // verbatim 条目应去掉黄底、改 dim，前缀标记为「原话」。
+    const prev = chalk.level;
+    chalk.level = 3;
+    try {
+      const lines = new ItemBlock({ kind: 'user', text: '这是我当初说的话', verbatim: true }).render(40);
+      const joined = lines.join('\n');
+      // 1) 无黄色（正文 SGR 33 不应出现）——区别于真人输入的黄底高亮
+      expect(joined, '原话不应着黄').not.toContain('\x1b[33m');
+      // 2) 带「原话」前缀标记
+      expect(plain(lines).some((l) => l.includes('原话'))).toBe(true);
+      // 3) 折行宽度不超
+      for (const l of lines) expect(visibleWidth(l)).toBeLessThanOrEqual(40);
+    } finally {
+      chalk.level = prev;
+    }
+  });
+
   it('工具标题行：参数摘要覆盖各类工具，skill 着黄、其余着 gray', () => {
     // 用户反馈「调用工具只显示一个名字」，两个根因：参数色用了 dim(SGR 2) 在多数终端
     // 主题下读不出来；summarizeInput 只认 path/pattern/command/skill 四字段，搜索类、

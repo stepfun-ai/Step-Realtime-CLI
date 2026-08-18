@@ -97,10 +97,18 @@ export function historyToDisplayItems(
     // 其 tool_result 块要回填到对应 tool 条目（跳过会让工具结果全部丢失）。
     // 故这里只处理「有独立展示形式」的类型，其余交由下方按块分派，在生成用户气泡处再行拦截。
     const systemAuthored = message.role === 'user' && isSystemAuthoredUser(origin);
-    if (systemAuthored && origin.kind === 'background_task') {
-      // 后台任务终态对用户有意义，降级为 note 条目保留可见性（正文是给模型看的 XML 信封，不外泄）。
-      items.push({ kind: 'note', text: replayBackgroundNote(origin) });
-      continue;
+    if (systemAuthored) {
+      if (origin.kind === 'background_task') {
+        // 后台任务终态对用户有意义，降级为 note 条目保留可见性（正文是给模型看的 XML 信封，不外泄）。
+        items.push({ kind: 'note', text: replayBackgroundNote(origin) });
+        continue;
+      }
+      if (origin.kind === 'compaction_summary') {
+        // 压缩摘要：投影成一条提示，告知用户这段历史已被摘要进上下文、并非丢失，
+        // 避免 resume 后看到「问了一堆没答」的错觉。
+        items.push({ kind: 'note', text: t('historyReplay.compactedNote') });
+        continue;
+      }
     }
 
     const { role, content } = message;
@@ -108,9 +116,17 @@ export function historyToDisplayItems(
     // content 为纯字符串：user 直接成条，assistant 直接成条。
     if (typeof content === 'string') {
       if (content.trim() === '') continue;
-      // 系统自撰的纯文本（system-reminder、压缩摘要）无块结构可回填，整条略过。
+      // 其余系统自撰纯文本（system-reminder 等）无独立展示形态，整条略过。
       if (systemAuthored) continue;
-      items.push({ kind: role === 'user' ? 'user' : 'assistant', text: content });
+      if (role === 'user') {
+        items.push(
+          origin.kind === 'user_verbatim'
+            ? { kind: 'user', text: content, verbatim: true }
+            : { kind: 'user', text: content },
+        );
+      } else {
+        items.push({ kind: 'assistant', text: content });
+      }
       continue;
     }
 
@@ -167,10 +183,20 @@ export function historyToDisplayItems(
       } else if (block.type === 'text') {
         // 系统自撰消息里夹带的文本块不成用户气泡（如 tool origin 消息里的补充说明）。
         if (!systemAuthored && block.text.trim() !== '') {
-          items.push({ kind: 'user', text: block.text });
+          items.push(
+            origin.kind === 'user_verbatim'
+              ? { kind: 'user', text: block.text, verbatim: true }
+              : { kind: 'user', text: block.text },
+          );
         }
       } else if (block.type === 'image') {
-        if (!systemAuthored) items.push({ kind: 'user', text: '[图片]' });
+        if (!systemAuthored) {
+          items.push(
+            origin.kind === 'user_verbatim'
+              ? { kind: 'user', text: '[图片]', verbatim: true }
+              : { kind: 'user', text: '[图片]' },
+          );
+        }
       }
     }
   }

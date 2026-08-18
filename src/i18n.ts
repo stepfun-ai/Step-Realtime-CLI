@@ -271,6 +271,7 @@ const zh = {
   'background.settled': '⏱ 后台任务 {id} {status}：{command}',
   // 回放：后台通知原文是给模型看的 XML 信封，历史区改用这行人读提示
   'historyReplay.backgroundSettled': '⏱ 后台任务 {id} 已结束（通知已注入上下文）',
+  'historyReplay.compactedNote': '↳ 更早的对话已压缩为摘要融入上下文（内容未丢失，可继续追问细节）',
   'background.status.running': '运行中',
   'background.status.completed': '已完成',
   'background.status.failed': '失败',
@@ -1031,6 +1032,7 @@ const en: Record<keyof typeof zh, string> = {
 
   'background.settled': '⏱ Background task {id} {status}: {command}',
   'historyReplay.backgroundSettled': '⏱ Background task {id} finished (notification injected into context)',
+  'historyReplay.compactedNote': '↳ Earlier conversation was compacted into the context summary (content not lost; ask for details anytime)',
   'background.status.running': 'running',
   'background.status.completed': 'completed',
   'background.status.failed': 'failed',

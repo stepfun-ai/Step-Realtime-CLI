@@ -16,7 +16,7 @@ export interface WelcomeData {
 /** UI 展示用的会话条目（独立于回灌给模型的 Anthropic 消息历史）。 */
 export type DisplayItem =
   | { kind: 'welcome'; data: WelcomeData }
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; /** 压缩保真原话（origin=user_verbatim）：视觉上应与真人输入区分，降权显示。缺省/false = 真人输入。 */ verbatim?: boolean }
   | { kind: 'assistant'; text: string }
   /** 思考（推理过程）定稿块：流式期不进历史区（状态行预览），完成后才落成此条目。 */
   | { kind: 'thinking'; text: string }

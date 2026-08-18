@@ -256,6 +256,14 @@ export class ItemBlock implements Component {
       case 'welcome':
         return renderWelcome(it.data, width);
       case 'user': {
+        // 压缩保真原话（user_verbatim）：降权显示——去掉整行黄底、改 dim 灰色、加「原话」标记前缀。
+        // 为何必须区分：压缩过的长会话 resume 后，保真原话与真人输入在此一视同仁都高亮成黄泡，
+        // 结果是「满屏用户消息」掩盖模型输出（2026-08-18 实测会话 122e9c：14 条原话堆顶部）。
+        // 真人输入仍是高亮黄底，两相对比才分得出「这是你刚说的」还是「那是早先保留下来的」。
+        if (it.verbatim === true) {
+          const body = wrap(it.text, width - 2).map((l) => c.dim(l));
+          return [...hanging(body, c.dim('┊ 原话 '), 2), ''];
+        }
         // 蓝色前缀 + 黄色正文 + 整行深灰背景（SGR 48;5;236）。
         // 背景覆盖整行：前缀和正文都套 c.userBg，长对话靠背景块区分用户/助手输出。
         const bg = c.userBg;
