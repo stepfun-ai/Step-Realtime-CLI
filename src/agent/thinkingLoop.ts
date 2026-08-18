@@ -36,12 +36,12 @@
 /** 检测窗口大小（字符）。取 100：对齐 Gemini CLI，减少中文巧合命中概率。 */
 const WINDOW = 100;
 /** 一个窗口在更早内容中出现 ≥ 该次数，计为「重复」。 */
-const REPEAT_THRESHOLD = 4;
+const REPEAT_THRESHOLD = 5;
 /** 距离比：平均间距 ≤ WINDOW × 该值 → 判定为周期性循环。
  *  取 2.0：4 次出现挤在 600 字符以内（67% 重复率）才算循环，几乎排除散落引用。 */
 const DISTANCE_RATIO = 2.0;
 /** 末尾连续命中窗口数 ≥ 该值，判定为「循环进行中」。2 个窗口 = 至少 200 字符仍在重复。 */
-const CONSECUTIVE_TAIL_HITS = 2;
+const CONSECUTIVE_TAIL_HITS = 3;
 /** 短周期循环的最小重复次数：末尾周期 p 的单元重复 ≥ 该次数才判定。 */
 const SHORT_PERIOD_MIN_REPEATS = 8;
 /** 短周期的最大周期长度：超过即交给长重复路径。
@@ -50,7 +50,7 @@ const SHORT_PERIOD_MIN_REPEATS = 8;
 const SHORT_PERIOD_MAX = 30;
 /** 触发检测的最小流长度：思考太短不可能成循环，避免开头误判。
  *  取 600：前 600 字符通常是正常的推理展开，不检测。 */
-const MIN_CHARS = 600;
+const MIN_CHARS = 1000;
 
 export interface ThinkingLoopVerdict {
   /** 是否判定为死循环。 */

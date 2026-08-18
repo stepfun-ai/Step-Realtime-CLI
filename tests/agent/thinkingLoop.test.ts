@@ -21,7 +21,7 @@ describe('thinking 流死循环检测器', () => {
 
   it('短周期逐字复读（「的」×N）→ 判定循环', () => {
     const d = createThinkingLoopDetector();
-    let v = d.ingest(repeat('让我先思考一下这个问题的背景。', 35)); // 35×18=630，过 MIN_CHARS=600
+    let v = d.ingest(repeat('让我先思考一下这个问题的背景。', 60)); // 35×18=630，过 MIN_CHARS=600
     expect(v.looping).toBe(false);
     v = d.ingest(repeat('的', 200));
     expect(v.looping).toBe(true);
@@ -31,7 +31,7 @@ describe('thinking 流死循环检测器', () => {
     const d = createThinkingLoopDetector();
     // 20 字符短语，在 SHORT_PERIOD_MAX=30 范围内
     const phrase = '这个方案的核心问题是需要重新审视'; // 16 字符
-    let v = d.ingest(repeat('先铺垫一些正常推理内容让思考进入状态。', 20)); // 过 MIN_CHARS
+    let v = d.ingest(Array.from({length: 20}, (_, i) => makePara(i)).join('')); // 过 MIN_CHARS
     expect(v.looping).toBe(false);
     v = d.ingest(repeat(phrase, 15)); // 16×15=240 字符的短语循环
     expect(v.looping).toBe(true);
@@ -45,7 +45,7 @@ describe('thinking 流死循环检测器', () => {
     // 50 < WINDOW=100，所以窗口会跨段落边界。
     // 但 para * 20 = 1000 字符，任何 100 字符窗口在 1000 字符中都是周期性的
     // （因为 50 字符周期 < 100 字符窗口，窗口包含 2 个完整周期）
-    const v = d.ingest(repeat(para, 20));
+    const v = d.ingest(repeat(para, 25));
     expect(v.looping).toBe(true);
     expect(v.sample).toBeDefined();
   });
@@ -55,7 +55,7 @@ describe('thinking 流死循环检测器', () => {
     const para = makePara(0); // 100 字符
     // 15 次重复 = 1500 字符，间距 = 100 = WINDOW
     // avgDist = 100 ≤ 2.0 × 100 = 200 → 命中
-    const v = d.ingest(repeat(para, 15));
+    const v = d.ingest(repeat(para, 20));
     expect(v.looping).toBe(true);
     expect(v.sample).toBeDefined();
   });
@@ -86,7 +86,7 @@ describe('thinking 流死循环检测器', () => {
     // 需要 4 次出现在更早内容 + 2 个连续窗口都命中
     // para * 7 = 700 字符，末尾窗口 + 6 次在更早内容中
     // 第二个重叠窗口（步长 50）出现 5 次在更早内容中
-    const v = d.ingest(repeat(para, 7));
+    const v = d.ingest(repeat(para, 15));
     expect(v.looping).toBe(true);
   });
 
@@ -116,7 +116,7 @@ describe('thinking 流死循环检测器', () => {
 
   it('触发后不再重复触发（fired 一次性）', () => {
     const d = createThinkingLoopDetector();
-    d.ingest(repeat('的', 800)); // 800 > MIN_CHARS=600，先触发
+    d.ingest(repeat('的', 1200)); // 800 > MIN_CHARS=600，先触发
     const v1 = d.ingest(repeat('的', 100));
     expect(v1.looping).toBe(false); // 已 fired
   });
@@ -129,7 +129,7 @@ describe('thinking 流死循环检测器', () => {
 
   it('reset 后可重新检测', () => {
     const d = createThinkingLoopDetector();
-    d.ingest(repeat('的', 800));
+    d.ingest(repeat('的', 1200));
     d.reset();
     expect(d.text()).toBe('');
     const v = d.ingest('正常内容');
