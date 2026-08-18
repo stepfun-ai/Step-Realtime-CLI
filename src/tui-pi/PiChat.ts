@@ -3085,16 +3085,30 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         appendText(this.transcript, ev.text);
         break;
       }
-      case 'tool_start':
-        this.transcript.push({
+      case 'tool_start': {
+        const toolItem: Extract<DisplayItem, { kind: 'tool' }> = {
           kind: 'tool',
           id: ev.id,
           name: ev.name,
           input: ev.input,
           status: 'running',
           startedAt: Date.now(),
-        });
+        };
+        // spawn_agent：把角色名和任务简述写进条目，卡片可直接显示
+        if (ev.name === 'spawn_agent') {
+          const inp = ev.input as Record<string, unknown> | null;
+          if (inp !== null) {
+            const st = typeof inp.subagent_type === 'string' ? inp.subagent_type : undefined;
+            const desc = typeof inp.description === 'string' ? inp.description : undefined;
+            if (st !== undefined || desc !== undefined) {
+              toolItem.subagentType = st;
+              toolItem.description = desc;
+            }
+          }
+        }
+        this.transcript.push(toolItem);
         break;
+      }
       case 'tool_end':
         this.transcript.updateLastWhere(
           (it) => it.kind === 'tool' && it.id === ev.id,

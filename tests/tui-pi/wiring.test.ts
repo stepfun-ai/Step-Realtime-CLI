@@ -146,6 +146,17 @@ describe('PiChat 接线：runAgent 与子 agent 的参数透传', () => {
     wired(piChat, 'imageBudgetBytes: this.deps.ctx.imageBudgetBytes', '图片字节预算');
     wired(piChat, 'videoBudgetBytes: this.deps.ctx.videoBudgetBytes', '视频字节预算');
   });
+
+  it('tool_start 为 spawn_agent 提取角色名与简述写进条目（否则卡片只显示裸工具名，分不清 explore/general）', () => {
+    // 缺口根因：迁移时只 push 了基础字段，漏掉对照实现里 App.tsx 对
+    // subagent_type/description 的提取，导致 blocks.ts 里 it.subagentType
+    // 永远 undefined，角色名（explore/general）从不渲染。
+    wired(piChat, "ev.name === 'spawn_agent'", 'spawn_agent 分支');
+    wired(piChat, 'inp.subagent_type', '提取角色名');
+    wired(piChat, 'inp.description', '提取任务简述');
+    wired(piChat, 'toolItem.subagentType = st', '角色名写进条目');
+    wired(piChat, 'toolItem.description = desc', '简述写进条目');
+  });
 });
 
 describe('PiChat 接线：会话切换的清理与恢复', () => {
