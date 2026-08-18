@@ -25,6 +25,7 @@ import { t } from '../i18n.js';
 export class ChromePanels implements Component {
   private todos: readonly TodoItem[] = [];
   private queue: readonly string[] = [];
+  private busy = false;
 
   setTodos(todos: readonly TodoItem[]): void {
     this.todos = todos;
@@ -34,6 +35,10 @@ export class ChromePanels implements Component {
     this.queue = queue;
   }
 
+  setBusy(busy: boolean): void {
+    this.busy = busy;
+  }
+
   invalidate(): void {
     // 无缓存：数据变了就重排，两块内容都是十几行以内的字符串拼接
   }
@@ -41,7 +46,7 @@ export class ChromePanels implements Component {
   render(width: number): string[] {
     const out: string[] = [];
     out.push(...renderTodos(this.todos, width));
-    out.push(...renderQueue(this.queue, width));
+    out.push(...renderQueue(this.queue, width, this.busy));
     return out;
   }
 }
@@ -69,7 +74,7 @@ export function renderTodos(todos: readonly TodoItem[], width: number): string[]
 }
 
 /** 队列预览：标题 + 逐条 ↳ 预览（最多 3 条 × 2 行）+ 折叠计数 + 取回提示。 */
-export function renderQueue(queue: readonly string[], width: number): string[] {
+export function renderQueue(queue: readonly string[], width: number, busy = false): string[] {
   if (queue.length === 0) return [];
   const shown = queue.slice(0, QUEUE_MAX_ITEMS);
   const rest = queue.length - shown.length;
@@ -81,7 +86,8 @@ export function renderQueue(queue: readonly string[], width: number): string[] {
     });
   }
   if (rest > 0) out.push(c.dim(t('panel.queue.more', { count: rest })));
-  // 取回键位是 Esc（pi 版语义：busy 时 Esc 中断，空闲时 Esc 把队列合并回输入框）
-  out.push(c.dim(t('panel.queue.recall')));
+  // 取回提示分两种态：busy 时 Esc 中断而非取回，改用 ↑ 逐条取回；
+  // 空闲时 Esc 把队列合并回输入框（与 Ink 版 QueuePreview recallHint 同语义）。
+  out.push(c.dim(busy ? t('panel.queue.recallBusy') : t('panel.queue.recall')));
   return out;
 }

@@ -243,18 +243,44 @@ export class PickerOverlay implements Component {
     const lines = [head];
     if (this.subtitle !== undefined) lines.push(c.dim(this.subtitle));
     if (this.tabs.length > 1) {
-      // tab 条：active 反色加粗，其余灰色；总宽超 width 时右端截断加 …（v1 不做滚动窗口）
-      let bar = '';
-      for (let i = 0; i < this.tabs.length; i++) {
+      // tab 条滚动窗口：放不下时保证 activeTab 可见——从 active 向两侧贪心扩展（先右后左），
+      // 两端有隐藏 tab 时各预留 2 列给 ‹ / … 指示符。旧版是固定从头排到放不下为止，
+      // 选中靠后 tab 时高亮直接不可见（Ink 版 2026-08-11 用户现场专门修过，这里对齐）。
+      const segWidth = (from: number, to: number): number => {
+        let w = 0;
+        for (let i = from; i < to; i++) {
+          w += visibleWidth(this.tabs[i]!.label) + 2; // padding 各 1 列
+          if (i > from) w += 1; // 段间空格
+        }
+        return w;
+      };
+      const barMax = Math.max(width - 6, 8);
+      let start = 0;
+      let end = this.tabs.length;
+      let hiddenLeft = false;
+      let hiddenRight = false;
+      if (segWidth(0, this.tabs.length) > barMax) {
+        // 贪心窗口：从 activeTab 向两侧扩展，保证 active 可见
+        const fits = (s: number, e: number): boolean =>
+          segWidth(s, e) + (s > 0 ? 2 : 0) + (e < this.tabs.length ? 2 : 0) <= barMax;
+        start = this.activeTab;
+        end = this.activeTab + 1;
+        for (;;) {
+          let grew = false;
+          if (end < this.tabs.length && fits(start, end + 1)) { end++; grew = true; }
+          if (start > 0 && fits(start - 1, end)) { start--; grew = true; }
+          if (!grew) break;
+        }
+        hiddenLeft = start > 0;
+        hiddenRight = end < this.tabs.length;
+      }
+      let bar = hiddenLeft ? c.dim('‹ ') : '';
+      for (let i = start; i < end; i++) {
         const t = this.tabs[i]!;
         const seg = i === this.activeTab ? c.tabActive(` ${t.label} `) : c.dim(` ${t.label} `);
-        const next = bar === '' ? seg : `${bar} ${seg}`;
-        if (visibleWidth(next) > width - 3) {
-          bar += c.dim(' …');
-          break;
-        }
-        bar = next;
+        bar += (bar === '' || bar.endsWith(' ')) ? seg : ` ${seg}`;
       }
+      if (hiddenRight) bar += c.dim(' …');
       lines.push(bar);
     }
     return [...lines, ...this.list.render(width), c.dim(this.hint)];

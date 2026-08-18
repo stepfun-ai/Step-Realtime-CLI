@@ -424,6 +424,11 @@ export class PiChat {
     };
     this.editor.onCtrlV = attach;
     this.editor.onAltV = attach;
+    // ↑ 取回队列尾部一条进输入框编辑：busy + 空输入时生效。
+    // 发送从头部消费（drainQueue shift），编辑从尾部取回（pop），两个方向不冲突。
+    // 系统合成注入（后台通知 / cron / skill 正文）不给取回——正文是给模型看的 XML，
+    // 用户改完提交会以真人身份进历史。取回即从 notifyPrepared 摘除。
+    this.editor.onUpArrow = () => this.recallQueuedOne();
     // Ctrl+B 转后台：busy 且有前台任务时全部 detach（进程继续跑、终态自动通知）；
     // 空闲或无前台任务时返回 null → 不消费按键，交回编辑器。
     this.editor.onCtrlB = () => {
@@ -610,9 +615,10 @@ export class PiChat {
       latestBgTask: running.length > 0 ? running[running.length - 1]!.command : undefined,
     });
     this.syncGoalBadge();
-    // 常驻面板跟状态同步：todos 由工具改、queue 由排队改，两者都在状态变更点上
+    // 常驻面板跟状态同步：todos 由工具改、queue 由排队改，busy 态影响队列取回提示
     this.chrome.setTodos(this.todos.items);
     this.chrome.setQueue(this.queue);
+    this.chrome.setBusy(this.busy);
   }
 
   /**
@@ -862,6 +868,23 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    *   3. 空闲 + 队列非空 → 取回队列内容进输入框。
    * 返回 true 表示已消费。
    */
+  /**
+   * ↑ 取回队列尾部一条进输入框编辑（busy + 空输入时 ChatEditor.onUpArrow 调用）。
+   *
+   * 语义对照 Ink 版 PromptInput 的 `onRecallQueued`：
+   * - pop 队尾（发送从头部 shift 消费，编辑从尾部 pop 取回，两方向不冲突）
+   * - 系统合成注入不给取回：原位放回、放弃本次取回（不跨过它往前翻，FIFO 顺序不能被打乱）
+   * - 取回成功返回 true（ChatEditor 消费 ↑）；队列空或全是系统注入返回 false（让 ↑ 下传）
+   */
+  private recallQueuedOne(): boolean {
+    if (!this.busy || this.editor.getText() !== '' || this.queue.length === 0) return false;
+    const recalled = this.queue[this.queue.length - 1]!;
+    if (this.notifyPrepared.has(recalled)) return false; // 系统注入不取回
+    this.updateQueue(this.queue.slice(0, -1));
+    this.editor.setText(recalled);
+    return true;
+  }
+
   private onEscape(): boolean {
     if (this.busy) {
       this.abortTurn();

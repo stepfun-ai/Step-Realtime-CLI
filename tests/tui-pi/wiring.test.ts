@@ -281,3 +281,29 @@ describe('PiChat 接线：逐回合折叠旧块（OOM 第二道防线）', () =>
     wired(piChat, 'FOLD_TRIGGER_TURNS', '折叠触发闸门常量');
   });
 });
+
+describe('PiChat 接线：busy ↑ 取回排队单条', () => {
+  /**
+   * 2026-08-18 加。设计文档 `前端设计-pi版/20260817-前端交互对标ink的5项差距与收口.md` 第 2 项。
+   * busy + 空输入时 ↑ 取回队列尾部一条进输入框编辑（Ink 版 PromptInput.onRecallQueued）。
+   * 系统合成注入不给取回。沿用本文件源码扫描口径。
+   */
+  it('editor.onUpArrow 绑定了 recallQueuedOne 方法', () => {
+    wired(piChat, 'this.editor.onUpArrow = () => this.recallQueuedOne()', '↑ 键绑定取回方法');
+    wired(piChat, 'private recallQueuedOne(): boolean', 'recallQueuedOne 方法定义');
+  });
+
+  it('recallQueuedOne 有 busy + 空输入 + 队列非空三道闸门', () => {
+    wired(piChat, '!this.busy', 'busy 闸门');
+    wired(piChat, "this.editor.getText() !== ''", '空输入闸门');
+    wired(piChat, 'this.queue.length === 0', '队列非空闸门');
+  });
+
+  it('recallQueuedOne 跳过系统合成注入（notifyPrepared）', () => {
+    wired(piChat, 'this.notifyPrepared.has(recalled)', '系统注入判定');
+  });
+
+  it('ChromePanels 队列预览分 busy/idle 两种取回提示', () => {
+    wired(piChat, 'this.chrome.setBusy(this.busy)', 'ChromePanels 接收 busy 态');
+  });
+});

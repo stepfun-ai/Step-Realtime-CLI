@@ -72,6 +72,13 @@ export class ChatEditor extends Editor {
    */
   onCtrlO?: () => boolean;
   /**
+   * ↑：busy + 空输入时取回队列尾部一条进输入框编辑。
+   *
+   * 返回 true 表示已消费（队列非空且取回成功）；false 让按键下传父类做历史导航。
+   * 只在 busy + 输入框空时生效——空闲时 ↑ 走正常历史回溯（如果有的话）。
+   */
+  onUpArrow?: () => boolean;
+  /**
    * 除 Esc / Ctrl+C 之外的任意按键。用于解除双击确认（primed）态。
    *
    * 不设返回值：它永远不消费按键，只是个旁路通知——按键仍走正常处理链。
@@ -198,6 +205,9 @@ export class ChatEditor extends Editor {
     }
     if (matchesKey(data, 'ctrl+o')) {
       if (this.onCtrlO?.() === true) return;
+    }
+    if (matchesKey(data, 'up')) {
+      if (this.onUpArrow?.() === true) return;
     }
     super.handleInput(data);
   }

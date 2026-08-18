@@ -116,6 +116,22 @@ describe('renderTodos / renderQueue', () => {
     expect(lines[2]).toBe('    第二行');
   });
 
+  it('busy 时取回提示变为 ↑ 取回一条（而非 Esc 取回）', () => {
+    const idle = plain(renderQueue(['msg'], 60, false));
+    const busy = plain(renderQueue(['msg'], 60, true));
+    expect(idle[idle.length - 1]).toContain('Esc 取回');
+    expect(busy[busy.length - 1]).toContain('↑ 取回');
+    expect(busy[busy.length - 1]).not.toContain('Esc 取回');
+  });
+
+  it('ChromePanels.setBusy 传递到 renderQueue 的 busy 态', () => {
+    const p = new ChromePanels();
+    p.setQueue(['msg']);
+    p.setBusy(true);
+    const lines = plain(p.render(60));
+    expect(lines[lines.length - 1]).toContain('↑ 取回');
+  });
+
   it('ChromePanels 组合两块：待办在上、队列在下', () => {
     const p = new ChromePanels();
     p.setTodos([td('待办项', 'pending')]);

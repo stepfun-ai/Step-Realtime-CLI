@@ -298,6 +298,30 @@ describe('PickerOverlay 渠道 tab（对标 Ink 版 ModelPicker）', () => {
     expect(plain(overlay.render(60))).toEqual(before);
     expect(before[1]).not.toContain('全部'); // 无 tab 条
   });
+
+  it('tab 超宽时滚动窗口保证 activeTab 可见，两端加 ‹ / … 指示符', () => {
+    // 造很多 tab 强制触发滚动窗口
+    const manyTabs = Array.from({ length: 12 }, (_, i) => ({
+      id: `ch${i}`,
+      label: `渠道${i}`,
+    }));
+    const overlay = new PickerOverlay({
+      title: 't',
+      items: [{ value: 'x', label: 'x' }],
+      requestRender: () => {},
+      onSelect: () => {},
+      onCancel: () => {},
+      tabs: manyTabs,
+      itemsForTab: () => [{ value: 'x', label: 'x' }],
+    });
+    // 切到最后几个 tab——高亮 tab 必须在渲染行里可见
+    for (let i = 0; i < 10; i++) overlay.handleInput('\t');
+    const lines = plain(overlay.render(40));
+    const tabLine = lines[1]!;
+    expect(tabLine, 'active tab 高亮应可见').toContain('渠道9');
+    // 左侧有隐藏 → 应有 ‹ 指示符
+    expect(tabLine).toContain('‹');
+  });
 });
 
 describe('PickerOverlay 额外键位与 setItems（会话选择器的删除/重命名基础）', () => {

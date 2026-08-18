@@ -181,4 +181,36 @@ describe('TasksOverlay 交互', () => {
     overlay.handleInput(TAB); // 已完成 → 空
     expect(plain(overlay.render(80)).join('\n')).toContain('没有已完成的任务');
   });
+
+  it('选中任务展示详情栏：id / 状态 / 命令 / 时长 / 退出码', () => {
+    const { overlay } = mk([
+      task({ id: 'fail1', status: 'failed', exitCode: 1, endedAt: '2026-08-15T11:59:55Z' }),
+    ]);
+    const text = plain(overlay.render(80)).join('\n');
+    expect(text).toContain('fail1');
+    expect(text).toContain('失败'); // 状态
+    expect(text).toContain('npm test'); // 命令
+    expect(text).toContain('退出码');
+    expect(text).toContain('1'); // exitCode
+    expect(text).toContain('时长');
+  });
+
+  it('运行中任务详情栏显示「已运行 X」，终态显示「耗时 X」', () => {
+    const running = mk([task({ id: 'run1', status: 'running', startedAt: '2026-08-15T11:59:00Z' })]);
+    const runText = plain(running.overlay.render(80)).join('\n');
+    expect(runText).toContain('已运行');
+
+    const done = mk([task({ id: 'done1', status: 'completed', startedAt: '2026-08-15T11:59:00Z', endedAt: '2026-08-15T11:59:50Z' })]);
+    const doneText = plain(done.overlay.render(80)).join('\n');
+    expect(doneText).toContain('耗时');
+  });
+
+  it('有 agentType 的任务详情栏显示子类型', () => {
+    const { overlay } = mk([
+      task({ id: 'sub1', status: 'running', agentType: 'explore' }),
+    ]);
+    const text = plain(overlay.render(80)).join('\n');
+    expect(text).toContain('子类型');
+    expect(text).toContain('explore');
+  });
 });

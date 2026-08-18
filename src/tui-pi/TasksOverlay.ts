@@ -135,6 +135,58 @@ export class TasksOverlay implements Component {
     this.requestRender();
   }
 
+  /**
+   * 选中任务的详情栏（对齐 Ink 版 TasksViewer DetailLines）。
+   * 固定行序，无值的字段整行省略；内容缩进 2 列，截断到 width。
+   */
+  private renderDetail(task: BackgroundTask, width: number): string[] {
+    const rows: Array<{ label: string; value: string; color?: (s: string) => string }> = [
+      { label: t('tasksOverlay.detail.id'), value: task.id },
+      { label: t('tasksOverlay.detail.status'), value: t(`background.status.${task.status}`), color: (s) => this.statusColor(task.status, s) },
+    ];
+    if (task.kind !== undefined) rows.push({ label: t('tasksOverlay.detail.kind'), value: t(`tasksOverlay.kind.${task.kind}`) });
+    if (task.agentType !== undefined) rows.push({ label: t('tasksOverlay.detail.agentType'), value: task.agentType });
+    rows.push({ label: t('tasksOverlay.detail.command'), value: task.command });
+    // 时间：运行中 = 已运行时长；终态 = 结束于多久前
+    const start = Date.parse(task.startedAt);
+    if (!Number.isNaN(start)) {
+      if (task.status === 'running') {
+        const dur = formatDuration(Math.max(0, this.now() - start));
+        rows.push({ label: t('tasksOverlay.detail.time'), value: t('tasksOverlay.timeRunning', { dur }) });
+      } else if (task.endedAt !== undefined) {
+        const end = Date.parse(task.endedAt);
+        if (!Number.isNaN(end)) {
+          const rel = formatDuration(Math.max(0, end - start));
+          rows.push({ label: t('tasksOverlay.detail.time'), value: t('tasksOverlay.timeFinished', { dur: rel }) });
+        }
+      }
+    }
+    if (task.exitCode !== undefined) rows.push({ label: t('tasksOverlay.detail.exitCode'), value: String(task.exitCode) });
+    // 时长（运行中与终态统一口径）
+    const started = Date.parse(task.startedAt);
+    const ended = task.endedAt !== undefined ? Date.parse(task.endedAt) : this.now();
+    if (!Number.isNaN(started)) rows.push({ label: t('tasksOverlay.detail.duration'), value: formatDuration(Math.max(0, ended - started)) });
+
+    const out: string[] = [];
+    for (const r of rows) {
+      const prefix = c.dim(`${r.label}: `);
+      const value = r.color !== undefined ? r.color(r.value) : r.value;
+      out.push(truncateToWidth(`  ${prefix}${value}`, width));
+    }
+    return out;
+  }
+
+  /** 状态颜色映射（与 taskRow 的 STATUS_STYLE 同口径）。 */
+  private statusColor(status: string, value: string): string {
+    switch (status) {
+      case 'running': return c.warn(value);
+      case 'completed': return c.ok(value);
+      case 'failed': return c.error(value);
+      case 'killed': return c.dim(value);
+      default: return value;
+    }
+  }
+
   render(width: number): string[] {
     const list = this.visible();
     const total = this.getTasks().length;
@@ -152,6 +204,10 @@ export class TasksOverlay implements Component {
     }
     const task = this.selected();
     if (task !== undefined) {
+      // 详情栏：选中任务的元信息（对齐 Ink 版 TasksViewer DetailLines）。
+      // 放在列表与输出预览之间，用圆角框视觉区分。
+      out.push('');
+      out.push(...this.renderDetail(task, width));
       out.push('');
       out.push(c.dim(t('tasksOverlay.outputTitle', { id: task.id })));
       const lines = task.output === '' ? [t('tasksOverlay.noOutput')] : task.output.split('\n');

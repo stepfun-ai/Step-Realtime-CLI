@@ -104,6 +104,18 @@ const zh = {
   'tasksOverlay.noOutput': '（暂无输出）',
   'tasksOverlay.confirmStop': '终止任务 {id}？[y/N]',
   'tasksOverlay.footer': '↑↓/jk 选择 · Tab 过滤 · o/Enter 看全部输出 · s 终止 · Esc/q 关闭',
+  'tasksOverlay.detail.id': 'ID',
+  'tasksOverlay.detail.status': '状态',
+  'tasksOverlay.detail.kind': '类别',
+  'tasksOverlay.detail.agentType': '子类型',
+  'tasksOverlay.detail.command': '命令',
+  'tasksOverlay.detail.time': '时间',
+  'tasksOverlay.detail.exitCode': '退出码',
+  'tasksOverlay.detail.duration': '时长',
+  'tasksOverlay.kind.process': '进程',
+  'tasksOverlay.kind.subagent': '子代理',
+  'tasksOverlay.timeRunning': '已运行 {dur}',
+  'tasksOverlay.timeFinished': '耗时 {dur}',
 
   // --- 动态区视口（LiveViewport，滚动跳顶修复）---
   'liveViewport.hiddenLines': '↑ 已隐藏 {count} 行早期输出',
@@ -237,6 +249,7 @@ const zh = {
   'panel.queue.title': '发送队列（{count} 条，回合结束后按序发送）',
   'panel.queue.more': '  … 还有 {count} 条',
   'panel.queue.recall': '  Esc 取回到输入框',
+  'panel.queue.recallBusy': '  ↑ 取回一条 · Esc 中断',
 
   // --- /lang 命令 ---
   'lang.current': '当前界面语言：{lang}（可用：zh / en）',
@@ -858,6 +871,18 @@ const en: Record<keyof typeof zh, string> = {
   'tasksOverlay.noOutput': '(no output yet)',
   'tasksOverlay.confirmStop': 'Stop task {id}? [y/N]',
   'tasksOverlay.footer': '↑↓/jk select · Tab filter · o/Enter view output · s stop · Esc/q close',
+  'tasksOverlay.detail.id': 'ID',
+  'tasksOverlay.detail.status': 'Status',
+  'tasksOverlay.detail.kind': 'Kind',
+  'tasksOverlay.detail.agentType': 'Agent',
+  'tasksOverlay.detail.command': 'Command',
+  'tasksOverlay.detail.time': 'Time',
+  'tasksOverlay.detail.exitCode': 'Exit',
+  'tasksOverlay.detail.duration': 'Duration',
+  'tasksOverlay.kind.process': 'process',
+  'tasksOverlay.kind.subagent': 'subagent',
+  'tasksOverlay.timeRunning': 'running for {dur}',
+  'tasksOverlay.timeFinished': 'took {dur}',
 
   'liveViewport.hiddenLines': '↑ {count} earlier lines hidden',
 
@@ -979,6 +1004,7 @@ const en: Record<keyof typeof zh, string> = {
   'panel.queue.title': 'Send queue ({count}, sent in order at end of turn)',
   'panel.queue.more': '  … {count} more',
   'panel.queue.recall': '  Esc recall to input',
+  'panel.queue.recallBusy': '  ↑ recall one · Esc to abort',
 
   'lang.current': 'Current UI language: {lang} (available: zh / en)',
   'lang.switched': 'UI language switched to: {lang}',
