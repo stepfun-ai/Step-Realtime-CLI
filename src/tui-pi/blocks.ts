@@ -112,9 +112,37 @@ export function summarizeInput(input: unknown): string {
   return '';
 }
 
-/** 结果体是否是 diff（首行形如 `--- a/x` 或含 @@ hunk 头）：diff 要完整展示，不折叠。 */
+/** edit_file 输出的 diff 数据行：4 位行号 + 空格 + 标记（+/-/空格）。formatRow 格式。 */
+const DIFF_ROW_RE = /^(\s*\d+) ([+\-]) /;
+
+/**
+ * 结果体是否是 diff：unified diff（@@/---/+++ 头）或 edit_file 的摘要头（前两行命中 +N -M path）。
+ * 早前只认 unified diff 头，edit_file 真实输出（首行中文 summary + 第二行 +N -M path）被漏识别，
+ * 永远走折叠分支——diff 铺开展示从未对真实 edit 结果生效过。
+ */
 export function looksLikeDiff(lines: readonly string[]): boolean {
-  return lines.some((l) => l.startsWith('@@') || l.startsWith('--- ') || l.startsWith('+++ '));
+  if (lines.some((l) => l.startsWith('@@') || l.startsWith('--- ') || l.startsWith('+++ '))) return true;
+  // edit_file 摘要头 `+N -M path` 在第二行（首行是「已编辑…」中文 summary），扫前两行
+  return lines.slice(0, 2).some((l) => /^[+-]\d+ /.test(l));
+}
+
+/**
+ * diff 行着色：按行内容识别 diff 语义上色，覆盖两种格式。
+ * - formatRow（`   1 +code`）：行号 + 标记 → + 绿 / - 红
+ * - 省略/截断提示行（`     …`）：暗色
+ * - edit_file 摘要头（`+N -M path`）：accent 色
+ * - unified diff（`+`/`-`/`@@` 前缀）：+ 绿 / - 红 / @@ accent
+ * - 其余（中文 summary 行等）：暗色
+ */
+function colorDiffLine(line: string): string {
+  const row = DIFF_ROW_RE.exec(line);
+  if (row !== null) return row[2] === '+' ? c.ok(line) : c.error(line);
+  if (/^\s*…/.test(line)) return c.dim(line);
+  if (/^[+-]\d+ /.test(line)) return c.accent(line);
+  if (line.startsWith('+') && !line.startsWith('+++')) return c.ok(line);
+  if (line.startsWith('-') && !line.startsWith('---')) return c.error(line);
+  if (line.startsWith('@@')) return c.accent(line);
+  return c.dim(line);
 }
 
 /** 一行文本按宽度折行；空串返回单个空行（保住段间空行）。 */
@@ -344,17 +372,24 @@ export class ItemBlock implements Component {
           out.push(c.dim(`    ↳ 还有 ${lines.length - ERROR_PREVIEW_LINES} 行（Ctrl+O 查看）`));
         }
       } else if (looksLikeDiff(lines)) {
-        // diff：完整展示（截到上限），这是用户最需要当场看清的内容
-        // 对标 Ink 版 diffView.renderDiffClustered：顶部摘要头 +N -M
-        const added = lines.filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
-        const removed = lines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length;
+        // diff：完整展示（截到上限），这是用户最需要当场看清的内容。
+        // 统计增删行：同时支持 unified diff（+/ -前缀）和 edit_file formatRow（行号 + 标记），
+        // 并排除 edit_file 的 +N -M path 摘要头（它的 + 前缀会被误算成 +1 行）。
+        let added = 0, removed = 0;
+        for (const l of lines) {
+          const row = DIFF_ROW_RE.exec(l);
+          if (row !== null) { if (row[2] === '+') added++; else removed++; }
+          else if (!/^[+-]\d+ /.test(l)) {
+            if (l.startsWith('+') && !l.startsWith('+++')) added++;
+            else if (l.startsWith('-') && !l.startsWith('---')) removed++;
+          }
+        }
         let summary = '';
         if (added > 0) summary += c.ok(`+${added} `);
         if (removed > 0) summary += c.error(`-${removed} `);
         if (summary !== '') out.push(`    ${summary.trimEnd()}`);
         for (const l of lines.slice(0, DIFF_MAX_LINES)) {
-          const colored = l.startsWith('+') ? c.ok(l) : l.startsWith('-') ? c.error(l) : l.startsWith('@@') ? c.accent(l) : c.dim(l);
-          out.push(...indent(wrap(colored, width - 4), '    '));
+          out.push(...indent(wrap(colorDiffLine(l), width - 4), '    '));
         }
         if (lines.length > DIFF_MAX_LINES) out.push(c.dim(`    ↳ 还有 ${lines.length - DIFF_MAX_LINES} 行`));
       } else {
@@ -400,8 +435,7 @@ function renderToolExpanded(it: Extract<DisplayItem, { kind: 'tool' }>, width: n
       for (const l of lines) out.push(...indent(wrap(c.error(l), width - 4), '    '));
     } else if (looksLikeDiff(lines)) {
       for (const l of lines) {
-        const colored = l.startsWith('+') ? c.ok(l) : l.startsWith('-') ? c.error(l) : l.startsWith('@@') ? c.accent(l) : c.dim(l);
-        out.push(...indent(wrap(colored, width - 4), '    '));
+        out.push(...indent(wrap(colorDiffLine(l), width - 4), '    '));
       }
     } else {
       for (const l of lines) out.push(...indent(wrap(l, width - 4), '    '));

@@ -279,6 +279,59 @@ describe('ItemBlock 渲染', () => {
     expect(diffLines).toContain('+new');
   });
 
+  it('真实 edit_file 输出（中文 summary + +N -M path + formatRow）被识别为 diff 并铺开', () => {
+    // edit 工具真实输出：首行中文 summary，第二行 +N -M path 摘要头，其后是 formatRow 数据行。
+    // 早前 looksLikeDiff 只认 @@/---/+++，edit 输出被误判为普通输出折成一行——这条钉住识别。
+    const editOutput = [
+      '已编辑 src/a.ts（替换 1 处）。',
+      '+3 -1 src/a.ts',
+      '   7 + added line one',
+      '   8 - removed line',
+      '   9 + added line two',
+      '     … 5 unchanged lines …',
+    ].join('\n');
+    const block = new ItemBlock({
+      kind: 'tool',
+      id: 'e1',
+      name: 'edit_file',
+      input: { path: 'src/a.ts' },
+      status: 'ok',
+      result: editOutput,
+    });
+    const out = plain(block.render(60)).join('\n');
+    // 不应折叠成「N 行」——diff 数据行必须当场可见
+    expect(out, 'edit 输出被折叠成一行').not.toContain('Ctrl+O 查看');
+    expect(out).toContain('added line one');
+    expect(out).toContain('removed line');
+    expect(out).toContain('+3 -1');
+    // 摘要头 +N -M 正确统计（3 增 1 删，不是被摘要头行首 + 误算成 +1）
+    expect(out).toMatch(/\+3/);
+    expect(out).toMatch(/-1/);
+  });
+
+  it('edit_file diff 数据行按 +/- 上色（formatRow 行号+标记格式）', () => {
+    const prev = chalk.level;
+    chalk.level = 3;
+    try {
+      const editOutput = '已编辑 x.ts（替换 1 处）。\n+2 -1 x.ts\n   7 + added\n   8 - removed\n   9   context';
+      const block = new ItemBlock({
+        kind: 'tool', id: 'e2', name: 'edit_file', input: { path: 'x.ts' }, status: 'ok', result: editOutput,
+      });
+      const lines = block.render(60);
+      const joined = lines.join('\n');
+      // formatRow 数据行 `   7 + added` 应被识别并按 + 上绿（32）、- 上红（31）
+      const addLine = lines.find((l) => l.includes('+ added'));
+      const remLine = lines.find((l) => l.includes('- removed'));
+      expect(addLine, 'added 行应有绿色 SGR 32').toContain('\x1b[32m');
+      expect(remLine, 'removed 行应有红色 SGR 31').toContain('\x1b[31m');
+      // 中文 summary 行不着色为绿/红（走 dim）
+      const summaryLine = lines.find((l) => l.includes('已编辑'));
+      expect(summaryLine, '中文 summary 行不应着绿/红').toBeDefined();
+    } finally {
+      chalk.level = prev;
+    }
+  });
+
   it('错误输出只预览前 4 行，其余折叠计数', () => {
     const err = new ItemBlock({
       kind: 'tool',

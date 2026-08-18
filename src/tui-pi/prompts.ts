@@ -268,7 +268,7 @@ export class QuestionPrompt {
     this.done(answers);
   }
 
-  /** 收下本题答案；最后一题则整体回传。 */
+  /** 收下本题答案并推进：跳到第一题未答题（回退改题后跳过已答题），全答完则汇总回传。 */
   private commitAndAdvance(): void {
     const q = this.question;
     const slot = this.slot;
@@ -284,12 +284,15 @@ export class QuestionPrompt {
     } else {
       this.answers[q.question] = q.options[slot.cursor]!.label;
     }
-    if (this.qIdx === this.req.questions.length - 1) {
+    // 跳过已答题：找任意未答题（非仅 qIdx+1），全答完才 settle。
+    // 早前只做 qIdx+1，用户 ← 回退改题后会被逼着重走已答题。
+    const next = this.req.questions.findIndex((qq) => this.answers[qq.question] === undefined);
+    if (next === -1) {
       this.settle(this.answers);
-      return;
+    } else {
+      this.qIdx = next;
+      this.requestRender();
     }
-    this.qIdx += 1;
-    this.requestRender();
   }
 
   handleInput(data: string): void {

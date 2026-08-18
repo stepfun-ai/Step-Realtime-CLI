@@ -258,4 +258,49 @@ describe('QuestionPrompt', () => {
     block.handleInput('2');
     expect(settled).toEqual([{ 第一题: 'A1', 第二题: 'B2' }]);
   });
+
+  it('3 题：答完 Q1/Q2 → ← 回退改 Q1 → Enter 应跳过已答的 Q2 直接到 Q3', () => {
+    const { block, settled } = mk({
+      questions: [
+        { question: 'Q1', options: [{ label: 'a1' }, { label: 'b1' }] },
+        { question: 'Q2', options: [{ label: 'a2' }, { label: 'b2' }] },
+        { question: 'Q3', options: [{ label: 'a3' }, { label: 'b3' }] },
+      ],
+    });
+    // 顺序答 Q1=A1, Q2=B2
+    block.handleInput('1'); // Q1 → a1，自动跳到 Q2
+    block.handleInput('2'); // Q2 → b2，自动跳到 Q3
+    expect(plain(block.render(60)).join('\n')).toContain('Q3');
+    // ← 回退到 Q1 改答案
+    block.handleInput(LEFT); // Q3 → Q2
+    block.handleInput(LEFT); // Q2 → Q1
+    expect(plain(block.render(60)).join('\n')).toContain('Q1');
+    // 改答案为 b1，Enter → 应跳过已答的 Q2，直接到 Q3（而非机械 +1 回到 Q2）
+    block.handleInput('2'); // Q1 → b1
+    expect(plain(block.render(60)).join('\n')).toContain('Q3');
+    expect(settled).toHaveLength(0); // 还没答完
+    // 答 Q3，全部答完 → settle
+    block.handleInput('1'); // Q3 → a3
+    expect(settled).toEqual([{ Q1: 'b1', Q2: 'b2', Q3: 'a3' }]);
+  });
+
+  it('3 题全答完后再回退改一题，Enter 不重复 settle（settled 守卫）', () => {
+    const { block, settled } = mk({
+      questions: [
+        { question: 'Q1', options: [{ label: 'a1' }, { label: 'b1' }] },
+        { question: 'Q2', options: [{ label: 'a2' }, { label: 'b2' }] },
+        { question: 'Q3', options: [{ label: 'a3' }, { label: 'b3' }] },
+      ],
+    });
+    block.handleInput('1'); // Q1 → a1
+    block.handleInput('1'); // Q2 → a2
+    block.handleInput('1'); // Q3 → a3 → settle（全答完）
+    expect(settled).toEqual([{ Q1: 'a1', Q2: 'a2', Q3: 'a3' }]);
+    // 回退改 Q2（settle 后 settled 守卫阻止重复提交）
+    block.handleInput(LEFT); // → Q2
+    block.handleInput(LEFT); // → Q1
+    block.handleInput(RIGHT); // → Q2
+    block.handleInput('2'); // Q2 → b2，但 settled 已为 true，不重复 settle
+    expect(settled).toHaveLength(1);
+  });
 });
