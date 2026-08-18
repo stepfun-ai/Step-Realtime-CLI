@@ -204,7 +204,7 @@ describe('thinking 流死循环检测与诱导跳出（thinking_loop）', () => 
   it('思考逐字复读触发检测 → 中止当前流 + 注入诱导提示重试，第二次正常产出', async () => {
     const { provider, streamCalls, streamParams } = makeFakeProvider([
       // 首轮：thinking 大量重复（触发检测），且因检测中止，不会走到 finalMessage
-      { thinkingChunks: [repeat('的', 600)], textChunks: [], finalContent: [thinkingBlock('循环')], stopReason: 'max_tokens' },
+      { thinkingChunks: [repeat('的', 1200)], textChunks: [], finalContent: [thinkingBlock('循环')], stopReason: 'max_tokens' },
       // 注入诱导后重试：正常产出正文
       { textChunks: ['直接给答案'], finalContent: [textBlock('直接给答案')] },
     ]);
@@ -227,9 +227,9 @@ describe('thinking 流死循环检测与诱导跳出（thinking_loop）', () => 
 
   it('注入重试后再次触发循环 → 不再二次注入（最多 1 次），走原路径', async () => {
     const { provider, streamCalls } = makeFakeProvider([
-      { thinkingChunks: [repeat('的', 600)], textChunks: [], finalContent: [thinkingBlock('循环')], stopReason: 'max_tokens' },
+      { thinkingChunks: [repeat('的', 1200)], textChunks: [], finalContent: [thinkingBlock('循环')], stopReason: 'max_tokens' },
       // 重试仍循环：检测器 fired 后不二次触发，正常收尾（这里给 max_tokens 空响应）
-      { thinkingChunks: [repeat('的', 600)], textChunks: [], finalContent: [thinkingBlock('仍循环')], stopReason: 'max_tokens' },
+      { thinkingChunks: [repeat('的', 1200)], textChunks: [], finalContent: [thinkingBlock('仍循环')], stopReason: 'max_tokens' },
     ]);
     const events = await collect(
       runAgent({ provider, system: 'sys', ctx: { cwd: process.cwd() }, messages: [sm('问')] }),
