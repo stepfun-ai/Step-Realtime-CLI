@@ -8,7 +8,7 @@ import chalk from 'chalk';
 import { describe, expect, it } from 'vitest';
 import { TuiMainScreen } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
-import { PickerOverlay, askValidated, modelItems, relativeTime, sessionItems, thinkItems } from '../../src/tui-pi/pickers.js';
+import { PickerOverlay, askLine, askValidated, modelItems, relativeTime, sessionItems, thinkItems } from '../../src/tui-pi/pickers.js';
 import type { SessionMeta } from '../../src/session/store.js';
 import type { StepCodeConfig } from '../../src/config/config.js';
 
@@ -465,5 +465,41 @@ describe('askValidated（带校验的单行输入）', () => {
     await tick();
     term.send(ESC);
     await expect(p).resolves.toBeNull();
+  });
+});
+
+describe('askLine 焦点恢复（2026-08-18 /rename 卡死修复）', () => {
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+  function mk(): { term: FakeTerminal; tui: TuiMainScreen } {
+    const term = new FakeTerminal();
+    const tui = new TuiMainScreen(term);
+    tui.start();
+    return { term, tui };
+  }
+  it('askLine Enter 结束后焦点恢复到调用前的组件', async () => {
+    const { term, tui } = mk();
+    const editor = new PickerOverlay({ title: 'test', items: [], onSelect: () => {} });
+    tui.addChild(editor);
+    tui.setFocus(editor);
+    expect(tui.getFocusedComponent()).toBe(editor);
+    const p = askLine(tui, '输入名称');
+    await tick();
+    expect(tui.getFocusedComponent()).not.toBe(editor);
+    term.send('新名字');
+    term.send(ENTER);
+    await expect(p).resolves.toBe('新名字');
+    expect(tui.getFocusedComponent()).toBe(editor);
+  });
+  it('askLine Esc 取消后焦点也恢复', async () => {
+    const { term, tui } = mk();
+    const editor = new PickerOverlay({ title: 'test', items: [], onSelect: () => {} });
+    tui.addChild(editor);
+    tui.setFocus(editor);
+    expect(tui.getFocusedComponent()).toBe(editor);
+    const p = askLine(tui, '输入名称');
+    await tick();
+    term.send(ESC);
+    await expect(p).resolves.toBeNull();
+    expect(tui.getFocusedComponent()).toBe(editor);
   });
 });

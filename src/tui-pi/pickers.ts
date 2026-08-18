@@ -520,10 +520,15 @@ export function askLine(tui: TUI, hint: string, initial?: string, keyHint?: stri
   return new Promise<string | null>((resolve) => {
     const host = new Container();
     let settled = false;
+    // 记住调用前的焦点目标，finish 时恢复——否则 askLine 结束后焦点悬空，
+    // 输入进不去、ctrl+c 也不到 ChatEditor 处理（2026-08-18 /rename 卡死）。
+    const prevFocus = (tui as TUI & { getFocusedComponent?: () => Component | null }).getFocusedComponent?.() ?? null;
     const finish = (v: string | null): void => {
       if (settled) return;
       settled = true;
       tui.removeChild(host);
+      // 恢复调用前的焦点；拿不到就不动，让 tui 自己处理
+      if (prevFocus !== null) tui.setFocus(prevFocus);
       tui.requestRender();
       resolve(v);
     };
