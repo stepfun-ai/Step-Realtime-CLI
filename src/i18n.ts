@@ -148,6 +148,12 @@ const zh = {
   'sessionPicker.actionHint': '↑/↓ 选择 · 输入过滤 · Enter 恢复 · r 重命名 · Del/Ctrl+D 删除 · Esc 新会话',
   'sessionPicker.renamePrompt': '重命名 {title}：',
   'sessionPicker.renameHint': '输入新名字 · Enter 保存 · Esc 取消 · 留空保存则清除自定义名回退标题',
+
+  // --- /rename 命令（当前会话改名）---
+  'session.rename.prompt': '当前会话新名字（Esc 取消，留空清除自定义名）',
+  'session.rename.success': '已重命名为「{name}」',
+  'session.rename.cleared': '已清除自定义名，回退自动标题',
+  'session.rename.failed': '重命名失败',
   'sessionPicker.deleteConfirm': '删除会话 {title}？此操作不可恢复 [y/N]',
   'sessionPicker.cannotDeleteCurrent': '无法删除当前正在使用的会话',
   'sessionPicker.subagentsHeader': '─ 子 agent 会话（Enter 查看历史，续跑用 spawn_agent 的 resume 参数）─',
@@ -652,6 +658,7 @@ const zh = {
   'cmd.usage': '查看本会话的 token 与缓存命中统计：/usage（加 --all 汇总本目录全部会话）',
   'cmd.sessions': '列出本工作目录下的历史会话',
   'cmd.resume': '切换到指定历史会话：/resume <id>（不带 id 列出可选会话）',
+  'cmd.rename': '给当前会话改名：/rename（留空清除自定义名）',
   'cmd.agents': '查看当前会话派生的子 agent 会话（只读回看历史）',
   'cmd.lang': '显示或切换界面语言：/lang [zh|en]',
   'cmd.lang.zh': '中文',
@@ -910,6 +917,12 @@ const en: Record<keyof typeof zh, string> = {
   'sessionPicker.actionHint': '↑/↓ select · type to filter · Enter resume · r rename · Del/Ctrl+D delete · Esc new session',
   'sessionPicker.renamePrompt': 'Rename {title}: ',
   'sessionPicker.renameHint': 'type a new name · Enter save · Esc cancel · saving empty clears the custom name',
+
+  // --- /rename command (rename current session) ---
+  'session.rename.prompt': 'New name for current session (Esc to cancel, empty to clear)',
+  'session.rename.success': 'Renamed to "{name}"',
+  'session.rename.cleared': 'Custom name cleared, reverted to auto title',
+  'session.rename.failed': 'Rename failed',
   'sessionPicker.deleteConfirm': 'Delete session {title}? This cannot be undone [y/N]',
   'sessionPicker.cannotDeleteCurrent': 'Cannot delete the session currently in use',
   'sessionPicker.subagentsHeader': '─ Subagent sessions (Enter to view history; resume via spawn_agent resume param) ─',
@@ -1382,6 +1395,7 @@ const en: Record<keyof typeof zh, string> = {
   'cmd.usage': 'Show token and cache-hit stats for this session: /usage (--all aggregates every session in this directory)',
   'cmd.sessions': 'List past sessions in this working directory',
   'cmd.resume': 'Switch to a past session: /resume <id> (no id: list sessions)',
+  'cmd.rename': 'Rename the current session: /rename (empty to clear custom name)',
   'cmd.agents': 'List subagent sessions spawned by the current session (read-only history view)',
   'cmd.lang': 'Show or switch UI language: /lang [zh|en]',
   'cmd.lang.zh': 'Chinese',

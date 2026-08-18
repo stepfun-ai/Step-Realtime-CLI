@@ -1247,6 +1247,22 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         else this.resumeSession(args);
         return;
 
+      case 'rename': {
+        const name = await askLine(this.tui, t('session.rename.prompt'));
+        if (name === null) return; // Esc 取消
+        const trimmed = name.trim();
+        const ok = this.deps.store.rename(this.deps.ctx.cwd, this.session.id, trimmed);
+        if (ok) {
+          if (trimmed === '') delete this.session.name;
+          else this.session.name = trimmed;
+          this.syncTerminalTitle();
+          this.push({ kind: 'note', text: trimmed === '' ? t('session.rename.cleared') : t('session.rename.success', { name: trimmed }) });
+        } else {
+          this.push({ kind: 'error', text: t('session.rename.failed') });
+        }
+        return;
+      }
+
       case 'think':
         await this.runThink(args);
         return;
