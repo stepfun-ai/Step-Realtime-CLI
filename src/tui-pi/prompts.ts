@@ -3,7 +3,7 @@
  *
  * 三者共用 ChoiceBlock 的选项列表交互，各自只提供正文与结果语义。
  */
-import { Markdown, matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { AskUserQuestion, AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
 import { t } from '../i18n.js';
 import { ChoiceBlock, type Choice } from './ChoiceBlock.js';
@@ -396,31 +396,53 @@ export class QuestionPrompt {
   render(width: number): string[] {
     const q = this.question;
     const slot = this.slot;
-    const out: string[] = [];
+    const innerWidth = Math.max(10, width - 4); // 边框 2 + padding 2
+
+    // 组装框内内容行
+    const inner: string[] = [];
+
+    // 题干行
     const counter = this.req.questions.length > 1 ? `[${this.qIdx + 1}/${this.req.questions.length}] ` : '';
     const header = q.header !== undefined && q.header !== '' ? `[${q.header}] ` : '';
     const multi = q.multi_select === true ? c.dim(t('question.multiHint')) : '';
-    out.push(...wrapTextWithAnsi(`${c.accent(counter)}${c.dim(header)}${q.question}${multi}`, Math.max(1, width)));
+    const questionLine = `${c.accent(counter)}${c.dim(header)}${c.bold(q.question)}${multi}`;
+    inner.push(...wrapTextWithAnsi(questionLine, innerWidth));
+
+    // 选项行
     q.options.forEach((opt, i) => {
       const on = slot.cursor === i;
-      const box = q.multi_select === true ? (slot.checked.has(i) ? '[✓] ' : '[ ] ') : '';
+      const box = q.multi_select === true ? (slot.checked.has(i) ? c.ok('[✓] ') : c.dim('[ ] ')) : '';
       const desc = opt.description !== undefined && opt.description !== '' ? c.dim(`  — ${opt.description}`) : '';
       const label = on ? c.toolName(opt.label) : opt.label;
-      out.push(truncateToWidth(`${on ? c.toolName('→ ') : '  '}${box}[${i + 1}] ${label}${desc}`, width));
+      const prefix = on ? c.toolName('→ ') : '  ';
+      inner.push(truncateToWidth(`${prefix}${box}[${i + 1}] ${label}${desc}`, innerWidth));
     });
+
+    // 自由输入行
     const onOther = slot.cursor === this.otherIndex;
-    // 光标位置：onOther 时在 otherCursor 处插入 ▌；非 Other 行时无光标
-    const otherDisplay = slot.other === '' ? c.dim(t('question.otherPlaceholder')) : onOther
-      ? slot.other.slice(0, slot.otherCursor) + '▌' + slot.other.slice(slot.otherCursor)
-      : slot.other;
-    out.push(truncateToWidth(`${onOther ? c.toolName('→ ') : '  '}${otherDisplay}`, width));
-    out.push(
-      c.dim(
-        this.req.questions.length > 1
-          ? t('question.hintMulti')
-          : t('question.hint'),
-      ),
-    );
+    const otherText = slot.other === '' ? c.dim(t('question.otherPlaceholder')) : slot.other;
+    const otherCursor = onOther && slot.other !== '' ? '▌' : '';
+    const otherPrefix = onOther ? c.toolName('→ ') : '  ';
+    const otherLine = `${otherPrefix}${onOther ? c.toolName('[?] ') : c.dim('[?] ')}${otherText}${otherCursor}`;
+    inner.push(truncateToWidth(otherLine, innerWidth));
+
+    // 空行分隔
+    inner.push('');
+
+    // 提示行
+    const hintText = this.req.questions.length > 1 ? t('question.hintMulti') : t('question.hint');
+    inner.push(c.dim(hintText));
+
+    // 画边框
+    const frameWidth = Math.min(innerWidth, Math.max(...inner.map((l) => Math.min(visibleWidth(l), innerWidth))));
+    const out: string[] = [];
+    out.push(c.accent(`╭${'─'.repeat(frameWidth + 2)}╮`));
+    for (const line of inner) {
+      const w = visibleWidth(line);
+      const padded = w < frameWidth ? line + ' '.repeat(frameWidth - w) : truncateToWidth(line, frameWidth);
+      out.push(`${c.accent('│')} ${padded} ${c.accent('│')}`);
+    }
+    out.push(c.accent(`╰${'─'.repeat(frameWidth + 2)}╯`));
     out.push('');
     return out;
   }
