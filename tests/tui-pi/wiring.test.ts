@@ -229,6 +229,13 @@ describe('PiChat 接线：会话切换的清理与恢复', () => {
     expect(exitBlock, 'exit 里应清 backtrackPrimedTimer').toContain('backtrackPrimedTimer');
   });
 
+  it('spinner 与计时器两个 setInterval 在退出时都被清理', () => {
+    // spinnerTimer 与 ticker 是两个 setInterval，漏清会让 node 事件循环挂住不退。
+    const exitBlock = /private exit\(\): void \{[\s\S]{0,1000}?\n  \}/.exec(piChat)?.[0] ?? '';
+    expect(exitBlock, 'exit 里应清 ticker').toContain('this.ticker');
+    expect(exitBlock, 'exit 里应清 spinnerTimer').toContain('this.spinnerTimer');
+  });
+
   it('待发队列持久化：变更走 updateQueue，两条恢复路径都接回', () => {
     wired(piChat, 'updateQueue', '队列变更统一出口');
     wired(piChat, "type: 'queue.update'", '队列 wire 事件');
