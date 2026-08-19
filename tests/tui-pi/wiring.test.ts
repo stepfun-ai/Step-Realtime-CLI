@@ -217,6 +217,14 @@ describe('PiChat 接线：会话切换的清理与恢复', () => {
     expect(/performBacktrack\(\)[\s\S]{0,900}?this\.persist\(\)/.test(piChat), '回退后未 persist').toBe(true);
   });
 
+  it('中断冷静期：abortTurn 记录时间戳，onEscape 在冷静期内不进 backtrack primed', () => {
+    // 刚中断完连按 Esc 多半是「确认停了没」，不该被当成回退意图（回退会截断历史）。
+    wired(piChat, 'ABORT_COOLDOWN_MS', '冷静期常量');
+    wired(piChat, 'lastAbortAt', '中断时间戳');
+    wired(piChat, 'this.lastAbortAt = Date.now()', 'abortTurn 记录时间');
+    wired(piChat, 'Date.now() - this.lastAbortAt < ABORT_COOLDOWN_MS', 'onEscape 冷静期判定');
+  });
+
   it('两个 primed 提示走输入框下方 footer，不进转录区 note', () => {
     wired(piChat, 'footerText', 'footer 绑定');
     wired(piChat, "t('input.backtrackPrimed')", '回退提示文案');

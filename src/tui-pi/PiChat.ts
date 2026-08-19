@@ -176,6 +176,8 @@ const FOLD_TRIGGER_TURNS = 35;
  * 两处取同值是有意的——用户不该记两个不同的窗口长度。
  */
 const PRIMED_TIMEOUT_MS = 5000;
+/** 中断后的回退冷静期：中断（Esc/Ctrl+C）后这段时间内 Esc 不触发 backtrack primed。 */
+const ABORT_COOLDOWN_MS = 1000;
 
 export class PiChat {
   private readonly deps: PiChatDeps;
@@ -335,6 +337,8 @@ export class PiChat {
    */
   private backtrackPrimed = false;
   private backtrackPrimedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 最近一次中断（Esc/Ctrl+C）的时间戳：回退冷静期判据。 */
+  private lastAbortAt = 0;
   private ticker: ReturnType<typeof setInterval> | undefined;
   /**
    * spinner 独立定时器。与计时器 ticker 解耦：spinner 需要稳帧（约 12fps）才不卡，
@@ -944,6 +948,9 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     }
     // 队列空 + 输入框空 + 有可回退的 user 消息：双击 Esc 回退编辑上一条
     if (this.editor.getText() === '' && computeBacktrack(this.history) !== null) {
+      // 中断冷静期：刚按 Esc/Ctrl+C 中断完回合的 1s 内，连按 Esc 多半是「确认停了没」，
+      // 不该被当成回退意图（参照成熟实现的 rewind 冷静期）。
+      if (Date.now() - this.lastAbortAt < ABORT_COOLDOWN_MS) return true;
       if (this.backtrackPrimed) this.performBacktrack();
       else this.enterBacktrackPrimed();
       return true;
@@ -1143,6 +1150,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    * 用户按了 Esc 却停不下来的反向 bug。Esc 必须既暂停 goal 又中止当前回合，/goal resume 恢复。
    */
   private abortTurn(): void {
+    this.lastAbortAt = Date.now();
     if (this.goal.get()?.status === 'active') {
       this.goal.update('paused');
       this.continuation = null;
