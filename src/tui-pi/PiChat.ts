@@ -312,6 +312,12 @@ export class PiChat {
    */
   private readonly notifyPrepared = new Map<string, StoredMessage>();
   private thinkingAccum = '';
+  /** thinking 预览尾部留的行数。比 StatusLine.PREVIEW_LINES(3) 多取几行，折行后仍够预览用。 */
+  private static readonly PREVIEW_TAIL_LINES = 5;
+  /** preview 只传 accum 尾部若干行，避免 Text 组件每 chunk 重折全量串。 */
+  private previewTail(accum: string): string {
+    return accum.split('\n').slice(-PiChat.PREVIEW_TAIL_LINES).join('\n');
+  }
   private baseTokens = 0;
   /**
    * `baseTokens` 覆盖到历史的哪个下标（usage 事件的 measuredLength）。压缩预检要用它
@@ -3116,8 +3122,12 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     }
     if (ev.type === 'thinking_delta') {
       this.thinkingAccum += ev.text;
-      this.activity.setThinking(true, this.thinkingAccum);
       this.activity.addOutputChars(ev.text.length);
+      // preview 只传尾部窗口，而非全量 accum：Text 组件 setText 后会重新折行整个串，
+      // 若 accum 随每 chunk 线性增长，累计重折成本是 O(N²)——长思考（几百 chunk）下这是
+      // 卡顿与内存尖峰的同源压力。preview 只需尾部 N 行，传尾部即可，让 Text 始终处理有界串。
+      // accum 本身仍全量保留（回合结束落成 thinking 定稿块、进 compaction 都需要完整文本）。
+      this.activity.setThinking(true, this.previewTail(this.thinkingAccum));
       this.tui.requestRender();
       return;
     }
