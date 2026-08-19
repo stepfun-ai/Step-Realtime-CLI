@@ -104,9 +104,15 @@ export function historyToDisplayItems(
         continue;
       }
       if (origin.kind === 'compaction_summary') {
-        // 压缩摘要：投影成一条提示，告知用户这段历史已被摘要进上下文、并非丢失，
-        // 避免 resume 后看到「问了一堆没答」的错觉。
-        items.push({ kind: 'note', text: t('historyReplay.compactedNote') });
+        // 投影真正的交接摘要正文，而非一句泛泛提示。压缩把旧 assistant 回复摘要进这条消息，
+        // resume 后若只显示「已压缩」，用户会看到满屏自己早先的消息却无模型回复、误以为输出丢失
+        // （2026-08-19 实证：16 次压缩的会话 resume 后 131 条 user_verbatim 连排，旧 assistant
+        // 全在摘要里）。把摘要摆出来才解释得清中间那段发生了什么。空摘要才回退通用提示。
+        const summary = typeof message.content === 'string' ? message.content : '';
+        items.push({
+          kind: 'note',
+          text: summary.trim() !== '' ? summary : t('historyReplay.compactedNote'),
+        });
         continue;
       }
     }
