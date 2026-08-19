@@ -3,6 +3,7 @@
  * 键位与 Ink 版逐项对齐，这里用「喂按键序列 → 断言结算值」的方式把语义钉住。
  */
 import { describe, expect, it } from 'vitest';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { InlineApproval, PlanApproval, QuestionPrompt, buildPreview, dangerWarnings } from '../../src/tui-pi/prompts.js';
 import type { ApprovalOutcome, PlanOutcome } from '../../src/tui-pi/prompts.js';
 import type { AskUserRequest, QuestionAnswers } from '../../src/tools/askUser.js';
@@ -313,5 +314,33 @@ describe('QuestionPrompt', () => {
     block.handleInput(RIGHT); // → Q2
     block.handleInput('2'); // Q2 → b2，但 settled 已为 true，不重复 settle
     expect(settled).toHaveLength(1);
+  });
+});
+
+describe('ChoiceBlock render 出口宽度安全', () => {
+  // pi-tui doRender 对 visibleWidth 超终端宽的行直接 throw 崩溃。render 出口必须对每一行
+  // （含 renderBody 的题干/警告、renderChoices 的选项）截断——基类 render 统一负责。
+  it('窄终端下渲染出的每一行 visibleWidth 都不超 width（ask_user/审批/计划共用基类）', () => {
+    const longReq: AskUserRequest = {
+      questions: [
+        {
+          question: '这是一段非常长的题干，用来验证窄终端下 render 出口是否对每一行都做了截断，否则会撑超宽度触发 pi-tui doRender 断言崩溃',
+          header: 'Width',
+          options: [
+            { label: '一个超级长的选项标签，用来验证 renderChoices 与 renderBody 两条路径都被出口截断覆盖' },
+            { label: 'B 方案', description: '描述也尽量长一点，覆盖 renderChoices 内逐行截断与 renderBody 题干截断' },
+          ],
+        },
+      ],
+    };
+    const settled: QuestionAnswers[] = [];
+    const block = new QuestionPrompt(longReq, () => {}, (a) => settled.push(a));
+    for (const w of [40, 50, 67]) {
+      const lines = plain(block.render(w));
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(visibleWidth(line), `width=${w} 出现超宽行`).toBeLessThanOrEqual(w);
+      }
+    }
   });
 });

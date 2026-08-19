@@ -160,6 +160,12 @@ export abstract class ChoiceBlock<T> implements Component {
   }
 
   render(width: number): string[] {
-    return [...this.renderBody(width), ...this.renderChoices(width), c.dim(this.hintLine()), ''];
+    // 出口统一截断每一行：renderBody 的标题/警告等行子类未必逐行截断，漏一行就会在窄终端
+    // 撑超宽度、触发 pi-tui doRender 断言崩溃（ask_user/审批/计划弹层反复 width 崩溃的残留病根）。
+    // 参照成熟实现的同一做法：render 出口对全部行 truncateToWidth。renderChoices 自身已截断，
+    // 二次截断幂等无害。
+    return [...this.renderBody(width), ...this.renderChoices(width), c.dim(this.hintLine()), ''].map((l) =>
+      truncateToWidth(l, width),
+    );
   }
 }
