@@ -517,6 +517,37 @@ describe('OpenAiChatProvider 流式响应翻译', () => {
     expect(toolUse).toMatchObject({ type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } });
   });
 
+  it('tool_calls 增量同时合成 content_block_start[tool_use] 与 input_json_delta 流事件（成形卡的数据源）', async () => {
+    const provider = makeProvider(
+      sseResponse([
+        JSON.stringify({
+          choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'read_file', arguments: '{"pa' } }] } }],
+        }),
+        JSON.stringify({
+          choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'th":"a.ts"}' } }] } }],
+        }),
+        JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }),
+      ]),
+    );
+    const { events } = await drive(provider, {
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ name: 'read_file', input_schema: { type: 'object' } } as unknown as Anthropic.Tool],
+    });
+    // start 只发一次（第二个增量块只有 arguments 没有 name/id，不重复发）
+    const starts = events.filter((e) => e.type === 'content_block_start');
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({
+      index: 1000,
+      content_block: { type: 'tool_use', id: 'call_1', name: 'read_file' },
+    });
+    // 两段 arguments 各产一条 input_json_delta
+    const argDeltas = events.filter(
+      (e) => e.type === 'content_block_delta' && (e.delta as { type: string }).type === 'input_json_delta',
+    );
+    expect(argDeltas).toHaveLength(2);
+    expect(argDeltas.map((e) => (e.delta as { partial_json: string }).partial_json).join('')).toBe('{"path":"a.ts"}');
+  });
+
   it('两个并行 tool_calls（不同 index）→ 两个 tool_use 块', async () => {
     const provider = makeProvider(
       sseResponse([

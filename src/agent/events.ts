@@ -12,6 +12,14 @@ export type AgentEvent =
   /** 思考块结束（对应 index 的 content_block_stop）。UI 据此收起「思考中」指示。 */
   | { type: 'thinking_end' }
   | { type: 'tool_start'; id: string; name: string; input: unknown }
+  /**
+   * 工具调用开始成形：模型刚开始流式吐 tool_use 块（Anthropic 原生 content_block_start，
+   * OpenAI 通道由 provider 合成同形事件）。比 tool_start 早——后者要等参数 JSON 完整。
+   * UI 据此先挂「成形中」的工具卡，填掉参数流的等待空窗。
+   */
+  | { type: 'tool_forming'; id: string; name: string }
+  /** 工具参数的流式增量（半截 JSON 片段）。UI 只抠关键字段做预览，不解析全量。 */
+  | { type: 'tool_args_delta'; id: string; partialJson: string }
   | { type: 'tool_end'; id: string; name: string; result: string; isError: boolean }
   /**
    * 重试。hadPartial 为 true 表示本次失败尝试已吐过正文（屏幕上有残文条目），

@@ -3191,8 +3191,41 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         appendText(this.transcript, ev.text);
         break;
       }
+      case 'tool_forming': {
+        this.activity.noteToolActivity();
+        // 模型开始流式吐参数就挂卡（成形中），不等参数 JSON 完整——填掉参数流的等待空窗。
+        this.transcript.push({
+          kind: 'tool',
+          id: ev.id,
+          name: ev.name,
+          input: {},
+          status: 'running',
+          startedAt: Date.now(),
+          forming: true,
+          partialArgs: '',
+        });
+        break;
+      }
+      case 'tool_args_delta': {
+        this.activity.noteToolActivity();
+        this.transcript.updateLastWhere(
+          (it) => it.kind === 'tool' && it.id === ev.id,
+          (it) => {
+            const t = it as Extract<DisplayItem, { kind: 'tool' }>;
+            return { ...t, partialArgs: (t.partialArgs ?? '') + ev.partialJson };
+          },
+        );
+        break;
+      }
       case 'tool_start': {
         this.activity.noteToolActivity();
+        // 成形卡转正：tool_forming 挂的卡就地填实参数、清 forming 态。
+        // id 匹配不上时（OpenAI 首帧缺 id 的 synthetic id）按同名成形卡兜底。
+        const reconciled = this.transcript.updateLastWhere(
+          (it) => it.kind === 'tool' && it.forming === true && (it.id === ev.id || it.name === ev.name),
+          (it) => ({ ...(it as Extract<DisplayItem, { kind: 'tool' }>), input: ev.input, forming: undefined, partialArgs: undefined }),
+        );
+        if (reconciled) break;
         const toolItem: Extract<DisplayItem, { kind: 'tool' }> = {
           kind: 'tool',
           id: ev.id,
@@ -3239,6 +3272,22 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         this.transcript.push({ kind: 'note', text: '模型只输出了思考，正基于前序分析直接作答', boundary: true });
         break;
       case 'aborted':
+        // 成形中的工具卡等不到 tool_start 了（参数没吐完就断了），逐个收尾为已中断，
+        // 否则永远停在 running 态。
+        while (
+          this.transcript.updateLastWhere(
+            (it) => it.kind === 'tool' && it.forming === true,
+            (it) => ({
+              ...(it as Extract<DisplayItem, { kind: 'tool' }>),
+              status: 'error' as const,
+              forming: undefined,
+              partialArgs: undefined,
+              result: '参数流式期间被中断',
+            }),
+          )
+        ) {
+          // updateLastWhere 每次只收尾最后一个匹配项，循环到没有成形卡为止
+        }
         // steer 残留倒进队列头部：中断后按队列机制续发，用户留言不凭空消失
         if (this.steers.length > 0) this.queue.unshift(...this.steers.splice(0));
         this.transcript.push({

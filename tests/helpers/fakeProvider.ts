@@ -14,6 +14,11 @@ export type Behavior =
        */
       thinkingChunks?: string[];
       /**
+       * 模拟工具调用的参数流式：先吐 content_block_start[tool_use]，再逐段吐
+       * input_json_delta（半截 JSON）。配 finalContent 里的 tool_use 块组成完整回合。
+       */
+      toolCallStream?: { id: string; name: string; argChunks: string[] };
+      /**
        * 吐完上述增量后在 finalMessage 阶段抛错——模拟「流式正文中途连接中断」
        * （ECONNRESET / terminated）：正文已进 UI，但流未正常收尾。与 `{ throw }` 不同，
        * 后者在 stream() 调用时同步抛（连第一个增量都没产出），覆盖不了「吐字后断连」。
@@ -79,6 +84,22 @@ export function makeFakeProvider(
             index: 0,
             delta: { type: 'text_delta', text },
           } as unknown as Anthropic.MessageStreamEvent;
+        }
+        if (b.toolCallStream !== undefined) {
+          const ts = b.toolCallStream;
+          yield {
+            type: 'content_block_start',
+            index: 1,
+            content_block: { type: 'tool_use', id: ts.id, name: ts.name, input: {} },
+          } as unknown as Anthropic.MessageStreamEvent;
+          for (const partial of ts.argChunks) {
+            yield {
+              type: 'content_block_delta',
+              index: 1,
+              delta: { type: 'input_json_delta', partial_json: partial },
+            } as unknown as Anthropic.MessageStreamEvent;
+          }
+          yield { type: 'content_block_stop', index: 1 } as unknown as Anthropic.MessageStreamEvent;
         }
       }
       const gen = iter();

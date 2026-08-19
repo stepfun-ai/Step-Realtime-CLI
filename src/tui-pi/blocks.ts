@@ -397,10 +397,29 @@ export class ItemBlock implements Component {
 
 /** 工具参数摘要的着色文本（主界面卡片与 Ctrl+O 展开态共用，避免两处漂移）。 */
 function toolArgText(it: Extract<DisplayItem, { kind: 'tool' }>): string {
+  if (it.forming === true) {
+    // 参数流式中：input 还是空对象，从半截 JSON 里抠关键字段做预览（填参数流的等待空窗）。
+    const preview = extractArgsPreview(it.partialArgs ?? '');
+    return c.dim(preview !== '' ? `  ${preview}…` : '  参数成形中…');
+  }
   const arg = summarizeInput(it.input);
   if (arg === '') return '';
   // 两个空格：单空格时 `write_file src/x.ts` 读起来像一个词组，双空格才分得出「工具」与「操作对象」
   return it.name === 'skill' ? c.toolArgSkill(`  ${arg}`) : c.toolArg(`  ${arg}`);
+}
+
+/**
+ * 从半截工具参数 JSON 里抠出第一个已知关键字段做预览。
+ * 正则容忍未闭合的字符串（[^"]* 匹配到串尾），半截 JSON 也能抠出值。
+ * 字段优先级按「用户最想知道工具要动什么」排：路径/命令/模式/查询词。
+ */
+export function extractArgsPreview(partialJson: string): string {
+  const KEYS = ['file_path', 'path', 'command', 'pattern', 'query', 'url', 'prompt'];
+  for (const key of KEYS) {
+    const m = new RegExp(`"${key}"\\s*:\\s*"([^"]{0,60})`).exec(partialJson);
+    if (m !== null && m[1] !== undefined && m[1] !== '') return `${key}=${m[1]}`;
+  }
+  return '';
 }
 
 /**

@@ -145,11 +145,39 @@ export class OpenAiChatProvider implements ChatProvider {
       let decided = false;
 
       /** 把一个 chunk 计入正文并产出流式事件（主 completion 路径）。 */
+      // 工具调用块的合成流事件状态：OpenAI 协议没有 content_block 概念，tool_calls 按
+      // index 增量到达。这里合成 Anthropic 同形的 content_block_start[tool_use] 与
+      // input_json_delta，让上层（runTurn → UI）在参数流式期间就能挂「成形中」工具卡。
+      // index 偏移 1000 避让正文/思考块（它们恒为 0）。
+      const startedToolBlocks = new Set<number>();
       function* emitAsMain(chunk: OpenAiStreamChunk): Generator<Anthropic.MessageStreamEvent> {
         const choice = chunk.choices?.[0];
         if (choice?.delta !== undefined) {
           const delta = choice.delta;
           accumulator.addDelta(delta);
+          if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const blockIndex = 1000 + (typeof tc.index === 'number' ? tc.index : 0);
+              const toolId = typeof tc.id === 'string' && tc.id.length > 0 ? tc.id : `synthetic-${blockIndex}`;
+              const name = tc.function?.name;
+              if (typeof name === 'string' && name.length > 0 && !startedToolBlocks.has(blockIndex)) {
+                startedToolBlocks.add(blockIndex);
+                yield {
+                  type: 'content_block_start',
+                  index: blockIndex,
+                  content_block: { type: 'tool_use', id: toolId, name, input: {} },
+                } as unknown as Anthropic.MessageStreamEvent;
+              }
+              const argsFragment = tc.function?.arguments;
+              if (typeof argsFragment === 'string' && argsFragment.length > 0) {
+                yield {
+                  type: 'content_block_delta',
+                  index: blockIndex,
+                  delta: { type: 'input_json_delta', partial_json: argsFragment },
+                } as unknown as Anthropic.MessageStreamEvent;
+              }
+            }
+          }
           const reasoning = delta.reasoning_content ?? delta.reasoning;
           if (typeof reasoning === 'string' && reasoning.length > 0) {
             yield {

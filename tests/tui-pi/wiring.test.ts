@@ -225,6 +225,20 @@ describe('PiChat 接线：会话切换的清理与恢复', () => {
     wired(piChat, 'Date.now() - this.lastAbortAt < ABORT_COOLDOWN_MS', 'onEscape 冷静期判定');
   });
 
+  it('工具参数流式预览：tool_forming/args_delta 事件上抛 + 成形卡 reconcile + 中断收尾', () => {
+    // 全链路：runTurn 映射事件 → PiChat 挂成形卡 → tool_start 转正（不是重开新卡）→
+    // aborted 收尾滞留成形卡。任何一环断开，用户要么看不到成形卡、要么看到重复卡/僵尸卡。
+    wired(piChat, "case 'tool_forming'", 'forming 事件入口');
+    wired(piChat, "case 'tool_args_delta'", '参数增量入口');
+    wired(piChat, 'forming: true', '成形卡标记');
+    wired(piChat, 'it.forming === true', 'tool_start reconcile 谓词');
+    wired(piChat, "'参数流式期间被中断'", 'aborted 收尾成形卡');
+    const runTurn = readFileSync(join(repoRoot, 'src', 'agent', 'runTurn.ts'), 'utf8');
+    expect(runTurn.includes("type: 'tool_forming'"), 'runTurn 应上抛 tool_forming').toBe(true);
+    expect(runTurn.includes("type: 'tool_args_delta'"), 'runTurn 应上抛 tool_args_delta').toBe(true);
+    expect(runTurn.includes("event.delta.type === 'input_json_delta'"), 'runTurn 应消费 input_json_delta').toBe(true);
+  });
+
   it('SIGHUP/死终端紧急出口：cli 注册信号处理，PiChat 提供只恢复终端的 emergencyStop', () => {
     // 终端死掉后继续写 stdout 会 EIO 循环占满 CPU，进程残留把 shell 挂在 raw mode。
     wired(cli, "process.once('SIGHUP'", 'SIGHUP 处理');

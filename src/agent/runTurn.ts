@@ -271,11 +271,25 @@ export async function* runTurn(
       // 在途 thinking 块的 index：content_block_start[thinking] 记下，同 index 的 content_block_stop 清掉。
       // 边界事件独立上抛，使「只吐 signature、不吐可见思考」的模型也能被 UI 显示为思考中。
       let thinkingIndex: number | undefined;
+      // 在途 tool_use 块的 index → id：Anthropic 通道原生有 content_block_start[tool_use] 与
+      // input_json_delta，OpenAI 通道由 provider 合成同形事件（index 偏移 1000 避让正文块）。
+      // 两者在这里统一映射成 tool_forming / tool_args_delta，UI 提前挂「成形中」工具卡。
+      const toolBlockIds = new Map<number, string>();
       for await (const event of stream) {
         if (signal?.aborted) break;
         if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
           emittedText = true;
           yield { type: 'text', text: event.delta.text };
+        } else if (event.type === 'content_block_delta' && event.delta.type === 'input_json_delta') {
+          const toolId = toolBlockIds.get(event.index);
+          if (toolId !== undefined) yield { type: 'tool_args_delta', id: toolId, partialJson: event.delta.partial_json };
+        } else if (
+          event.type === 'content_block_start' &&
+          event.content_block.type === 'tool_use'
+        ) {
+          const block = event.content_block;
+          toolBlockIds.set(event.index, block.id);
+          yield { type: 'tool_forming', id: block.id, name: block.name };
         } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
           // 思考增量上抛给 UI（流式预览）。**不置 emittedText**：思考不是正文，
           // 重试只会让思考重复展示一次，而阻断重试会把偶发空响应变成用户必须手动重发的硬错误。
@@ -346,11 +360,19 @@ export async function* runTurn(
             const downgradeThinking: ThinkingParam = { level: 'low', budgetTokens: thinking.budgetTokens };
             const retryStream = provider.stream({ system, tools, messages: toWire(messages, wireOpts), signal, model, thinking: downgradeThinking });
             let retryThinkingIndex: number | undefined;
+            const retryToolBlockIds = new Map<number, string>();
             for await (const event of retryStream) {
               if (signal?.aborted) break;
               if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
                 emittedText = true;
                 yield { type: 'text', text: event.delta.text };
+              } else if (event.type === 'content_block_delta' && event.delta.type === 'input_json_delta') {
+                const toolId = retryToolBlockIds.get(event.index);
+                if (toolId !== undefined) yield { type: 'tool_args_delta', id: toolId, partialJson: event.delta.partial_json };
+              } else if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
+                const block = event.content_block;
+                retryToolBlockIds.set(event.index, block.id);
+                yield { type: 'tool_forming', id: block.id, name: block.name };
               } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
                 yield { type: 'thinking_delta', text: event.delta.thinking };
               } else if (

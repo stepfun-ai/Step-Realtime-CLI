@@ -27,6 +27,10 @@ export type DisplayItem =
       input: unknown;
       status: 'running' | 'ok' | 'error';
       result?: string;
+      /** 参数流式中（tool_forming 已挂卡、tool_start 未到）：卡片显示「参数成形中」+ 关键字段预览。 */
+      forming?: boolean;
+      /** 半截参数 JSON 的累积（tool_args_delta 拼接），仅供渲染层抠关键字段预览。 */
+      partialArgs?: string;
       /** 工具开始时间戳（tool_start 时埋入），用于 running 态显示已运行秒数。 */
       startedAt?: number;
       /** dynamic_workflow 的动态阶段面板状态（tool_start 时造空序列，phase 事件逐个追加阶段）。 */

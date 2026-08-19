@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import { Transcript } from '../../src/tui-pi/Transcript.js';
-import { ItemBlock } from '../../src/tui-pi/blocks.js';
+import { ItemBlock, extractArgsPreview } from '../../src/tui-pi/blocks.js';
 import { ActivityLine, RenderCache, StatusLine, formatCount, shortenPath } from '../../src/tui-pi/StatusLine.js';
 import { subagentStats } from '../../src/tui-pi/blocks.js';
 import { ChatEditor } from '../../src/tui-pi/ChatEditor.js';
@@ -656,6 +656,57 @@ describe('ChatEditor 的 Esc / Ctrl+C 路由', () => {
     });
     return { term, tui, ed };
   }
+
+  it('工具卡 forming 态：显示「参数成形中」与半截 JSON 抠出的关键字段', () => {
+    const forming = plain(new ItemBlock({
+      kind: 'tool',
+      id: 'c1',
+      name: 'read_file',
+      input: {},
+      status: 'running',
+      startedAt: Date.now(),
+      forming: true,
+      partialArgs: '{"path":"src/mai',
+    }).render(70)).join('\n');
+    expect(forming).toContain('read_file');
+    expect(forming).toContain('path=src/mai');
+    // 无关键字段时回退通用文案
+    const noKey = plain(new ItemBlock({
+      kind: 'tool',
+      id: 'c2',
+      name: 'bash',
+      input: {},
+      status: 'running',
+      startedAt: Date.now(),
+      forming: true,
+      partialArgs: '{"foo":',
+    }).render(70)).join('\n');
+    expect(noKey).toContain('参数成形中');
+  });
+
+  it('extractArgsPreview：半截 JSON 容忍未闭合字符串，按字段优先级抠取', () => {
+    expect(extractArgsPreview('{"path":"src/a.ts"}')).toBe('path=src/a.ts');
+    expect(extractArgsPreview('{"comma')).toBe('');
+    expect(extractArgsPreview('{"command":"pnpm test')).toBe('command=pnpm test');
+    // file_path 优先于 path
+    expect(extractArgsPreview('{"path":"a","file_path":"b"}')).toBe('file_path=b');
+  });
+
+  it('工具卡 forming 态转正：tool_start 填实参数后按正常卡渲染', () => {
+    // reconcile 逻辑在 PiChat（wiring 测试锁调用点），这里锁渲染侧：
+    // forming 清除后 partialArgs 不再影响显示
+    const done = plain(new ItemBlock({
+      kind: 'tool',
+      id: 'c1',
+      name: 'read_file',
+      input: { path: 'src/main.ts' },
+      status: 'ok',
+      result: 'ok',
+    }).render(70)).join('\n');
+    expect(done).toContain('read_file');
+    expect(done).toContain('src/main.ts');
+    expect(done).not.toContain('参数成形中');
+  });
 
   it('大段粘贴折叠成占位符，getExpandedText 还原全文', () => {
     // pi-tui Editor 内置：>10 行或 >1000 字符折叠成 [paste #N +M lines]，提交时展开。
