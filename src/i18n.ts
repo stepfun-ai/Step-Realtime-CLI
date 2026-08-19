@@ -71,6 +71,8 @@ const zh = {
   'input.tipPrefix': '  · 提示：{tip}',
   'workingStatus.tokens': '↓ {count} tokens',
   'input.backtrackPrimed': '  · 再按一次 Esc 取回上一条消息编辑',
+  'input.ctrlS.steered': '已插队 {count} 条，模型下一小回合就能看到',
+  'input.ctrlS.nothing': '队列与输入框都是空的，没有可插队的内容',
   'input.exitPrimed': '  · 再按一次 Ctrl+C 退出',
 
   // --- 欢迎框（WelcomeBox）---
@@ -739,6 +741,8 @@ const zh = {
   'loop.compactFailed': '上下文已超过压缩阈值，但自动压缩没能生成可用摘要（请求失败或摘要质量不合格）。历史保持原样，本轮起不再重试自动压缩——同一会话内它大概率继续失败，重试只是重复消耗。请用 /compact 手动压缩，或 /new 重开会话；若配了 [compaction] model，检查那个模型/渠道是否可用。',
   'loop.maxIterations': '已达最大往返轮数（{max}），中止本次交互。',
   'loop.roundLoop.warn': '最近若干轮中已第 {n} 次出现相同回合（工具调用与结果均无变化），已注入警告提示模型换方法。',
+  'loop.steerInject': '用户在运行中插话（请优先响应）：\n{text}',
+  'loop.steerInjected': '已把 {count} 条插话注入，模型下一小回合可见',
   'loop.roundLoop.inject': '你已连续多轮产出完全相同的内容与工具调用，工具结果也没有任何变化，属于零进展循环。请立即换用不同的方法推进任务；如果确实无法推进，停止调用工具，直接向用户汇报当前卡点与已掌握的信息。',
   'loop.roundLoop.stop': '注入警告后模型仍原样重复，判定陷入死循环，已停止本轮执行。建议换模型、重开会话，或检查任务描述是否让模型无路可走。',
   'loop.turnWarning.mid': '本轮已连续 {n} 次工具调用（单轮上限 {max}），请自查是否在原地重复；若已得到答案请直接作答。',
@@ -855,6 +859,8 @@ const en: Record<keyof typeof zh, string> = {
   'input.tipPrefix': '  · Tip: {tip}',
   'workingStatus.tokens': '↓ {count} tokens',
   'input.backtrackPrimed': '  · Press Esc again to edit your previous message',
+  'input.ctrlS.steered': 'Steered {count} message(s); the model sees them at the next step',
+  'input.ctrlS.nothing': 'Queue and input are both empty; nothing to steer',
   'input.exitPrimed': '  · Press Ctrl+C again to exit',
 
   'welcome.title': 'Welcome to Step Code!',
@@ -1480,6 +1486,8 @@ const en: Record<keyof typeof zh, string> = {
   'loop.compactFailed': 'Context is past the compaction threshold, but auto-compaction could not produce a usable summary (request failed or summary quality rejected). History is unchanged and auto-compaction will not be retried for the rest of this run — it would most likely keep failing and just burn requests. Use /compact manually or /new to restart; if you set [compaction] model, check that model/channel is reachable.',
   'loop.maxIterations': 'Reached the maximum number of turns ({max}); aborting this run.',
   'loop.roundLoop.warn': 'Detected identical output {n} times in recent rounds (tool calls and results unchanged); injected a warning asking the model to try a different approach.',
+  'loop.steerInject': 'The user chimed in while you were running (please respond to this first):\n{text}',
+  'loop.steerInjected': 'Injected {count} steered message(s); the model will see them at the next step',
   'loop.roundLoop.inject': 'You have produced identical content and tool calls for multiple recent rounds, with no change in tool results. This is a zero-progress loop. Try a different approach immediately; if you genuinely cannot make progress, stop calling tools and report the current blocker and what you have learned so far directly to the user.',
   'loop.roundLoop.stop': 'The model continued to repeat the same output after the warning; stopping this run. Consider switching models, starting a new session, or reviewing whether the task description leaves the model with no viable path forward.',
   'loop.turnWarning.mid': 'This turn has already made {n} consecutive tool calls (per-turn limit {max}). Check whether you are repeating yourself in place; if you already have the answer, answer directly.',

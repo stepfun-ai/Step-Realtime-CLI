@@ -88,6 +88,7 @@ import {
   NOT_WIRED,
   notWiredText,
 } from './commandText.js';
+import { computeCtrlSSteer } from './steer.js';
 import { ChatAutocompleteProvider } from './completion.js';
 import { clipboardToolHint, readClipboardImage } from '../chat/clipboardImage.js';
 import { countHistoryImages, extractImageContent, ImageAttachmentStore } from '../chat/imageAttachment.js';
@@ -212,6 +213,11 @@ export class PiChat {
   private readonly chrome = new ChromePanels();
   /** 流式表格扣留：见 chat/tableHoldback.ts。 */
   private readonly tableHold = new TableHoldback();
+  /**
+   * Ctrl+S 主动插队的共享数组：handleCtrlS 把队列草稿+输入框文本塞进来，
+   * runAgent 在 step 边界取走注入（不等整个 run 结束）。数组就地 splice 清空。
+   */
+  private readonly activeSteer: string[] = [];
   /** 有 overlay 需要按秒重渲（任务弹层的用时）时置真，由 ticker 读。 */
   private overlayNeedsTick = false;
   private overlayTickCount = 0;
@@ -407,6 +413,7 @@ export class PiChat {
     };
     this.editor.onEscapeKey = () => this.onEscape();
     this.editor.onCtrlC = () => this.onCtrlC();
+    this.editor.onCtrlS = () => this.handleCtrlS();
     // 任意其他键解除两个 primed 态：不这么做的话，用户按了 Esc 又去打字，5 秒内的
     // 下一次 Esc 会被当成「双击的第二下」，把上一条消息意外回退掉。
     this.editor.onOtherKey = () => {
@@ -1145,6 +1152,31 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       itemsForTab: (tabId) => modelItems(this.deps.config, this.compactionModelOverride ?? this.deps.config.compaction.model, tabId),
     });
     if (picked !== null) this.applyCompactModel(picked);
+  }
+
+  /**
+   * Ctrl+S 主动插队：把队列里的用户草稿（系统注入除外）与输入框文本塞进 activeSteer，
+   * runAgent 在下一个 step 边界取走注入——比队列机制快一个「等 run 结束」。
+   * 空闲或无可插队内容时也消费按键（Ctrl+S 在历史终端上是 XOFF 流控键，不能漏出去）。
+   */
+  private handleCtrlS(): boolean {
+    if (!this.busy) return true;
+    // 系统注入（后台通知信封/cron prompt 等）留在队列走原机制，不插队——那些是给模型
+    // 看的结构化正文，和用户插话的时序语义不同
+    const { steer, rest, clearEditor } = computeCtrlSSteer(this.queue, this.notifyPrepared, this.editor.getText());
+    if (steer.length === 0) {
+      this.push({ kind: 'note', text: t('input.ctrlS.nothing') });
+      return true;
+    }
+    this.activeSteer.push(...steer);
+    if (clearEditor) this.editor.setText('');
+    this.updateQueue(rest);
+    this.push({
+      kind: 'note',
+      text: t('input.ctrlS.steered', { count: steer.length }),
+    });
+    this.tui.requestRender();
+    return true;
   }
 
   /**
@@ -3111,6 +3143,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         maxAutoContinues: this.deps.config.continuation?.maxAutoContinues,
         todos: this.todos.items,
         injectBackgroundNotifications: true,
+        steerQueue: this.activeSteer,
         onWireEvent: (event) => this.appendWire(event),
       })) {
         this.streamBuffer.ingest(ev);
@@ -3136,6 +3169,12 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         this.activity.setThinking(false);
       }
       this.controller = null;
+      // steer 兜底：run 结束（end_turn/出错）而循环没走到 step 边界时，activeSteer 里
+      // 的插话不会被消费——倒回队列头部按正常队列机制续发，用户的话不丢不错位。
+      if (this.activeSteer.length > 0) {
+        this.updateQueue([...this.activeSteer.splice(0), ...this.queue]);
+        this.push({ kind: 'note', text: '插话没赶上本轮（回合已结束），已转回队列', boundary: true });
+      }
       this.busy = false;
       this.activity.setBusy(false);
       this.activity.setTip('');

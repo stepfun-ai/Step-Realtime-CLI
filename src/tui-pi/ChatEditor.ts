@@ -65,6 +65,12 @@ export class ChatEditor extends Editor {
    */
   onCtrlG?: () => boolean;
   /**
+   * Ctrl+S：主动插队——把队列里的草稿与输入框文本注入运行中的回合（step 边界生效）。
+   * 无事可做（空闲/队列空）也返回 true 消费掉：Ctrl+S 在历史终端上是 XOFF 流控键，
+   * 让它漏出去用户会以为终端卡死。
+   */
+  onCtrlS?: () => boolean;
+  /**
    * ↑：busy + 空输入时取回队列尾部一条进输入框编辑。
    *
    * 返回 true 表示已消费（队列非空且取回成功）；false 让按键下传父类做历史导航。
@@ -231,6 +237,9 @@ export class ChatEditor extends Editor {
     }
     if (matchesKey(data, 'ctrl+g')) {
       if (this.onCtrlG?.() === true) return;
+    }
+    if (matchesKey(data, 'ctrl+s')) {
+      if (this.onCtrlS?.() === true) return;
     }
     if (matchesKey(data, 'up')) {
       if (this.onUpArrow?.() === true) return;

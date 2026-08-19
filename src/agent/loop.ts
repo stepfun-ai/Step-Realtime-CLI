@@ -142,6 +142,12 @@ export interface RunAgentOptions {
    */
   injectBackgroundNotifications?: boolean;
   /**
+   * 用户主动插队（Ctrl+S steer）：共享可变数组，UI 把队列草稿塞进来，循环在 step 边界
+   * （下一次模型调用前）取走注入。与队列语义的区别：队列等整个 run 结束，steer 在
+   * 回合内边界就生效。只能由 UI 在 busy 时写入；数组就地 splice 清空。
+   */
+  steerQueue?: string[];
+  /**
    * 事件日志写入钩（组合根注入）：循环内产生的非消息事件（context.apply_compaction、
    * background.notify_delivered）经它追加进 wire.jsonl。缺省 = 只走快照与消息日志通道。
    */
@@ -355,6 +361,18 @@ export async function* runAgent(opts: RunAgentOptions): AsyncGenerator<AgentEven
         // 「事件在、消息不在」的崩溃窗口——对账误判已送达，通知丢失（待办 #17）。
         // 统一由 persist 与消息本体同刻补写；消息带 background_task origin，补写可寻址。
       }
+    }
+    // 用户主动插队（Ctrl+S）：step 边界取走共享数组注入，模型本回合即可见。
+    // 注入即视为用户消息（kind: 'user'）：是用户的原话，回放/压缩口径与正常输入一致。
+    if (opts.steerQueue !== undefined && opts.steerQueue.length > 0) {
+      const steered = opts.steerQueue.splice(0);
+      messages.push(
+        stored(
+          { role: 'user', content: t('loop.steerInject', { text: steered.join('\n\n') }) },
+          { kind: 'user' },
+        ),
+      );
+      yield { type: 'notice', message: t('loop.steerInjected', { count: steered.length }) };
     }
     // ── 跨天提醒 ──
     // 会话跨过本地午夜后，system prompt 里那份时间快照的日期部分就错了。system 整块打
