@@ -105,6 +105,32 @@ describe('BackgroundManager onSettle', () => {
     expect(settled).toHaveLength(1);
   });
 
+  it('shutdown 终止在途任务并断开结算回调（防切会话回灌，P0 同源）', async () => {
+    // rebindBackground 只换引用不终止旧管理器，旧管理器在途任务 settle 时回调经捕获的
+    // PiChat this 回灌到新 session（污染转录 / 误报通知 / 注入模型上下文）。shutdown 必须先
+    // 置空回调再杀任务，使 settle 短路零回灌。
+    const settled: BackgroundTask[] = [];
+    const mgr = new BackgroundManager(10, { onSettle: (t) => settled.push(t) });
+    const procId = mgr.start('long', SH, shArgs(LONG_CMD), process.cwd());
+    // 延迟 resolve 的 async 任务，模拟尚未完成的后台子 agent
+    let resolveLate!: (v: { output: string; ok: boolean }) => void;
+    mgr.startTask('async·未完成', new Promise<{ output: string; ok: boolean }>((res) => { resolveLate = res; }), undefined, {
+      kind: 'subagent',
+    });
+
+    mgr.shutdown();
+
+    // 在途 proc 任务被终止，不再是 running
+    expect(mgr.get(procId)?.status).not.toBe('running');
+    // 回调已断开：shutdown 期间 stop() 触发的 settle 不外泄
+    expect(settled).toHaveLength(0);
+
+    // async 任务在 shutdown 之后才 resolve，结算回调已断开，仍不外泄（不回灌新 session）
+    resolveLate({ output: 'late', ok: true });
+    await sleep(50);
+    expect(settled).toHaveLength(0);
+  });
+
   it('后台超时到期自动终止：先置 killed 并触发 onSettle', async () => {
     const settled: BackgroundTask[] = [];
     const mgr = new BackgroundManager(10, { taskTimeoutS: 1, onSettle: (t) => settled.push(t) });

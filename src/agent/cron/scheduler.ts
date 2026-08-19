@@ -52,8 +52,10 @@ export class CronScheduler {
   /** 任务表变更通知（装配层挂持久化，可选）。 */
   onJobChange: CronJobChangeHandler | null = null;
 
-  /** 所属会话 ID：用于 session 隔离，新会话不加载旧会话的 cron 任务。 */
-  private readonly sessionId: string;
+  /** 所属会话 ID：用于 session 隔离，新会话不加载旧会话的 cron 任务。
+   *  非 readonly：PiChat 切会话（/new、/resume）时经 rebindSession 重绑，
+   *  否则新建任务被打上陈旧 sessionId、下次启动过滤加载不到。 */
+  private sessionId: string;
 
   constructor(
     private readonly onFire: CronFireHandler,
@@ -123,6 +125,21 @@ export class CronScheduler {
 
   stop(): void {
     this.stopTimer();
+  }
+
+  /**
+   * 切会话时重绑：清空内存任务表、停计时器、改用新 sessionId。
+   *
+   * 与 cron 跨 session 隔离配套：CronScheduler 实例随 PiChat 生命周期存活，
+   * 但旧 session 的任务属旧现场，不能带到新会话。不重绑的后果有二：
+   * - 旧任务留在内存，tick 到点照常 onFire，与当前是哪个 session 无关 → 旧会话定时任务在新会话触发（P0 同源）；
+   * - 新会话 create 的任务被打上陈旧 sessionId，下次启动按新 sessionId 过滤反而加载不到自己刚建的任务。
+   * 调用方随后 restore 本会话自己的任务。
+   */
+  rebindSession(sessionId: string): void {
+    this.jobs.clear();
+    this.stopTimer();
+    this.sessionId = sessionId;
   }
 
   /** 每个 tick：到点的任务触发（isIdle 才触发；错过合并 coalesce）。 */

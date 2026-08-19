@@ -753,4 +753,23 @@ export class BackgroundManager {
     this.settle(t);
     return true;
   }
+
+  /**
+   * 切会话 / 退出时整体终止：置空结算回调 + 终止全部在途任务 + 清空待投递队列。
+   *
+   * 为什么必须先置空回调再杀任务：rebindBackground 只换 this.background 引用、不终止旧
+   * 管理器，旧管理器的在途任务 settle 时回调经捕获的 PiChat this 回灌到新 session——污染
+   * 新会话的转录 note、误报终端通知、把旧任务结果 silent 注入新回合（污染模型上下文）。
+   * 这正是 cron 跨 session 串台的 P0 同源泄露（cwd 维度存储 + sessionless 的回调触发）。
+   * 先置空 onSettle/onSettleEvent，后续 stop() 触发的 settle 全部短路，零回灌。
+   * 每个任务也补清 onStop/proc/getPartialOutput 三字段，防 4GB OOM（终态后这些字段无读取方）。
+   */
+  shutdown(): void {
+    this.options.onSettle = undefined;
+    this.options.onSettleEvent = undefined;
+    for (const t of this.tasks.values()) {
+      if (t.status === 'running') this.stop(t.id); // kill proc + onStop 中止 async + settle（回调已空，零回灌）
+    }
+    this.pendingSettled.length = 0;
+  }
 }

@@ -120,4 +120,23 @@ describe('session 隔离：旧会话的 cron 任务不泄漏到新会话', () =>
     expect(schedA2.list()).toHaveLength(2);
     expect(fired).toHaveLength(0); // restore 不触发 fire
   });
+
+  it('rebindSession 清空旧会话任务并换 sessionId（进程内切会话，防旧任务在新会话触发）', () => {
+    // P0 同源：CronScheduler 实例随 PiChat 存活，sessionId 原为 readonly。切会话不重绑的话，
+    // 旧任务留在内存 tick 到点照常 fire；且新会话 create 的任务被打上陈旧 sessionId。
+    const fired: string[] = [];
+    const sched = new CronScheduler((j) => fired.push(j.prompt), () => true, 'session-A', 100);
+    sched.create('* * * * *', 'A 的旧任务');
+    expect(sched.list()).toHaveLength(1);
+
+    // 切到 session-B：rebind 清空旧任务、换 sessionId
+    sched.rebindSession('session-B');
+    expect(sched.list()).toHaveLength(0); // 旧任务已清，不会在新会话触发
+    // 新会话 create 的任务带新 sessionId（下次启动过滤加载得到）
+    const newJob = sched.create('* * * * *', 'B 的新任务');
+    expect(newJob.sessionId).toBe('session-B');
+
+    sched.stop();
+    expect(fired).toHaveLength(0); // rebind 后旧任务从未触发
+  });
 });

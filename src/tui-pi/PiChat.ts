@@ -225,10 +225,13 @@ export class PiChat {
   /** 自主目标（会话级）：跨轮持有，active 时回合收尾自动续跑。 */
   private readonly goal = new GoalMode();
   /**
-   * 定时任务（cwd 级，不属于单个会话）。
+   * 定时任务（**会话级**，不是 cwd 级）。
    *
    * 调度器是纯内存引擎，持久化叠在这一层：create/delete 走 onJobChange 落盘，
-   * 触发后 recurring 补写新游标、一次性任务直接清盘。
+   * 触发后 recurring 补写新游标、一次性任务直接清盘。每个 job 打上创建它的 sessionId，
+   * 装配层只装回本会话的任务——旧会话的 cron 不能在新会话触发（P0：cron 跨 session 串台）。
+   * 切会话（/new、/resume）时经 reloadCron 重绑 sessionId 并重装，否则旧任务残留触发、
+   * 新任务被打上陈旧 sessionId 下次加载不到。
    */
   private readonly cronStore: CronJobStore;
   private readonly cron: CronScheduler;
@@ -464,14 +467,8 @@ export class PiChat {
       if (kind === 'create') void this.cronStore.save(this.deps.ctx.cwd, job);
       else void this.cronStore.remove(this.deps.ctx.cwd, job.id);
     };
-    // 恢复本 cwd 的任务表；stale 任务由 restore 剔除，这里补清盘
-    // session 隔离：只恢复当前 session 创建的 cron 任务，旧会话的任务不加载
-    const allJobs = this.cronStore.load(deps.ctx.cwd);
-    const myJobs = allJobs.filter((j) => j.sessionId === this.session.id);
-    const dropped = allJobs.length - myJobs.length;
-    if (dropped > 0) this.push({ kind: 'note', text: `跳过 ${dropped} 个其他会话的定时任务` });
-    const staleIds = this.cron.restore(myJobs);
-    for (const id of staleIds) void this.cronStore.remove(deps.ctx.cwd, id);
+    // session 隔离：只装回本会话的 cron 任务（构造与切会话都走 reloadCron，避免旧任务串台）
+    this.reloadCron();
 
     // goal 快照恢复：active 会被降级为 paused（防重启后无人看着就自动续跑）
     this.goal.restore(deps.session.goal);
@@ -2123,6 +2120,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.queue = [];
     this.notifyPrepared.clear();
     this.rebindBackground();
+    // cron 与 compactionModelOverride 都是内存态、跨会话无意义：不重载 cron，旧会话任务会在新会话
+    // 触发（P0 同源）；不重置 override，新会话压缩会用错模型。二者都不落盘，切会话必须手动处理。
+    this.reloadCron();
+    this.compactionModelOverride = undefined;
     this.planMode = false;
     this.prePlanMode = null;
     this.thinkOverride = undefined;
@@ -2235,12 +2236,33 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
 
   /** 后台任务管理器换绑当前会话（任务落盘目录随会话 id 走）。 */
   private rebindBackground(): void {
+    const prev = this.background;
     this.background = new BackgroundManager(10, {
       taskTimeoutS: this.deps.config.background?.bashTaskTimeoutS ?? 600,
       tasksDir: this.deps.store.tasksDirFor(this.session.cwd, this.session.id),
       onSettleEvent: (task) => this.appendWire({ type: 'background.task_settle', ts: new Date().toISOString(), task }),
       onSettle: (task) => this.onBackgroundSettle(task),
     });
+    // 旧管理器的在途任务属于上个会话，必须先整体终止并断开结算回调，否则它们 settle 时
+    // 回调经捕获的 this 回灌到新会话（污染转录 / 误报通知 / 注入模型上下文），与 cron
+    // 跨 session 串台同源。rebind 只换引用不终止是这条泄露的结构前提。
+    prev.shutdown();
+  }
+
+  /**
+   * 按当前 sessionId 重载 cron 任务表。构造、/new、/resume 三处都要调用。
+   *
+   * 切会话时必须做，否则两类 P0 同源泄露：
+   * - 旧任务留在内存，tick 到点照常 onFire → 旧会话定时任务在新会话触发；
+   * - 新会话 create 的任务被打上陈旧 sessionId，下次启动按新 sessionId 过滤加载不到。
+   * rebindSession 清空内存表并换 sessionId，再 restore 只装回本会话自己的任务。
+   */
+  private reloadCron(): void {
+    this.cron.rebindSession(this.session.id);
+    const allJobs = this.cronStore.load(this.deps.ctx.cwd);
+    const myJobs = allJobs.filter((j) => j.sessionId === this.session.id);
+    const staleIds = this.cron.restore(myJobs);
+    for (const id of staleIds) void this.cronStore.remove(this.deps.ctx.cwd, id);
   }
 
   /**
@@ -2532,6 +2554,10 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.mode = data.mode ?? this.mode;
     this.planMode = data.planMode ?? false;
     this.thinkOverride = data.thinkOverride;
+    // 待办清单随会话落盘却从不恢复：不补会让 resume 串到残留的源会话 todos。
+    this.todos.items = [...(data.todos ?? [])];
+    // compactionModelOverride 不落盘：resume 到别的会话必须重置，否则新会话压缩用错模型。
+    this.compactionModelOverride = undefined;
     // 队列跟着目标会话走：当前会话排着的队属于旧现场，切过去要换成目标会话自己的。
     // 直接赋值不落 wire 事件——此刻 this.session 已经是新会话，落事件会把「恢复」这个
     // 读取动作记成新会话的一次队列变更。
@@ -2554,6 +2580,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // 换绑：tasksDir 由 session.id 算出，恢复到别的会话后不换绑，新起的后台任务会写进
     // 上一个会话的任务目录（这里原先只有下面那句对账，注释写着「换绑后」而实际没换过）。
     this.rebindBackground();
+    // cron 跟着目标会话走：旧会话的任务属旧现场，必须清空重装本会话自己的（同 newSession）。
+    this.reloadCron();
     // 换绑后立刻对账：这批任务的 onSettle 属于上个会话，本会话从未触发过。
     // 切会话即换了 delivered 集合的作用域，内存里那份属于旧会话，清掉重来。
     this.deliveredWritten = new Set(r.deliveredNotifications);
