@@ -2149,7 +2149,18 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // context 用量归零：history 已清空，但基准仍是上一会话的值，不重置会继续显示旧占用
     this.baseTokens = 0;
     this.status.setState({ usedTokens: 0 });
-    this.transcript.reset([{ kind: 'note', text: `已开始新会话 ${this.session.id}` }]);
+    // 新会话 history 为空 → transcript 首条补 welcome 块（logo + 工作目录/会话/模型/版本），
+    // 再跟一条「已开始新会话」note。此前只 reset 成 note，welcome 直接消失（对标 ink 仓：
+    // items 为空时 staticEntries 会把 WelcomeBox 作为首条常驻）。resume 过来的会话 history 非空，
+    // 不补 welcome（会话内容本身已是上文）。welcome 数据结构与 start() 构造首条保持一致。
+    const items: DisplayItem[] =
+      this.history.length === 0
+        ? [
+            { kind: 'welcome', data: { cwd: this.deps.ctx.cwd, sessionId: this.session.id, model: this.modelLabel, version: versionLine() } },
+            { kind: 'note', text: `已开始新会话 ${this.session.id}` },
+          ]
+        : [{ kind: 'note', text: `已开始新会话 ${this.session.id}` }];
+    this.transcript.reset(items);
     this.syncStatus();
     this.syncTerminalTitle();
     this.tui.requestRender();
