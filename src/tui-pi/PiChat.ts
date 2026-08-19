@@ -731,6 +731,12 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       );
       this.tui.requestRender();
     };
+    if (ev.kind === 'start') {
+      // 把解析后的真实角色名（含默认 general）与显示描述盖到卡片上——tool_start 处只抄
+      // 模型入参里的 subagent_type，模型省略该参数时卡片没有类型标识，分不清 explore/general。
+      patch((it) => ({ ...it, subagentType: ev.subagentType, description: ev.description }));
+      return;
+    }
     if (ev.kind === 'tool') {
       patch((it) => ({ ...it, subagentToolEvents: [...(it.subagentToolEvents ?? []), { name: ev.name, status: 'running' }] }));
       return;

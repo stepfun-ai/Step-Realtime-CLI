@@ -157,6 +157,14 @@ describe('PiChat 接线：runAgent 与子 agent 的参数透传', () => {
     wired(piChat, 'toolItem.subagentType = st', '角色名写进条目');
     wired(piChat, 'toolItem.description = desc', '简述写进条目');
   });
+
+  it('子 agent start 事件把解析后的真实角色名盖到卡片（模型省略 subagent_type 时也显示默认角色）', () => {
+    // tool_start 只能抄到模型入参；模型省略 subagent_type 时卡片无类型标识。
+    // start 进度事件带 registry 解析后的真实角色名（含默认 general），盖到卡片上。
+    wired(piChat, "ev.kind === 'start'", 'start 分支');
+    wired(piChat, 'subagentType: ev.subagentType', '真实角色名盖进条目');
+    wired(piChat, 'description: ev.description', '显示描述盖进条目');
+  });
 });
 
 describe('PiChat 接线：会话切换的清理与恢复', () => {
