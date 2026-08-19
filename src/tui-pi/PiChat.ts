@@ -94,6 +94,7 @@ import { countHistoryImages, extractImageContent, ImageAttachmentStore } from '.
 import { askLine, modelItems, modelTabs, showPicker, sessionItems, thinkItems, type PickerOverlay } from './pickers.js';
 import { StreamBuffer } from '../chat/streamBuffer.js';
 import { appendText, settleThinking } from '../chat/streamReducer.js';
+import { TableHoldback } from '../chat/tableHoldback.js';
 import { composeSystem } from '../chat/composeSystem.js';
 import { InlineApproval, PlanApproval, QuestionPrompt, type ApprovalOutcome, type PlanOutcome } from './prompts.js';
 import type { AskUserRequest, QuestionAnswers } from '../tools/askUser.js';
@@ -209,6 +210,8 @@ export class PiChat {
   }
   /** 输入框上方的常驻面板：待办清单 + 发送队列预览（无数据时零行）。 */
   private readonly chrome = new ChromePanels();
+  /** 流式表格扣留：见 chat/tableHoldback.ts。 */
+  private readonly tableHold = new TableHoldback();
   /** 有 overlay 需要按秒重渲（任务弹层的用时）时置真，由 ticker 读。 */
   private overlayNeedsTick = false;
   private overlayTickCount = 0;
@@ -3185,10 +3188,18 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       return;
     }
 
+    // 表格扣留的放行点：任何非正文事件都是文本流边界，扣留内容先落地再处理事件。
+    if (ev.type !== 'text' && this.tableHold.active) {
+      const rest = this.tableHold.flush();
+      if (rest !== '') appendText(this.transcript, rest);
+    }
     switch (ev.type) {
       case 'text': {
         this.activity.addOutputChars(ev.text.length);
-        appendText(this.transcript, ev.text);
+        // 经表格扣留层：疑似 pipe-table 起点之后的内容扣到表格结束再落地，
+        // 消除流式表格逐行重排列宽的闪跳（详见 chat/tableHoldback.ts）。
+        const visible = this.tableHold.feed(ev.text);
+        if (visible !== '') appendText(this.transcript, visible);
         break;
       }
       case 'tool_forming': {
