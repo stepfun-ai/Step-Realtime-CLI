@@ -2,7 +2,7 @@
  * 选择器（M3）：会话 / 模型 / 思考深度。候选与过滤交给 pi-tui 的 SelectList
  * （自带过滤、视口跟随），本层只提供候选项、tab 与结算回调，以 overlay 挂载。
  */
-import { Container, Editor, SelectList, matchesKey, visibleWidth, type Component, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui';
+import { Container, Editor, SelectList, matchesKey, truncateToWidth, visibleWidth, type Component, type OverlayHandle, type SelectItem, type TUI } from '@earendil-works/pi-tui';
 import type { SessionMeta } from '../session/store.js';
 import type { StepCodeConfig } from '../config/config.js';
 import { c, editorTheme, selectListTheme } from './theme.js';
@@ -263,7 +263,10 @@ export class PickerOverlay implements Component {
       if (hiddenRight) bar += c.dim(' …');
       lines.push(bar);
     }
-    return [...lines, ...this.list.render(width), c.dim(this.hint)];
+    // pi-tui 的 doRender 对任何 visibleWidth 超终端宽的行直接 throw 崩溃（实测 line 27/399/5620
+    // 都是同类）。tab 贪心窗口只决定显示哪些 tab、不保证总宽不超，title/filter 也可能超长，
+    // 故组件层最后一道防线：每行 truncateToWidth 钳到 width。
+    return [...lines, ...this.list.render(width), c.dim(this.hint)].map((l) => truncateToWidth(l, width));
   }
 }
 
