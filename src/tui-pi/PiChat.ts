@@ -62,6 +62,7 @@ import { expandPluginCommand, type PluginCommand } from '../plugin/manager.js';
 import { runPluginCommand } from '../chat/pluginCommand.js';
 import { clearDynamicTools } from '../tools/index.js';
 import { restoreFile } from '../tools/checkpoint.js';
+import { bashTool } from '../tools/bash.js';
 import { resolvePath } from '../tools/fsutil.js';
 import type { ToolContext } from '../tools/types.js';
 import type { DisplayItem } from '../chat/types.js';
@@ -346,6 +347,8 @@ export class PiChat {
    */
   private backtrackPrimed = false;
   private backtrackPrimedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** `!` bash 命令的卡片序号（id 唯一性用，不持久化）。 */
+  private bangCounter = 0;
   /** 最近一次中断（Esc/Ctrl+C）的时间戳：回退冷静期判据。 */
   private lastAbortAt = 0;
   private ticker: ReturnType<typeof setInterval> | undefined;
@@ -423,17 +426,23 @@ export class PiChat {
     // 提示符着色跟随 busy。
     // 绑一个读 this.busy 的函数，而不是在 6 处 setBusy 调用点各改一次——那种写法
     // 漏一处就出现「回合在跑但提示符还是灰的」这类状态不同步。
-    this.editor.promptStyle = (s) => (this.busy ? c.bold(c.warn(s)) : c.bold(c.dim(s)));
+    this.editor.promptStyle = (s) => {
+      // bash 模式（! 开头）提示符变色：命令将在本地执行而不是发给模型，这个区别必须一眼可见
+      if (this.editor.getText().startsWith('!')) return c.bold(c.accent(s));
+      return this.busy ? c.bold(c.warn(s)) : c.bold(c.dim(s));
+    };
     // 空输入时的占位文案。busy 那句是行为说明（此时打字会进发送队列而不是立刻发出），
     // 与提示符同样绑成读 this.busy 的函数，两者状态天然一致。
     this.editor.placeholderStyle = (s) => c.dim(s);
     this.editor.placeholderText = () => t(this.busy ? 'input.placeholder.busy' : 'input.placeholder.idle');
-    // primed 提示行（Esc 双击回退 / Ctrl+C 双击退出）。同样绑成读状态的函数：
+    // primed 提示行（Esc 双击回退 / Ctrl+C 双击退出 / bash 模式）。绑成读状态的函数：
     // 两个 primed 各有进入、超时、按键解除三条出口，逐处回写文案必漏。
-    // 只在空闲时显示——busy 态下 Esc 是中断、Ctrl+C 是清空/中断，两条提示都不适用
-    // 。
-    this.editor.footerStyle = (s) => c.warn(s);
+    // primed 提示只在空闲时显示——busy 态下 Esc 是中断、Ctrl+C 是清空/中断；
+    // bash 模式（! 开头）的提示不受此限，busy 时按 Enter 是排队，用户同样需要知道。
+    this.editor.footerStyle = (s) => (this.editor.getText().startsWith('!') ? c.dim(s) : c.warn(s));
     this.editor.footerText = () => {
+      // bash 模式提示：只要输入以 ! 开头就显示（busy 时也显示——此时按 Enter 是排队）
+      if (this.editor.getText().startsWith('!')) return t('input.bangHint');
       if (this.busy) return '';
       if (this.backtrackPrimed) return t('input.backtrackPrimed');
       if (this.exitPrimed) return t('input.exitPrimed');
@@ -1232,7 +1241,9 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const text = (expanded === '' ? raw : expanded).trim();
     this.editor.setText('');
     if (text === '') return;
-    this.editor.addToHistory(text);
+    const isBang = text.startsWith('!') && text.length > 1;
+    // 历史隔离：shell 命令不进提示词历史（↑ 取回的是对话草稿，不是一次性命令）
+    if (!isBang) this.editor.addToHistory(text);
 
     if (text.startsWith('/')) {
       await this.handleSlash(text);
@@ -1241,7 +1252,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     if (this.busy) {
       // goal 自主推进期间的普通留言走 steer，不进队列：队列消息会作为独立一轮发出，
       // 那样会打断目标推进。steer 拼进下一个自主轮的注入文本，模型继续目标的同时看到留言。
-      if (this.goal.get()?.status === 'active') {
+      // bash 命令（! 开头）除外——它是本地执行，不能当留言拼给模型，照常排队。
+      if (!isBang && this.goal.get()?.status === 'active') {
         this.steers.push(text);
         this.push({ kind: 'note', text: '已记下，会在目标的下一轮里一起看到' });
         return;
@@ -1251,7 +1263,57 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       this.push({ kind: 'note', text: `已排队（${this.queue.length} 条），回合结束后自动发送` });
       return;
     }
+    await this.dispatchText(text);
+  }
+
+  /** 普通文本的统一执行路径：`!` 前缀走本地 shell，其余走模型回合。 */
+  private async dispatchText(text: string): Promise<void> {
+    if (text.startsWith('!') && text.length > 1) {
+      await this.runBangCommand(text.slice(1).trim());
+      return;
+    }
     await this.runTurn(text);
+  }
+
+  /**
+   * `!` bash 输入模式：用户自己敲的命令直接本地执行，输出进转录区并注入上下文。
+   *
+   * 不过审批——亲手敲下命令这个行为本身就是授权（与模型发起 bash 调用是两回事）。
+   * 执行复用 bashTool.execute：shell 解析（Git Bash/WSL/PowerShell 回退链）、超时上限、
+   * 输出截断与模型侧完全一致，不另起一套语义。
+   * 注入上下文用 bash-input/bash-output 标签包裹：模型在后续回合里看得到这条命令
+   * 和它的输出（「我刚跑了 X，结果是 Y」），而不是一段凭空出现的文本。
+   */
+  private async runBangCommand(command: string): Promise<void> {
+    if (command === '') return;
+    this.transcript.push({ kind: 'user', text: `! ${command}` });
+    this.transcript.push({ kind: 'tool', id: `bang-${++this.bangCounter}`, name: 'bash', input: { command }, status: 'running' });
+    this.tui.requestRender();
+    let result: { content: string; isError: boolean };
+    try {
+      result = await bashTool.execute({ command }, this.deps.ctx);
+    } catch (e) {
+      result = { content: (e as Error).message, isError: true };
+    }
+    this.transcript.updateLastWhere(
+      (it) => it.kind === 'tool' && it.id === `bang-${this.bangCounter}`,
+      (it) => ({
+        ...(it as Extract<DisplayItem, { kind: 'tool' }>),
+        status: result.isError ? ('error' as const) : ('ok' as const),
+        result: result.content,
+      }),
+    );
+    this.history.push(
+      stored(
+        {
+          role: 'user',
+          content: `<bash-input>${command}</bash-input>\n<bash-output>\n${result.content}\n</bash-output>`,
+        },
+        { kind: 'user' },
+      ),
+    );
+    this.persist();
+    this.tui.requestRender();
   }
 
   /**
@@ -1463,6 +1525,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       helpText(),
       '',
       '快捷键：Enter 发送 · Shift+Enter 换行 · Esc 中断/取回队列 · Ctrl+C 退出 · Tab 补全',
+      '输入 ! 开头的行会在本地执行 shell 命令（输出注入上下文），Ctrl+S 把队列与草稿插队给运行中的回合',
       '　　　　Alt+V / Ctrl+V 贴剪贴板图片 · Ctrl+O 展开工具输出与思考 · Ctrl+B 前台任务转后台',
     ];
     // 空集合时不打这一行：全部接线后还挂个空提示，看起来像功能残缺
@@ -2548,7 +2611,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         if (prepared !== undefined) {
           this.notifyPrepared.delete(text);
           await this.runTurn(text, { silent: true, prepared });
-        } else await this.runTurn(text);
+        } else await this.dispatchText(text);
       }
       return;
     }

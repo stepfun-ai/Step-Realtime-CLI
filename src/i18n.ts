@@ -73,6 +73,7 @@ const zh = {
   'input.backtrackPrimed': '  · 再按一次 Esc 取回上一条消息编辑',
   'input.ctrlS.steered': '已插队 {count} 条，模型下一小回合就能看到',
   'input.ctrlS.nothing': '队列与输入框都是空的，没有可插队的内容',
+  'input.bangHint': 'bash 模式：命令在本地执行，输出会注入上下文',
   'input.exitPrimed': '  · 再按一次 Ctrl+C 退出',
 
   // --- 欢迎框（WelcomeBox）---
@@ -861,6 +862,7 @@ const en: Record<keyof typeof zh, string> = {
   'input.backtrackPrimed': '  · Press Esc again to edit your previous message',
   'input.ctrlS.steered': 'Steered {count} message(s); the model sees them at the next step',
   'input.ctrlS.nothing': 'Queue and input are both empty; nothing to steer',
+  'input.bangHint': 'bash mode: runs locally, output is injected into context',
   'input.exitPrimed': '  · Press Ctrl+C again to exit',
 
   'welcome.title': 'Welcome to Step Code!',
