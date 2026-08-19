@@ -2169,7 +2169,14 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // 历史上凭空记一次「清空」。
     this.queue = [];
     this.notifyPrepared.clear();
+    // 旧后台管理器的在途任务属于源会话：先整体终止并断开结算回调，防止 settle 回灌到 fork 会话。
+    const oldBg = this.background;
     this.rebindBackground();
+    oldBg.shutdown();
+    // cron 与 compactionModelOverride 都是内存态：fork 是新 sessionId，cron 不重建则旧 sessionId
+    // 任务残留 tick 触发（P0）；override 不重置会串走。
+    this.reloadCron();
+    this.compactionModelOverride = undefined;
     this.persist();
     this.push({
       kind: 'note',
