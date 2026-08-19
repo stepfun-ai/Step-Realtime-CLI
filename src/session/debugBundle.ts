@@ -12,13 +12,13 @@
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir, arch, platform, release } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import AdmZip from 'adm-zip';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type { SessionStore } from './store.js';
 import { dumpLogBuffer } from '../utils/logger.js';
 import { redactByKeyName, redactPaths, redactSecrets, redactWireLineVendor } from '../utils/redact.js';
+import { VERSION } from '../version.js';
 
 /**
  * 脱敏级别：
@@ -47,25 +47,8 @@ export interface ExportDebugBundleResult {
   redacted: boolean;
 }
 
-/** 从模块位置向上找 step-code 的 package.json，读真实版本（替代硬编码 '0.1.0'）。 */
-function readAppVersion(): string {
-  try {
-    let dir = dirname(fileURLToPath(import.meta.url));
-    for (let i = 0; i < 6; i++) {
-      const p = join(dir, 'package.json');
-      if (existsSync(p)) {
-        const pkg = JSON.parse(readFileSync(p, 'utf8')) as { name?: string; version?: string };
-        if (pkg.name === 'step-code' && typeof pkg.version === 'string') return pkg.version;
-      }
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-  } catch {
-    // 读不到就返回 unknown，不阻塞导出
-  }
-  return 'unknown';
-}
+/** 版本号取自 src/version.ts 单一来源（曾按 package.json 的 name==='step-code' 匹配，
+ *  仓库改名 step-code-pi 后永远落空退回 'unknown'）。 */
 
 /** 时间戳 YYYYMMDDHHMMSS（本地时间），用于产物命名。 */
 function stamp(d: Date): string {
@@ -166,7 +149,7 @@ export async function exportDebugBundle(opts: ExportDebugBundleOptions): Promise
   included.push('manifest.json');
   const manifest: Record<string, unknown> = {
     generatedAt: now.toISOString(),
-    app: { name: 'step-code', version: readAppVersion() },
+    app: { name: 'step-code', version: VERSION },
     os: { platform: platform(), release: release(), arch: arch() },
     node: process.version,
     model,
