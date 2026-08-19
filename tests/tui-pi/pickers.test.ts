@@ -6,7 +6,7 @@
  */
 import chalk from 'chalk';
 import { describe, expect, it } from 'vitest';
-import { TuiMainScreen } from '@earendil-works/pi-tui';
+import { TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import { PickerOverlay, askLine, askValidated, modelItems, relativeTime, sessionItems, thinkItems } from '../../src/tui-pi/pickers.js';
 import type { SessionMeta } from '../../src/session/store.js';
@@ -120,6 +120,25 @@ describe('PickerOverlay', () => {
     });
     return { overlay, picked, cancelled };
   }
+
+  /**
+   * 2026-08-19 实测：width=67 的窄终端上 /model 弹出，底部 hint 行
+   * 「↑↓ 选择 · Enter 确认 · … · Esc 取消」visibleWidth=78 > 67，
+   * pi-tui doRender 直接 throw 崩溃（crash log line 17）。
+   *
+   * 根因是 render 出口少了对含 ANSI 样式行的逐行截断：dim 包裹的 hint
+   * visibleWidth 仍计真实宽，只截「裸文本行」会漏掉它。防线落在 render 出口的
+   * `truncateToWidth(l, width)`——这条测试锁死它，截断一旦被删，这里立刻红。
+   */
+  it('render 出口逐行截断：窄终端(width=67)下无任何行超宽', () => {
+    const { overlay } = mk();
+    for (const w of [67, 60, 40]) {
+      const lines = overlay.render(w);
+      for (const l of lines) {
+        expect(visibleWidth(l), `width=${w} 行超宽: ${JSON.stringify(plain([l])[0])}`).toBeLessThanOrEqual(w);
+      }
+    }
+  });
 
   it('标题与提示行在列表上下，Enter 选中当前项', () => {
     const { overlay, picked } = mk();

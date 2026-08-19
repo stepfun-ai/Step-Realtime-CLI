@@ -162,8 +162,12 @@ export class StatusLine implements Component {
     const gap = Math.max(1, width - visibleWidth(hints) - ctxWidth);
     const line2 = hints + ' '.repeat(gap) + ctx;
     const lines = [line1, line2];
-    this.cache.commit(width, lines);
-    return lines;
+    // 出口总钳：上方逐段 truncateToWidth 已覆盖常规路径，但 line1 把多段带样式串拼起来后，
+    // 边缘情况下叠加可见宽仍可能越界 width。这里在写入缓存前截断，保证拿缓存时拿到的就是
+    // 已截断行——若放在取缓存之后再 map，每次返回新引用会破坏 renderCache 的「同引用=命中」契约。
+    const clamped = lines.map((l) => truncateToWidth(l, width));
+    this.cache.commit(width, clamped);
+    return clamped;
   }
 }
 

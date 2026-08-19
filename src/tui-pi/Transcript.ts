@@ -2,7 +2,7 @@
  * 转录区容器：持有全部消息块，并提供一个「安全阀」级别的裁剪。
  *
  * 裁剪策略是被实测推翻后重定的（数据见设计档案「M1 实测记录」）：
- * 原计划照 Kimi Code 做两级裁剪（15 轮 + 轮内折叠），但实测发现**任何裁剪都必然触发一次
+ * 原计划做两级裁剪（按轮数上限 + 轮内折叠），但实测发现**任何裁剪都必然触发一次
  * 全屏重绘并清掉 scrollback**——裁剪删的是最老的行，删完所有内容上移，首个变化行落在
  * 上一帧视口顶部之上，pi-tui 的差分渲染此时只有 `fullRender(true)` 一条路，
  * 而它带 CSI 3J。关掉 clearOnShrink 挡不住这条路径（那个开关只管「内容变短」这一种触发）。
@@ -11,7 +11,7 @@
  * 在 50ms 合帧节奏下这是 7% 的帧预算。所以默认不裁剪，保留 maxTurns 作为防内存失控的
  * 安全阀（默认 2000 轮），只有跑到那个量级才接受一次清屏。
  */
-import type { Component } from '@earendil-works/pi-tui';
+import { truncateToWidth, type Component } from '@earendil-works/pi-tui';
 import type { DisplayItem } from '../chat/types.js';
 import { ItemBlock } from './blocks.js';
 import { c } from './theme.js';
@@ -180,6 +180,9 @@ export class Transcript implements Component {
       out.push(c.dim(`· 本轮 ${this.foldedBlocks} 个条目已折叠`), '');
     }
     for (const b of this.blocks) out.push(...b.render(width));
-    return out;
+    // 出口统一截断：各子块内部已逐行截断，但折叠提示行与任何越界内容在此做最后一道阀。
+    // pi-tui doRender 对 visibleWidth > width 的行直接 throw—— Transcript 是渲染栈里条目最多
+    // 的一环，这里再截一次成本低、能兜住子块遗漏或长折叠文案。
+    return out.map((l) => truncateToWidth(l, width));
   }
 }

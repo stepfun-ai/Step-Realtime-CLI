@@ -163,7 +163,10 @@ describe('thinking 主界面折叠（与查看器配对）', () => {
   it('超过阈值折叠为前 N 行 + 计数提示，短的全文显示', () => {
     const long = new ItemBlock({ kind: 'thinking', text: Array.from({ length: 12 }, (_, i) => `思考第 ${i} 行`).join('\n\n') });
     const lines = plain(long.render(60));
-    const bodyLines = lines.filter((l) => l.startsWith('┊'));
+    // thinking 块用悬挂缩进：首行前缀 '┊ '，续行用等宽空格对齐。正文行因此是
+    // '┊' 开头或 2 空格缩进，不能只按 startsWith('┊') 过滤（会漏掉续行）。
+    const isBody = (l: string): boolean => l.startsWith('┊') || l.startsWith('  ');
+    const bodyLines = lines.filter(isBody);
     expect(bodyLines.length).toBe(THINKING_FOLD_LINES + 1); // N 行正文 + 1 行折叠提示
     expect(bodyLines[bodyLines.length - 1]).toMatch(/… 还有 \d+ 行（Ctrl\+O 查看）/);
 
