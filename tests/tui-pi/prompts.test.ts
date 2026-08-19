@@ -93,6 +93,15 @@ describe('InlineApproval', () => {
     expect(settled).toEqual([{ kind: 'deny', feedback: '太危险' }]);
   });
 
+  it('c 允许并附言：进反馈模式，Enter 带回 allow + 附言（附言由调用方排队送达模型）', () => {
+    const { block, settled } = mk();
+    block.handleInput('c');
+    expect(settled).toHaveLength(0); // requiresFeedback：先收附言
+    for (const ch of ['下', '次', '先', '跑', '测', '试']) block.handleInput(ch);
+    block.handleInput(ENTER);
+    expect(settled).toEqual([{ kind: 'allow', feedback: '下次先跑测试' }]);
+  });
+
   it('反馈模式下退格删字，方向键退出反馈模式', () => {
     const { block, settled } = mk();
     block.handleInput('f');

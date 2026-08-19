@@ -89,15 +89,17 @@ function argSummary(input: unknown): string {
 // ------------------------------------------------------------------ 工具审批
 
 export type ApprovalOutcome =
-  | { kind: 'allow' }
+  | { kind: 'allow'; feedback?: string }
   | { kind: 'allow-session' }
   | { kind: 'deny'; feedback?: string };
 
-type ApprovalValue = 'allow' | 'allow-session' | 'deny' | 'deny-feedback';
+type ApprovalValue = 'allow' | 'allow-session' | 'allow-feedback' | 'deny' | 'deny-feedback';
 
 /**
- * 工具审批块。四选项：允许一次 / 本会话都允许 / 拒绝 / 拒绝并写评论，
- * 对应 y / a / n / f 与数字 1-4；Ctrl+E 展开被折叠的预览。
+ * 工具审批块。五选项：允许一次 / 本会话都允许 / 允许并附言 / 拒绝 / 拒绝并写评论，
+ * 对应 y / a / c / n / f 与数字键；Ctrl+E 展开被折叠的预览。
+ * 「允许并附言」：批准本次调用的同时给模型带一句话（如「下次先跑测试再改」），
+ * 附言由 PiChat 排队为回合后的跟进消息——权限通道只能回 decision，附言走队列。
  */
 export class InlineApproval extends ChoiceBlock<ApprovalValue> {
   private readonly toolName: string;
@@ -115,6 +117,7 @@ export class InlineApproval extends ChoiceBlock<ApprovalValue> {
     const choices: Choice<ApprovalValue>[] = [
       { label: t('approval.option.allowOnce'), hotkeys: ['y'], value: 'allow' },
       { label: t('approval.option.allowSession'), hotkeys: ['a'], value: 'allow-session' },
+      { label: t('approval.option.allowWithFeedback'), hotkeys: ['c'], value: 'allow-feedback', requiresFeedback: true },
       { label: t('approval.option.deny'), hotkeys: ['n'], value: 'deny' },
       { label: t('approval.option.denyWithFeedback'), hotkeys: ['f'], value: 'deny-feedback', requiresFeedback: true },
     ];
@@ -126,7 +129,7 @@ export class InlineApproval extends ChoiceBlock<ApprovalValue> {
   }
 
   protected onChoose(value: ApprovalValue, feedback?: string): void {
-    if (value === 'allow') return this.done({ kind: 'allow' });
+    if (value === 'allow' || value === 'allow-feedback') return this.done({ kind: 'allow', feedback });
     if (value === 'allow-session') return this.done({ kind: 'allow-session' });
     this.done({ kind: 'deny', feedback });
   }

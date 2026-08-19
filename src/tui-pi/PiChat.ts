@@ -2871,7 +2871,15 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         const d = decide(req.name, this.mode, this.sessionApprovals);
         if (d === 'allow') return { decision: 'allow' };
         const outcome = await this.askApproval(req.name, req.input);
-        if (outcome.kind === 'allow') return { decision: 'allow' };
+        if (outcome.kind === 'allow') {
+          // 允许并附言：权限通道只能回 decision，附言排队为回合后的跟进消息送达模型
+          // （它不影响这次执行，影响的是后续行为，如「下次先跑测试再改」）。
+          if (outcome.feedback !== undefined && outcome.feedback !== '') {
+            this.updateQueue([...this.queue, `（批准 ${req.name} 时附言）${outcome.feedback}`]);
+            this.push({ kind: 'note', text: '已批准，附言会在本轮结束后发给模型' });
+          }
+          return { decision: 'allow' };
+        }
         if (outcome.kind === 'allow-session') {
           this.sessionApprovals.add(req.name);
           return { decision: 'allow' };
