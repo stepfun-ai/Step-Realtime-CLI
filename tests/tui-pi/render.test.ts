@@ -657,6 +657,46 @@ describe('ChatEditor 的 Esc / Ctrl+C 路由', () => {
     return { term, tui, ed };
   }
 
+  it('大段粘贴折叠成占位符，getExpandedText 还原全文', () => {
+    // pi-tui Editor 内置：>10 行或 >1000 字符折叠成 [paste #N +M lines]，提交时展开。
+    // 这条测试锁住「折叠+还原」契约，上游行为变化时立刻红。
+    const { ed } = mk();
+    const lines = Array.from({ length: 20 }, (_, i) => `line-${i}`).join('\n');
+    ed.handleInput(`\x1b[200~${lines}\x1b[201~`);
+    expect(ed.getText()).toContain('[paste #1 +20 lines]');
+    expect(ed.getExpandedText()).toBe(lines);
+  });
+
+  it('PasteBurst：散装文本块里的 \\r 按换行处理，不触发提交（无 bracketed paste 终端兜底）', () => {
+    const { ed } = mk();
+    const submitted: string[] = [];
+    ed.onSubmit = (text) => submitted.push(text);
+    // 无 bracketed paste 的终端上粘贴以整块到达：含 \r 的文本块必须拆行插入
+    ed.handleInput('line1\rline2\rline3');
+    expect(submitted, '粘贴块里的 \\r 不得触发提交').toEqual([]);
+    expect(ed.getText()).toBe('line1\nline2\nline3');
+  });
+
+  it('PasteBurst：爆发窗口内单独到达的 Enter 视为换行，窗口外正常提交', () => {
+    vi.useFakeTimers();
+    try {
+      const { ed } = mk();
+      const submitted: string[] = [];
+      ed.onSubmit = (text) => submitted.push(text);
+      ed.handleInput('line1\rline2\rline3');
+      // 窗口内（尾块与最后的 \r 分开到达的场景）：Enter → 换行
+      ed.handleInput('\r');
+      expect(submitted).toEqual([]);
+      expect(ed.getText()).toBe('line1\nline2\nline3\n');
+      // 窗口外：Enter 正常提交（末尾空行被提交路径裁掉，正文三行完整即可）
+      vi.advanceTimersByTime(200);
+      ed.handleInput('\r');
+      expect(submitted).toEqual(['line1\nline2\nline3']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('控制器消费 Esc 时不下传给编辑器', () => {
     const { ed } = mk();
     ed.setText('abc');

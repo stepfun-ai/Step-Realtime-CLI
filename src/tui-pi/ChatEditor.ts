@@ -60,7 +60,7 @@ export class ChatEditor extends Editor {
    * Ctrl+G：拉起外部编辑器写长 prompt。
    * 返回 true 表示已消费（编辑器启动成功）；false 让按键下传。
    *
-   * Claude Code 和 Codex CLI 都具备的能力。终端输入框写长 prompt / 多行代码是痛点，
+   * 主流终端编码 agent 的通行能力。终端输入框写长 prompt / 多行代码是痛点，
    * 外部编辑器是公认解法。返回 false 的典型场景：$EDITOR 未配置且找不到 fallback。
    */
   onCtrlG?: () => boolean;
@@ -167,7 +167,39 @@ export class ChatEditor extends Editor {
     return head + this.placeholderStyle(text) + trimmed;
   }
 
+  /**
+   * PasteBurst 爆发窗口的截止时间戳。无 bracketed paste 的终端上，粘贴以高速击键流
+   * 到达，其中的 \r 会被父类当成 Enter 提交——粘贴到一半就把半成品发出去。
+   * 散装文本块（见 handleInput 第一分支）到达时开窗，窗口内单独到达的 \r 视为换行。
+   */
+  private burstEndsAt = 0;
+  /** 含换行的散装文本块至少这么长才按粘贴处理（短段可能是正常多键序列）。 */
+  private static readonly BURST_MIN_CHUNK = 8;
+  /** 爆发窗口长度：覆盖粘贴尾块与最后一个 \r 分开到达的间隔。 */
+  private static readonly BURST_WINDOW_MS = 150;
+
   override handleInput(data: string): void {
+    // PasteBurst 兜底一：含换行的散装文本块（无转义序列）必是粘贴——键盘输入的
+    // Enter 永远单独到达，不会夹在文本块里。按行拆开逐段喂给父类，换行符换成 '\n'
+    // 走父类的换行分支（直接插原块会把 \r 原样塞进缓冲区）。
+    if (
+      data.length >= ChatEditor.BURST_MIN_CHUNK &&
+      !data.includes('\x1b') &&
+      /[\r\n]/.test(data)
+    ) {
+      this.burstEndsAt = Date.now() + ChatEditor.BURST_WINDOW_MS;
+      const parts = data.split(/\r\n|[\r\n]/);
+      parts.forEach((part, i) => {
+        if (part !== '') super.handleInput(part);
+        if (i < parts.length - 1) super.handleInput('\n');
+      });
+      return;
+    }
+    // PasteBurst 兜底二：爆发窗口内单独到达的 Enter 是粘贴流的一部分，换行而非提交。
+    if (data === '\r' && Date.now() < this.burstEndsAt) {
+      super.handleInput('\n');
+      return;
+    }
     // primed 态解除：除 Esc 与 Ctrl+C 外的任意按键都解除双击确认态。
     //
     // 放在所有分支之前、且不 return——这次按键仍要按下面的正常逻辑处理。两个 primed
