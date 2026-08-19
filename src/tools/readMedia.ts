@@ -85,6 +85,17 @@ function encodeMimeFor(meta: ImageMeta): 'image/jpeg' | 'image/png' {
   return meta.mime === 'image/jpeg' ? 'image/jpeg' : 'image/png';
 }
 
+/**
+ * 分类懒加载解码依赖的报错：依赖缺失（环境故障，如改名/装包时 node_modules 受损）与
+ * 图片真正损坏要分开报。否则模型会把「解析不到 jimp」误判成文件坏、对同一张图反复重试。
+ */
+export function classifyJimpError(msg: string): string {
+  if (/cannot find package|cannot find module|err_module_not_found/i.test(msg)) {
+    return `图像解码依赖（jimp）缺失：${msg}。这是环境问题而非图片损坏，请在所用 step 变体目录执行 pnpm install 修复。`;
+  }
+  return `图片解码失败（文件损坏或格式不支持）：${msg}`;
+}
+
 /** 组装 <system> 旁注：格式/原始字节/原始宽高/交付方式 + 两条固定提醒。 */
 function buildNote(meta: ImageMeta, rawBytes: number, delivery: string): string {
   return (
@@ -257,7 +268,7 @@ export const readMediaTool: ToolDef<Input> = {
       const { Jimp } = await import('jimp');
       image = await Jimp.read(buf);
     } catch (e) {
-      return fail(`图片解码失败（文件损坏或格式不支持）：${(e as Error).message}`);
+      return fail(classifyJimpError((e as Error).message));
     }
 
     let delivery = '';

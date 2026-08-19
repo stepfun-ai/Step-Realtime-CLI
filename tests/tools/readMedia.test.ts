@@ -9,6 +9,7 @@ import { parseImageMeta } from '../../src/tools/imageMeta.js';
 import {
   READ_MEDIA_IMAGE_BYTE_BUDGET,
   READ_MEDIA_MAX_EDGE_PX,
+  classifyJimpError,
 } from '../../src/tools/readMedia.js';
 import type { ToolContext } from '../../src/tools/types.js';
 
@@ -303,5 +304,28 @@ describe('read_media · 视频', () => {
     const r = await executeTool('read_media', { path: 'clip.mov' }, { cwd: dir, capabilities: ['image_in', 'video_in'] });
     expect(r.isError).toBe(false);
     expect(r.videos![0]!.mediaType).toBe('video/quicktime');
+  });
+});
+
+describe('read_media · classifyJimpError 错误分类', () => {
+  // 实测坑：2026-08-18 某 step session 读图报 "Cannot find package 'jimp'"，是改名过渡期
+  // 旧 node_modules 受损导致懒加载解析不到，并非图片损坏。错误文案必须把两者分开，
+  // 否则模型会把环境故障误判成文件坏、对同一张图反复重试。
+  it('依赖缺失（解析不到 jimp）→ 明确提示环境问题 + pnpm install，不报成「文件损坏」', () => {
+    const msg = classifyJimpError("Cannot find package 'jimp' imported from .../readMedia.js");
+    expect(msg).toContain('依赖（jimp）缺失');
+    expect(msg).toContain('环境问题');
+    expect(msg).toContain('pnpm install');
+    expect(msg).not.toContain('文件损坏');
+  });
+
+  it('真正的解码失败 → 报成「图片解码失败/文件损坏」', () => {
+    const msg = classifyJimpError('Could not find MIME for Buffer <01 02 03>');
+    expect(msg).toContain('图片解码失败');
+    expect(msg).toContain('文件损坏');
+  });
+
+  it('ERR_MODULE_NOT_FOUND 变体也归到依赖缺失', () => {
+    expect(classifyJimpError("Cannot find module 'jimp'")).toContain('环境问题');
   });
 });
