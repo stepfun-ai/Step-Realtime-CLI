@@ -328,7 +328,8 @@ export class ItemBlock implements Component {
       if (it.status === 'running') {
         for (const ph of wf.phases) {
           const m = ph.status === 'running' ? c.warn('●') : c.ok('✓');
-          out.push(c.dim(`    ${m} ${ph.title}`));
+          // 阶段标题可能很长（模型自取），窄终端下超宽会触发 doRender 崩溃，故 wrap + 截断。
+          out.push(...indent(wrap(c.dim(`${m} ${ph.title}`), width - 4), '    '));
         }
       } else {
         out.push(c.dim(`    ↳ ${wf.phases.length} 个阶段`));
@@ -337,7 +338,7 @@ export class ItemBlock implements Component {
 
     // 子 agent 进度：统计段 + 嵌套工具事件（运行中显示最近 3 条，完成后折叠计数），直接挂在卡片上
     const stats = subagentStats(it);
-    if (stats !== '') out.push(c.dim(`    ${stats}`));
+    if (stats !== '') out.push(...indent(wrap(c.dim(stats), width - 4), '    '));
     const sub = it.subagentToolEvents;
     if (sub !== undefined && sub.length > 0) {
       if (it.status === 'running') {
@@ -388,7 +389,9 @@ export class ItemBlock implements Component {
       }
     }
     out.push('');
-    return out;
+    // 全局兜底：任何遗漏的超宽行（长无空格串、未来新增分支）都被钳到 width，
+    // 避免触发 pi-tui doRender 的宽度断言崩溃。与 pickers.render 同款防线。
+    return out.map((l) => truncateToWidth(l, width));
   }
 }
 
