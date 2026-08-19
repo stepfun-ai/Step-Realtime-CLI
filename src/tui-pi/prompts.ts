@@ -307,21 +307,13 @@ export class QuestionPrompt {
       this.requestRender();
       return;
     }
-    if (matchesKey(data, 'left') && this.qIdx > 0) {
-      this.qIdx -= 1;
-      this.requestRender();
-      return;
-    }
-    if (matchesKey(data, 'right') && this.qIdx < this.req.questions.length - 1) {
-      this.qIdx += 1;
-      this.requestRender();
-      return;
-    }
     if (matchesKey(data, 'enter')) {
       this.commitAndAdvance();
       return;
     }
-    // 自由输入行：字符进草稿（支持 ←→/Home/End/Ctrl+W）
+    // 自由输入行：光标在 Other 行时按键先进文本编辑（含 ←→ 移文本光标）——
+    // 切题的 ←→ 必须排在本分支之后，否则 Other 行上 ←→ 切成切题、文本光标移动成死代码
+    // （渲染画了 ▌ 光标却移不动，交互自相矛盾）。要离开 Other 行用 ↑↓。
     if (slot.cursor === last) {
       if (matchesKey(data, 'left')) {
         if (slot.otherCursor > 0) { slot.otherCursor -= 1; this.requestRender(); }
@@ -372,6 +364,17 @@ export class QuestionPrompt {
         this.requestRender();
         return;
       }
+      return;
+    }
+    // ←→ 切题（光标不在 Other 行时才到得了这里）
+    if (matchesKey(data, 'left') && this.qIdx > 0) {
+      this.qIdx -= 1;
+      this.requestRender();
+      return;
+    }
+    if (matchesKey(data, 'right') && this.qIdx < this.req.questions.length - 1) {
+      this.qIdx += 1;
+      this.requestRender();
       return;
     }
     if (data === ' ' && q.multi_select === true) {
