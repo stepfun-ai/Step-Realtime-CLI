@@ -1159,6 +1159,19 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.controller?.abort();
   }
 
+  /**
+   * 紧急停止：只恢复终端模式，不做任何其他清理。
+   * SIGHUP / stdout EIO（终端已死）场景用——那种情况下 persist、通知等任何写操作
+   * 都可能抛 EIO 形成写循环占满 CPU，进程残留还会把 shell 挂在 raw mode。
+   */
+  emergencyStop(): void {
+    try {
+      this.tui.stop();
+    } catch {
+      // 终端已死时 stop 自己也可能抛，忽略
+    }
+  }
+
   private exit(): void {
     if (this.exitPrimedTimer !== undefined) clearTimeout(this.exitPrimedTimer);
     // backtrack 的定时器同样要清：未清的 setTimeout 会让 node 事件循环多挂 5 秒才退

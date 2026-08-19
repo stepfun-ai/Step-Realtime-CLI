@@ -1133,6 +1133,17 @@ if (opts.reflect === true) {
     pluginIds: plugins.map((p) => p.id),
     configStartupNotice: renderConfigDiagnostics(configWarnings, ignoredBadConfig),
   });
+  // SIGHUP/死终端的紧急出口：终端已死时继续写 stdout 会 EIO 循环占满 CPU，
+  // 进程残留还会把用户的 shell 挂在 raw mode。只恢复终端立即退出，不做清理。
+  // SIGTERM 走正常退出（Ctrl+C 双击退出的 exit() 路径已含完整清理）。
+  const emergencyExit = (): void => {
+    chat.emergencyStop();
+    process.exit(0);
+  };
+  process.once('SIGHUP', emergencyExit);
+  process.stdout.once('error', (e) => {
+    if ((e as NodeJS.ErrnoException).code === 'EIO') emergencyExit();
+  });
   const info = await chat.start();
   await mcpManager.closeAll();
   if (info.hasContent) {

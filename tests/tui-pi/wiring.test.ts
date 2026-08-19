@@ -225,6 +225,14 @@ describe('PiChat 接线：会话切换的清理与恢复', () => {
     wired(piChat, 'Date.now() - this.lastAbortAt < ABORT_COOLDOWN_MS', 'onEscape 冷静期判定');
   });
 
+  it('SIGHUP/死终端紧急出口：cli 注册信号处理，PiChat 提供只恢复终端的 emergencyStop', () => {
+    // 终端死掉后继续写 stdout 会 EIO 循环占满 CPU，进程残留把 shell 挂在 raw mode。
+    wired(cli, "process.once('SIGHUP'", 'SIGHUP 处理');
+    wired(cli, "'EIO'", 'stdout EIO 处理');
+    wired(cli, 'chat.emergencyStop()', '紧急停止调用点');
+    wired(piChat, 'emergencyStop()', 'emergencyStop 方法');
+  });
+
   it('两个 primed 提示走输入框下方 footer，不进转录区 note', () => {
     wired(piChat, 'footerText', 'footer 绑定');
     wired(piChat, "t('input.backtrackPrimed')", '回退提示文案');
