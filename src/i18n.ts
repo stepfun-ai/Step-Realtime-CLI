@@ -89,6 +89,8 @@ const zh = {
   // --- 全屏查看器弹层（ExpandOverlay，pi-tui 版措辞与 Ink 版 expandViewer 不同）---
   'expandOverlay.title': '查看器 · {turns} 轮 · {count} 条 · 共 {lines} 行',
   'expandOverlay.footer': '↑↓/jk 滚动 · PgUp/PgDn 翻页 · ←→ 轮次 · g/G 首尾 · Esc/q/Ctrl+O 关闭',
+  // 窄终端降级版：保住关闭提示，省掉翻页/首尾键位
+  'expandOverlay.footerShort': '↑↓ 滚动 · ←→ 轮次 · Esc/q/Ctrl+O 关闭',
 
   // --- /tasks 后台任务浏览器（TasksViewer 弹层）---
 
@@ -867,6 +869,8 @@ const en: Record<keyof typeof zh, string> = {
   // --- 全屏查看器弹层（ExpandOverlay，pi-tui 版措辞与 Ink 版 expandViewer 不同）---
   'expandOverlay.title': 'Viewer · {turns} turns · {count} items · {lines} lines total',
   'expandOverlay.footer': '↑↓/jk scroll · PgUp/PgDn page · ←→ turns · g/G top/bottom · Esc/q/Ctrl+O close',
+  // Narrow-terminal fallback: keep the close hint, drop paging/top-bottom keys
+  'expandOverlay.footerShort': '↑↓ scroll · ←→ turns · Esc/q/Ctrl+O close',
 
 
   // --- 后台任务弹层（TasksOverlay，pi-tui 版措辞与 Ink 版 tasksViewer 不同）---

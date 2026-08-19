@@ -5,6 +5,7 @@
  * 后者依赖 pi-tui ScrollView 的真实行为，用 FakeTerminal 起一个 TUI 来跑。
  */
 import { describe, expect, it } from 'vitest';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { collectExpandable, THINKING_FOLD_LINES } from '../../src/chat/expandable.js';
 import { ExpandOverlay } from '../../src/tui-pi/ExpandOverlay.js';
 import { ItemBlock } from '../../src/tui-pi/blocks.js';
@@ -113,7 +114,15 @@ describe('ExpandOverlay 渲染与键位', () => {
     const { overlay } = mk();
     const lines = plain(overlay.render(60));
     expect(lines[0]).toMatch(/查看器 · 3 轮 · 3 条 · 共 \d+ 行/);
+    // width=60 放不下完整键位（69 列），降级短版仍保住关闭提示与位置指示
     expect(lines[lines.length - 1]).toContain('Esc/q/Ctrl+O 关闭');
+    expect(lines[lines.length - 1]).toMatch(/\d+-\d+\/\d+$/);
+  });
+
+  it('宽度足够时底栏用完整键位', () => {
+    const { overlay } = mk();
+    const lines = plain(overlay.render(90));
+    expect(lines[lines.length - 1]).toContain('PgUp/PgDn 翻页');
   });
 
   it('内容含轮标题与工具输出全文（不折叠）', () => {
@@ -156,6 +165,18 @@ describe('ExpandOverlay 渲染与键位', () => {
     expect(head()).toContain('问题 2');
     overlay.handleInput('\x1b[D'); // ← 已在轮起始 → 上一轮
     expect(head()).toContain('问题 1');
+  });
+
+  /**
+   * resize 回归：正文在构造时按 width=60 折行，终端变窄到 40 后 render(40)
+   * 不得输出超宽行——pi-tui doRender 对超宽行直接 throw 崩溃。
+   * 锁死 render 出口的逐行 truncateToWidth。
+   */
+  it('终端变窄后 render 出口逐行截断，无任何行超宽', () => {
+    const { overlay } = mk();
+    for (const l of overlay.render(40)) {
+      expect(visibleWidth(l), `行超宽: ${JSON.stringify(plain([l])[0])}`).toBeLessThanOrEqual(40);
+    }
   });
 });
 

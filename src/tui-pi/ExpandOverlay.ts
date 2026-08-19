@@ -18,7 +18,7 @@
  * 键位（沿用原键位）：↑/k ↓/j 行滚；PageUp/PageDown 页滚；← → 轮间跳；
  * Home/g End/G 首尾；Esc/q/Ctrl+O 关闭。不做自动跟随（Ink 也没有）。
  */
-import { matchesKey, type Component, type TUI } from '@earendil-works/pi-tui';
+import { matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } from '@earendil-works/pi-tui';
 import { collectExpandable, sectionsFromGroups, type TurnGroup } from '../chat/expandable.js';
 import type { DisplayItem } from '../chat/types.js';
 import { c } from './theme.js';
@@ -104,11 +104,17 @@ export class ExpandOverlay implements Component {
     );
     const from = this.lines.length === 0 ? 0 : this.offset + 1;
     const to = Math.min(this.offset + this.viewRows, this.lines.length);
-    const keys = t('expandOverlay.footer');
     const pos = `${from}-${to}/${this.lines.length}`;
-    const gap = Math.max(1, width - keys.length - pos.length);
+    // 底栏键位分档：完整版放不下时降级到短版（保住关闭提示），再放不下由出口钳宽兜底。
+    const full = t('expandOverlay.footer');
+    const short = t('expandOverlay.footerShort');
+    const fits = (keys: string): boolean => visibleWidth(keys) + 1 + visibleWidth(pos) <= width;
+    const keys = fits(full) ? full : short;
+    const gap = Math.max(1, width - visibleWidth(keys) - visibleWidth(pos));
     const footer = c.dim(keys + ' '.repeat(gap) + pos);
-    return [title, ...body, footer];
+    // 出口逐行钳宽：正文在构造时按旧宽度折行，终端在 overlay 打开期间 resize 会变窄；
+    // footer 在 keys+pos 超宽时 gap 保底 1 列也会溢出。pi-tui doRender 对超宽行直接 throw。
+    return [title, ...body, footer].map((l) => truncateToWidth(l, width));
   }
 
   invalidate(): void {
