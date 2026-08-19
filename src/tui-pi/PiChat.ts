@@ -328,6 +328,12 @@ export class PiChat {
   private backtrackPrimed = false;
   private backtrackPrimedTimer: ReturnType<typeof setTimeout> | undefined;
   private ticker: ReturnType<typeof setInterval> | undefined;
+  /**
+   * spinner 独立定时器。与计时器 ticker 解耦：spinner 需要稳帧（约 12fps）才不卡，
+   * 而计时器的秒级更新（用时/goal/overlay）没必要跑那么快。共用一条 ticker 时，
+   * spinner 帧率被计时器的保守频率拖慢，表现为"卡卡的"。拆开后各自按需跑。
+   */
+  private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   /** 堆水位看护的停止函数（见 heapWatch.ts：接近上限时预警并留一份快照）。 */
   private stopHeapWatch: (() => void) | undefined;
   private resolveExit: ((info: PiChatExit) => void) | undefined;
@@ -548,16 +554,22 @@ export class PiChat {
     void scanFileIndex(this.deps.ctx.cwd)
       .then((files) => this.completion.setFiles(files))
       .catch(() => this.completion.setFiles([]));
-    // spinner 与 running 态计时：只在 busy 时真正推进（idle 时 render 返回空行，无写入）
+    // spinner 稳帧：独立 80ms 定时器。只在忙碌且非输入态时推进帧并重渲，
+    // 与下方计时器解耦，保证动画不随计时器频率抖动。promptActive 时不转（用户在输入）。
+    this.spinnerTimer = setInterval(() => {
+      if (this.busy && !this.promptActive) {
+        this.activity.tick();
+        this.tui.requestRender();
+      }
+    }, 80);
+    // 计时器：用时/goal 徽章/任务弹层秒级更新。只需秒级精度，120ms 一拍够用；
+    // overlay 每 8 拍（约 1 秒）重渲一次。spinner 不在这里走，已拆给 spinnerTimer。
     this.ticker = setInterval(() => {
-      // 任务弹层打开时也要走秒（运行中任务的用时在变），但只需秒级：每 8 拍重渲一次。
-      // 不能靠 busy 分支带动——弹层通常是空闲时手动打开的。
       if (this.overlayNeedsTick) {
         this.overlayTickCount += 1;
         if (this.overlayTickCount % 8 === 0) this.tui.requestRender();
       }
       if (!this.busy || this.promptActive) return;
-      this.activity.tick();
       // goal 徽标的用时要跟着走秒（只在有 goal 时同步，避免每 120ms 白替换一次状态）
       if (this.goal.get() !== null) this.syncGoalBadge();
       this.tui.requestRender();
@@ -1130,6 +1142,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // backtrack 的定时器同样要清：未清的 setTimeout 会让 node 事件循环多挂 5 秒才退
     if (this.backtrackPrimedTimer !== undefined) clearTimeout(this.backtrackPrimedTimer);
     if (this.ticker !== undefined) clearInterval(this.ticker);
+    if (this.spinnerTimer !== undefined) clearInterval(this.spinnerTimer);
     this.stopHeapWatch?.();
     this.cron.stop();
     this.persist();

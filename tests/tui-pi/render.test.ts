@@ -1357,18 +1357,25 @@ describe('ActivityLine renderCache', () => {
     expect(lines3).not.toEqual(lines2);
   });
 
-  it('tick 不失效 previewCache（流式冻结：spinner 帧冻结直到 setThinking）', () => {
+  it('tick 推进 spinner 帧，thinking 预览复用缓存不抖动（流式冻结）', () => {
     const a = new ActivityLine();
     a.setBusy(true);
     a.setThinking(true, 'thinking content');
-    const lines1 = a.render(80);
-    // tick 推进帧号——但不失效 previewCache
+    const plain = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const head1 = plain(a.render(80)[0]!);
+    // tick 推进帧号并失效 renderCache——render 会重算 head 行（spinner 字符变），
+    // 但 thinking 预览文本没变，render 内部复用 cachedTail，预览行不随帧重渲染。
     a.tick();
     a.tick();
     a.tick();
-    // render 应该返回缓存（同样的行），spinner 帧被冻结
-    const lines2 = a.render(80);
-    expect(lines2).toBe(lines1); // 同一引用 = 走缓存
+    const head2 = plain(a.render(80)[0]!);
+    expect(head1[0]).not.toBe(head2[0]); // spinner 字符变了 = tick 真正让 spinner 转
+    // thinking 预览行复用缓存：三次 tick 期间预览内容稳定（无跳动）
+    const tailBefore = a.render(80).slice(1).map(plain);
+    a.tick();
+    a.tick();
+    const tailAfter = a.render(80).slice(1).map(plain);
+    expect(tailAfter).toEqual(tailBefore);
   });
 
   it('addOutputChars 不失效 previewCache（token 计数冻结直到 setThinking）', () => {

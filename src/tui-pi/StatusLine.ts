@@ -189,6 +189,13 @@ export class ActivityLine implements Component {
   /** thinking 预览用 pi-tui Text 渲染，它内部按行折行、不拖父串，避免 OOM。 */
   private readonly textComponent = new Text('', 0, 0);
   /**
+   * thinking 预览的样式化结果缓存。render 在 tick 驱动下每 80ms 重算一次（让 spinner 转），
+   * 但 thinking 预览文本没变时不能跟着重算——那会让预览行在 spinner 转动时发生视觉跳动。
+   * 故只把 preview 变化时重算的 tail 存这里，render 里 preview 文本未变则直接复用。
+   */
+  private cachedTail: string[] = [];
+  private cachedTailText = '';
+  /**
    * 全量输出缓存。render 输出随 spinner 帧 / token / elapsed 变化，若逐帧刷新会在用户上滚时
    * 触发视口跳顶，故只在内容实质变化（setThinking / setBusy / setTip）时失效。
    */
@@ -230,14 +237,22 @@ export class ActivityLine implements Component {
     if (preview !== '') {
       this.thinkingPreview = preview;
       this.textComponent.setText(preview);
+      // preview 变了，缓存失效——render 下次会重算 thinking tail 并更新缓存。
+      this.cachedTailText = '';
     }
     this.cache.invalidate();
   }
 
-  /** 由 PiChat 的 100ms 定时器驱动：只在 busy 时推进帧号。不失效缓存。 */
+  /**
+   * 由 PiChat 的 spinner 定时器（80ms）驱动：只在 busy 时推进帧号并失效缓存。
+   * 失效缓存是必须的——render 短路会返回旧输出，若不失效，spinner 字符永远是推进前的那个，
+   * 实测 tick 五次输出全同一个字符（spinner 根本不转）。thinking 预览的抖动由 render 内部
+   * 复用缓存解决（见 render），不靠这里不失效缓存来冻结。
+   */
   tick(): void {
-    if (this.busy) this.frame = (this.frame + 1) % SPINNER.length;
-    // 不失效缓存：spinner 帧变化是装饰性的，render 返回缓存输出
+    if (!this.busy) return;
+    this.frame = (this.frame + 1) % SPINNER.length;
+    this.cache.invalidate();
   }
 
   render(width: number): string[] {
@@ -254,10 +269,20 @@ export class ActivityLine implements Component {
       // 思考流式预览：尾部 N 行。预览行只加 indent 不加 spin（spinner 已在 head 行）。
       const indent = '  ';
       const contentW = Math.max(8, width - indent.length);
-      const tail = this.textComponent.render(contentW).slice(-PREVIEW_LINES);
-      // 逐行钳到 width：wrapTextWithAnsi 对无空格串（长 URL / base64）不折行，
-      // 任一行超宽会让 pi-tui doRender 直接 throw。这里在着色前钳，作组件层安全阀。
-      const styled = tail.map((line) => c.thinking(truncateToWidth(indent + line, width)));
+      // preview 文本没变时复用上次样式化结果：render 在 spinner tick 下每 80ms 重算一次，
+      // 若不复用，预览行会随 spinner 转动而每帧重渲染，产生视觉跳动。
+      // preview 变了（setThinking 传新文本）才重算并更新缓存。
+      let styled: string[];
+      if (this.thinkingPreview === this.cachedTailText) {
+        styled = this.cachedTail;
+      } else {
+        const tail = this.textComponent.render(contentW).slice(-PREVIEW_LINES);
+        // 逐行钳到 width：wrapTextWithAnsi 对无空格串（长 URL / base64）不折行，
+        // 任一行超宽会让 pi-tui doRender 直接 throw。这里在着色前钳，作组件层安全阀。
+        styled = tail.map((line) => c.thinking(truncateToWidth(indent + line, width)));
+        this.cachedTail = styled;
+        this.cachedTailText = this.thinkingPreview;
+      }
       out.push(...styled);
     } else if (this.hint !== '') {
       // 思考预览与操作提示互斥占第二行：预览是本轮实时信息，优先级高于常驻提示
