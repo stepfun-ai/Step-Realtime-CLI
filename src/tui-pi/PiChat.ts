@@ -3163,6 +3163,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         break;
       }
       case 'tool_start': {
+        this.activity.noteToolActivity();
         const toolItem: Extract<DisplayItem, { kind: 'tool' }> = {
           kind: 'tool',
           id: ev.id,
@@ -3187,6 +3188,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         break;
       }
       case 'tool_end':
+        this.activity.noteToolActivity();
         this.transcript.updateLastWhere(
           (it) => it.kind === 'tool' && it.id === ev.id,
           (it) => ({ ...(it as Extract<DisplayItem, { kind: 'tool' }>), status: ev.isError ? 'error' : 'ok', result: ev.result }),

@@ -183,6 +183,10 @@ export class ActivityLine implements Component {
   private thinkingPreview = '';
   private frame = 0;
   private tip = '';
+  /** 进度心跳：token 增长 / 思考预览更新 / 工具活动都刷新。超 STALL_MS 无进展 → 停滞态变红。 */
+  private lastProgressAt = 0;
+  /** 停滞阈值：3 秒无新 token 且无工具活动（参照成熟实现的同一判据）。 */
+  static readonly STALL_MS = 3_000;
   /** 本轮的状态动词与操作提示：busy 上升沿各取一次、整轮固定（不随帧刷新而跳字）。 */
   private verb = '';
   private hint = '';
@@ -213,6 +217,7 @@ export class ActivityLine implements Component {
       // 整轮固定：随机只在进入 busy 时发生，render 每 100ms 调用一次，不能在里面取随机
       this.verb = pickWorkingVerb();
       this.hint = pickRandomTip(this.hint);
+      this.lastProgressAt = startedAt;
     }
     if (!busy) {
       this.thinkingActive = false;
@@ -229,7 +234,13 @@ export class ActivityLine implements Component {
 
   addOutputChars(n: number): void {
     this.outputChars += n;
+    if (n > 0) this.lastProgressAt = Date.now();
     // 不失效缓存：token 计数是装饰性更新，不触发视觉变化
+  }
+
+  /** 工具活动心跳（tool_start/tool_end 时调用）：停滞判定把工具执行算作进展。 */
+  noteToolActivity(): void {
+    this.lastProgressAt = Date.now();
   }
 
   setThinking(active: boolean, preview = ''): void {
@@ -237,6 +248,7 @@ export class ActivityLine implements Component {
     if (preview !== '') {
       this.thinkingPreview = preview;
       this.textComponent.setText(preview);
+      this.lastProgressAt = Date.now();
       // preview 变了，缓存失效——render 下次会重算 thinking tail 并更新缓存。
       this.cachedTailText = '';
     }
@@ -263,7 +275,15 @@ export class ActivityLine implements Component {
     const elapsed = formatElapsed(Date.now() - this.startedAt);
     const tok = this.outputChars > 0 ? ` · ↓ ${formatCount(Math.round(this.outputChars / 4))} tok` : '';
     const state = this.thinkingActive ? '思考中' : this.tip !== '' ? this.tip : this.verb !== '' ? this.verb : '运行中';
-    const head = `${spin} ${c.dim(`${state} · ${elapsed}${tok} · Esc 中断`)}`;
+    // 停滞检测：STALL_MS 无进展（无新 token、无思考更新、无工具活动）→ 状态词变红并标注
+    // 停滞时长，把「还在等」与「疑似卡住」区分开（参照成熟实现的 stalled 语义，2s 渐变
+    // 在我们这里简化为阈值切换——差分渲染下渐变要每帧重绘，不值得）。
+    const stalledFor = Date.now() - this.lastProgressAt;
+    const stalled = stalledFor > ActivityLine.STALL_MS;
+    const stateText = stalled
+      ? c.error(`${state}（${formatElapsed(stalledFor)} 无新输出）`)
+      : c.dim(state);
+    const head = `${spin} ${stateText}${c.dim(` · ${elapsed}${tok} · Esc 中断`)}`;
     const out = [truncateToWidth(head, width)];
     if (this.thinkingActive && this.thinkingPreview !== '') {
       // 思考流式预览：尾部 N 行。预览行只加 indent 不加 spin（spinner 已在 head 行）。

@@ -7,7 +7,7 @@
  * 「有没有发清屏序列」，而不是「屏幕最终长什么样」。
  */
 import chalk from 'chalk';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import { Transcript } from '../../src/tui-pi/Transcript.js';
@@ -585,6 +585,33 @@ describe('ActivityLine', () => {
     a.setBusy(true, Date.now());
     const out = plain(a.render(60)).join('\n');
     expect(out).toContain('Esc 中断');
+  });
+
+  it('3 秒无进展进入停滞态：状态词标注无新输出时长', () => {
+    vi.useFakeTimers();
+    try {
+      const a = new ActivityLine();
+      a.setBusy(true, Date.now());
+      // 刚进入 busy：非停滞
+      expect(plain(a.render(60))[0]).not.toContain('无新输出');
+      // 推进 3.5s，无任何进展 → 停滞
+      vi.advanceTimersByTime(3_500);
+      a.invalidate();
+      expect(plain(a.render(60))[0]).toContain('无新输出');
+      // 工具活动刷新技术 → 停滞解除
+      a.noteToolActivity();
+      a.invalidate();
+      expect(plain(a.render(60))[0]).not.toContain('无新输出');
+      // 再停滞 4s，token 增长也刷新心跳
+      vi.advanceTimersByTime(4_000);
+      a.invalidate();
+      expect(plain(a.render(60))[0]).toContain('无新输出');
+      a.addOutputChars(10);
+      a.invalidate();
+      expect(plain(a.render(60))[0]).not.toContain('无新输出');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('思考预览取尾部 3 行', () => {
