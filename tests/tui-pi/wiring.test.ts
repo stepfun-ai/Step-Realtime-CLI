@@ -222,7 +222,9 @@ describe('PiChat 接线：会话切换的清理与恢复', () => {
 
   it('两个 primed 定时器在退出时都被清理', () => {
     // 未清的 setTimeout 会让 node 事件循环多挂 5 秒才退出
-    const exitBlock = /private exit\(\): void \{[\s\S]{0,600}?\n  \}/.exec(piChat)?.[0] ?? '';
+    // 阈值留 1000：exit() 清理项较多（exit/backtrack 两个 primed + ticker + spinner + heapWatch + cron
+    // + persist + termTitle + tui.stop），2026-08-19 实测方法体已达 686 字符，原 600 会抓空误报。
+    const exitBlock = /private exit\(\): void \{[\s\S]{0,1000}?\n  \}/.exec(piChat)?.[0] ?? '';
     expect(exitBlock, 'exit 里应清 exitPrimedTimer').toContain('exitPrimedTimer');
     expect(exitBlock, 'exit 里应清 backtrackPrimedTimer').toContain('backtrackPrimedTimer');
   });
