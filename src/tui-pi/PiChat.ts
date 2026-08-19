@@ -162,12 +162,14 @@ const COMPACT_KEEP_RECENT = 6;
  *
  * - FOLD_KEEP_RECENT_TURNS：折叠后保留的最近完整轮数。30 与参考方案同口径。
  * - FOLD_TRIGGER_TURNS：触发闸门。折叠顶部旧块会改行号、可能触发一次全屏重绘+清 scrollback，
- *   故不每回合折——只在 turn 数超过此值时才折一次，把代价摊薄。200 是保守高阈值：日常会话
- *   远达不到（compaction reset 已处理常规清理），只有长跑无 compaction 的极端场景才触发。
- *   折一次后块数回落到 FOLD_KEEP_RECENT_TURNS 附近，很久才会再超闸门。
+ *   故不每回合折——只在 turn 数超过此值时才折一次，把代价摊薄。
+ *   迟滞 = FOLD_TRIGGER - FOLD_KEEP：超阈值才折、折完回落到保留数附近，避免每回合都动。
+ *   初值 200 过于保守（日常长跑根本到不了，等于空窗，20260819 竞品调研对照后下调）：
+ *   某同技术栈竞品是 15+5。30+5 让我方保留更多上下文（用户最常回看最近几十轮）的同时，
+ *   让折叠在 ~35 轮就必然发生，从源头压住块数组增长。单次只折超出的那几轮，代价很低。
  */
 const FOLD_KEEP_RECENT_TURNS = 30;
-const FOLD_TRIGGER_TURNS = 200;
+const FOLD_TRIGGER_TURNS = 35;
 
 /**
  * primed 态（双击确认）的超时：Esc 双击回退与 Ctrl+C 双击退出共用同一档。
