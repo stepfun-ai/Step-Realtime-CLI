@@ -4,7 +4,8 @@
   "description": "Step Code — 阶跃星辰 Step 系列模型驱动的终端编码 agent CLI。",
   "type": "module",
   "bin": {
-    "step": "dist/main.js"
+    "step": "dist/main.js",
+    "step-pi": "dist/main.js"
   },
   "files": [
     "dist",
