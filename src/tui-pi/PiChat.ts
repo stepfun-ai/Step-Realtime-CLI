@@ -65,7 +65,7 @@ import { restoreFile } from '../tools/checkpoint.js';
 import { bashTool } from '../tools/bash.js';
 import { resolvePath } from '../tools/fsutil.js';
 import type { ToolContext } from '../tools/types.js';
-import type { DisplayItem } from '../chat/types.js';
+import type { DisplayItem, SubagentToolEvent } from '../chat/types.js';
 import { busyRoute, helpText, parseSlash } from '../chat/commands.js';
 import { resolveProviderTarget } from '../chat/providerSwitch.js';
 import { diffConfig, formatConfigChange, planProviderReload, resolveCapabilitiesOnReload, resolveImageLimitsOnReload } from '../chat/reload.js';
@@ -173,6 +173,15 @@ const COMPACT_KEEP_RECENT = 6;
  */
 const FOLD_KEEP_RECENT_TURNS = 30;
 const FOLD_TRIGGER_TURNS = 35;
+
+/**
+ * 子 agent 单卡事件窗口：一个 spawn_agent 卡片运行期间，最多保留最近这么多条子工具事件。
+ * 渲染只取最近 3 条，但保留 50 条让流式中能看到更多近期进度；超过即丢弃最旧的。
+ * 不设上限的话，一个调几百次工具的子 agent 会让单卡事件数组无界增长，且每次 tool 事件
+ * 是 O(n) 的整数组 spread 重建 → 长任务里变成 O(n²)。总调用数由 tool_end 的
+ * subagentToolUses 单独落定，不受此窗口影响。
+ */
+const SUBAGENT_EVENT_CAP = 50;
 
 /**
  * primed 态（双击确认）的超时：Esc 双击回退与 Ctrl+C 双击退出共用同一档。
@@ -761,7 +770,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       return;
     }
     if (ev.kind === 'tool') {
-      patch((it) => ({ ...it, subagentToolEvents: [...(it.subagentToolEvents ?? []), { name: ev.name, status: 'running' }] }));
+      patch((it) => ({ ...it, subagentToolEvents: [...(it.subagentToolEvents ?? []), { name: ev.name, status: 'running' } as SubagentToolEvent].slice(-SUBAGENT_EVENT_CAP) }));
       return;
     }
     if (ev.kind === 'tool_end') {
@@ -774,7 +783,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
             break;
           }
         }
-        return { ...it, subagentToolEvents: events };
+        return { ...it, subagentToolEvents: events.slice(-SUBAGENT_EVENT_CAP) };
       });
       return;
     }
