@@ -65,6 +65,16 @@ describe('sessionItems', () => {
     expect(items[0]!.description).toContain('12 条');
     expect(items[0]!.description).toContain('abcdef12');
   });
+
+  it('当前会话标绿色圆点前缀 + 描述尾注"当前"', () => {
+    const items = sessionItems(metas, now, 'zzz');
+    expect(items[1]!.label).toContain('●');
+    expect(items[1]!.label).toContain('我改的名字');
+    expect(items[1]!.description).toContain('当前');
+    // 非当前会话不带标记
+    expect(items[0]!.label).not.toContain('●');
+    expect(items[0]!.description).not.toContain('当前');
+  });
 });
 
 describe('modelItems', () => {

@@ -2886,12 +2886,11 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       const metas = this.deps.store.list(this.deps.ctx.cwd);
       const m = metas.filter((x) => x.parentId === undefined);
       const sub = metas.filter((x) => x.parentId !== undefined);
-      const items = sessionItems(m).map((it) => ({
+      const items = sessionItems(m, Date.now(), this.session.id).map((it) => ({
         ...it,
-        label: it.value === this.session.id ? `${it.label} ${'（当前）'}` : it.label,
+        label: it.label,
       }));
       if (sub.length > 0) {
-        // 只读分组：子 agent 会话不是可恢复的主会话，加前缀标出来，选中时给提示
         items.push({ value: '__sub_header__', label: '── 子 agent 会话（只读）──', description: '' });
         for (const it of sessionItems(sub)) items.push({ ...it, value: `sub:${it.value}`, label: `  ${it.label}` });
       }

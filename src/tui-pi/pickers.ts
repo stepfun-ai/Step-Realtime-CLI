@@ -271,11 +271,11 @@ export class PickerOverlay implements Component {
 }
 
 /** 会话选择器候选项：标题 + 相对时间 + 消息数。 */
-export function sessionItems(metas: readonly SessionMeta[], now = Date.now()): SelectItem[] {
+export function sessionItems(metas: readonly SessionMeta[], now = Date.now(), currentSessionId?: string): SelectItem[] {
   return metas.map((m) => ({
     value: m.id,
-    label: m.name ?? m.title ?? m.preview?.slice(0, 40) ?? m.id,
-    description: `${relativeTime(m.updatedAt, now)} · ${t('sessionPicker.count', { count: m.messageCount })} · ${m.id.slice(0, 8)}`,
+    label: m.id === currentSessionId ? `${c.ok('●')} ${m.name ?? m.title ?? m.preview?.slice(0, 40) ?? m.id}` : (m.name ?? m.title ?? m.preview?.slice(0, 40) ?? m.id),
+    description: `${relativeTime(m.updatedAt, now)} · ${t('sessionPicker.count', { count: m.messageCount })} · ${m.id.slice(0, 8)}${m.id === currentSessionId ? ' ' + c.ok(t('sessionPicker.current')) : ''}`,
   }));
 }
 
