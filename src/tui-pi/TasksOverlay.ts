@@ -209,14 +209,15 @@ export class TasksOverlay implements Component {
       out.push('');
       out.push(...this.renderDetail(task, width));
       out.push('');
-      out.push(c.dim(t('tasksOverlay.outputTitle', { id: task.id })));
+      out.push(c.dim(truncateToWidth(t('tasksOverlay.outputTitle', { id: task.id }), width)));
       const lines = task.output === '' ? [t('tasksOverlay.noOutput')] : task.output.split('\n');
       for (const l of lines.slice(-PREVIEW_ROWS)) out.push(c.dim(truncateToWidth(`  ${l}`, width)));
     }
     if (this.confirmStop !== null) {
-      out.push(c.warn(t('tasksOverlay.confirmStop', { id: this.confirmStop })));
+      out.push(c.warn(truncateToWidth(t('tasksOverlay.confirmStop', { id: this.confirmStop }), width)));
     } else {
-      out.push(c.dim(t('tasksOverlay.footer')));
+      // footer 是固定键位文案（约 64 列），窄终端/分屏下会超宽崩溃，必须截断
+      out.push(c.dim(truncateToWidth(t('tasksOverlay.footer'), width)));
     }
     return out;
   }
