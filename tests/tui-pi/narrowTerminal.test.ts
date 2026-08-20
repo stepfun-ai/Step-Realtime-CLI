@@ -15,7 +15,9 @@
 import { describe, expect, it } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { ItemBlock } from '../../src/tui-pi/blocks.js';
-import { ActivityLine } from '../../src/tui-pi/StatusLine.js';
+import { ActivityLine, StatusLine } from '../../src/tui-pi/StatusLine.js';
+import { renderWelcome } from '../../src/tui-pi/blocks.js';
+import { ChromePanels } from '../../src/tui-pi/ChromePanels.js';
 import { InlineApproval, PlanApproval, QuestionPrompt } from '../../src/tui-pi/prompts.js';
 import { PickerOverlay } from '../../src/tui-pi/pickers.js';
 import { ExpandOverlay } from '../../src/tui-pi/ExpandOverlay.js';
@@ -26,6 +28,7 @@ import type { DisplayItem } from '../../src/chat/types.js';
 import type { AskUserRequest } from '../../src/tools/askUser.js';
 import type { BackgroundTask } from '../../src/agent/background/manager.js';
 import type { Component } from '@earendil-works/pi-tui';
+import type { TodoItem } from '../../src/tools/types.js';
 
 /** 崩溃重灾区宽度：40 列远窄于常见终端，任何漏截断都无处遁形。 */
 const NARROW = [40, 45, 50];
@@ -192,5 +195,63 @@ describe('反向红线：超宽必须被测出', () => {
   it('故意不截断的组件触发断言', () => {
     const bad: Component = { render: (w) => ['x'.repeat(w + 50)] };
     expect(() => checkWidth('bad', () => bad)).toThrow();
+  });
+});
+
+describe('窄终端：剩余三件套（WelcomeBox / StatusLine / ChromePanels）', () => {
+  it('WelcomeBox：超长 cwd/session/model/version 不超宽', () => {
+    const data = {
+      cwd: 'C:\\Users\\一个很长的用户名\\Documents\\projects\\'.repeat(4),
+      sessionId: '20260819123456-abcdef0123456789',
+      model: 'Water 18（内测）超长模型名'.repeat(5),
+      version: '0.1.2 (abcdef0123456789 2026-08-19T06:12:21Z)',
+    };
+    for (const w of NARROW) {
+      const lines = renderWelcome(data, w);
+      for (let i = 0; i < lines.length; i++) {
+        const vis = visibleWidth(lines[i]!);
+        expect(vis, `welcome width=${w} line ${i} 可见宽度 ${vis} > ${w}`).toBeLessThanOrEqual(w);
+      }
+    }
+  });
+
+  it('StatusLine：全字段 + 超长 model/cwd/bgTask/goal 不超宽', () => {
+    checkWidth('status.full', () => {
+      const s = new StatusLine({
+        mode: 'yolo',
+        planMode: true,
+        model: '超长模型名 '.repeat(10),
+        thinking: 'high',
+        busy: true,
+        cwd: 'C:\\超长路径\\'.repeat(15),
+        usedTokens: 243000,
+        maxContextSize: 400000,
+        hints: 'Enter 发送 · Esc 中断 · Ctrl+C 退出 · /help 命令',
+        backgroundCount: 3,
+        latestBgTask: '超长后台任务命令 '.repeat(10),
+        queueLen: 5,
+        goal: { status: 'active', turnsUsed: 12, turnBudget: 50, elapsedMs: 3600000 },
+        teamActive: true,
+      });
+      // 设一个 spinner 帧，触发 render 的 spinner/elapsed 路径
+      return s;
+    });
+  });
+
+  it('ChromePanels：超长 todos + 超长 queue 不超宽', () => {
+    checkWidth('chrome.full', () => {
+      const c = new ChromePanels();
+      c.setTodos([
+        { text: '超长待办事项 '.repeat(15), status: 'in_progress' },
+        { text: '另一条很长的待办 '.repeat(10), status: 'done' },
+        { text: '第三条 '.repeat(8), status: 'pending' },
+      ]);
+      c.setQueue([
+        '排队消息一 '.repeat(20),
+        '排队消息二 '.repeat(15),
+      ]);
+      c.setBusy(true);
+      return c;
+    });
   });
 });
