@@ -19,11 +19,17 @@ function makePara(seed: number): string {
 describe('thinking 流死循环检测器', () => {
   // ========== 路径 A：短周期逐字复读 ==========
 
+  it('短周期短语复读（16 字符短语 ×60）→ 判定循环', () => {
+    const d = createThinkingLoopDetector();
+    // 同一 16 字符短语重复 60 次（960 字符），短周期路径（p=16，末尾 8 次全复读）
+    // 在 MIN_CHARS=100 下会命中——这确实是循环，不是正常推理。
+    const v = d.ingest(repeat('让我先思考一下这个问题的背景。', 60));
+    expect(v.looping).toBe(true);
+  });
+
   it('短周期逐字复读（「的」×N）→ 判定循环', () => {
     const d = createThinkingLoopDetector();
-    let v = d.ingest(repeat('让我先思考一下这个问题的背景。', 60)); // 35×18=630，过 MIN_CHARS=600
-    expect(v.looping).toBe(false);
-    v = d.ingest(repeat('的', 200));
+    const v = d.ingest(repeat('的', 200));
     expect(v.looping).toBe(true);
   });
 
