@@ -231,6 +231,8 @@ export class QuestionPrompt {
   private readonly requestRender: () => void;
   private qIdx = 0;
   private settled = false;
+  /** 编辑态：光标在 Other 行时按 Enter 进入，↑↓/Esc 退出。与导航态分离，键位不再争用。 */
+  private otherMode = false;
   /** 每题的交互现场：光标、勾选集、自由输入草稿与光标位置（切题保留）。 */
   private readonly slots: { cursor: number; checked: Set<number>; other: string; otherCursor: number }[];
   private readonly answers: QuestionAnswers = {};
@@ -297,20 +299,63 @@ export class QuestionPrompt {
       this.settle({});
       return;
     }
+
+    // ── 编辑态：Other 行按 Enter 进入，↑↓/Esc 退出 ──
+    if (this.otherMode) {
+      const slot = this.slot;
+      if (matchesKey(data, 'enter')) {
+        const text = slot.other.trim();
+        if (text === '') return; // 空文本不放行
+        this.otherMode = false;
+        slot.cursor = this.otherIndex;
+        this.commitAndAdvance();
+        return;
+      }
+      if (matchesKey(data, 'up')) {
+        this.otherMode = false;
+        slot.cursor = (slot.cursor - 1 + this.rowCount) % this.rowCount;
+        this.requestRender();
+        return;
+      }
+      if (matchesKey(data, 'down')) {
+        this.otherMode = false;
+        slot.cursor = (slot.cursor + 1) % this.rowCount;
+        this.requestRender();
+        return;
+      }
+      // ←→ 多题时切题（退出编辑态），单题时移动文本光标
+      if (matchesKey(data, 'left') && this.req.questions.length > 1 && this.qIdx > 0) {
+        this.otherMode = false;
+        this.qIdx -= 1;
+        this.requestRender();
+        return;
+      }
+      if (matchesKey(data, 'right') && this.req.questions.length > 1 && this.qIdx < this.req.questions.length - 1) {
+        this.otherMode = false;
+        this.qIdx += 1;
+        this.requestRender();
+        return;
+      }
+      this.handleOtherTextEdit(data);
+      return;
+    }
+
+    // ── 导航态 ──
     const q = this.question;
     const slot = this.slot;
-    const last = this.otherIndex; // 含自由输入行
+    const last = this.otherIndex;
+
     if (matchesKey(data, 'up')) {
-      slot.cursor = (slot.cursor - 1 + last + 1) % (last + 1);
+      slot.cursor = (slot.cursor - 1 + this.rowCount) % this.rowCount;
       this.requestRender();
       return;
     }
     if (matchesKey(data, 'down')) {
-      slot.cursor = (slot.cursor + 1) % (last + 1);
+      slot.cursor = (slot.cursor + 1) % this.rowCount;
       this.requestRender();
       return;
     }
-    // 数字键 1-9 直选实选项（对齐 ink 版）：单选直选=确认，多选直选=切换勾选
+    // 数字键 1-9 直选实选项：单选直选=确认，多选直选=切换勾选
     if (/^[1-9]$/.test(data)) {
       const n = Number(data) - 1;
       const optionCount = q.options.length;
@@ -327,66 +372,7 @@ export class QuestionPrompt {
       }
       return;
     }
-    if (matchesKey(data, 'enter')) {
-      this.commitAndAdvance();
-      return;
-    }
-    // 自由输入行：光标在 Other 行时按键先进文本编辑（含 ←→ 移文本光标）——
-    // 切题的 ←→ 必须排在本分支之后，否则 Other 行上 ←→ 切成切题、文本光标移动成死代码
-    // （渲染画了 ▌ 光标却移不动，交互自相矛盾）。要离开 Other 行用 ↑↓。
-    if (slot.cursor === last) {
-      if (matchesKey(data, 'left')) {
-        if (slot.otherCursor > 0) { slot.otherCursor -= 1; this.requestRender(); }
-        return;
-      }
-      if (matchesKey(data, 'right')) {
-        if (slot.otherCursor < slot.other.length) { slot.otherCursor += 1; this.requestRender(); }
-        return;
-      }
-      if (matchesKey(data, 'home') || matchesKey(data, 'ctrl+a')) {
-        slot.otherCursor = 0;
-        this.requestRender();
-        return;
-      }
-      if (matchesKey(data, 'end') || matchesKey(data, 'ctrl+e')) {
-        slot.otherCursor = slot.other.length;
-        this.requestRender();
-        return;
-      }
-      if (matchesKey(data, 'ctrl+w')) {
-        // 删前一个词（Ctrl+W）
-        const before = slot.other.slice(0, slot.otherCursor);
-        const after = slot.other.slice(slot.otherCursor);
-        const trimmed = before.replace(/\s*\S*\s*$/, '');
-        slot.other = trimmed + after;
-        slot.otherCursor = trimmed.length;
-        this.requestRender();
-        return;
-      }
-      if (matchesKey(data, 'backspace')) {
-        if (slot.otherCursor > 0) {
-          slot.other = slot.other.slice(0, slot.otherCursor - 1) + slot.other.slice(slot.otherCursor);
-          slot.otherCursor -= 1;
-          this.requestRender();
-        }
-        return;
-      }
-      if (matchesKey(data, 'delete')) {
-        if (slot.otherCursor < slot.other.length) {
-          slot.other = slot.other.slice(0, slot.otherCursor) + slot.other.slice(slot.otherCursor + 1);
-          this.requestRender();
-        }
-        return;
-      }
-      if (data.length === 1 && data.charCodeAt(0) >= 32 && !data.startsWith('\x1b')) {
-        slot.other = slot.other.slice(0, slot.otherCursor) + data + slot.other.slice(slot.otherCursor);
-        slot.otherCursor += 1;
-        this.requestRender();
-        return;
-      }
-      return;
-    }
-    // ←→ 切题（光标不在 Other 行时才到得了这里）
+    // ←→ 切题（导航态下）
     if (matchesKey(data, 'left') && this.qIdx > 0) {
       this.qIdx -= 1;
       this.requestRender();
@@ -402,6 +388,73 @@ export class QuestionPrompt {
       else slot.checked.add(slot.cursor);
       this.requestRender();
       return;
+    }
+    if (matchesKey(data, 'enter')) {
+      if (slot.cursor === last) {
+        // 在 Other 行上按 Enter → 进入编辑态
+        this.otherMode = true;
+        this.requestRender();
+      } else {
+        this.commitAndAdvance();
+      }
+      return;
+    }
+  }
+
+  /** 总行数 = 选项数 + 1（Other 行）。 */
+  private get rowCount(): number {
+    return this.otherIndex + 1;
+  }
+
+  /** 编辑态下的文本编辑处理。 */
+  private handleOtherTextEdit(data: string): void {
+    const slot = this.slot;
+    if (matchesKey(data, 'left')) {
+      if (slot.otherCursor > 0) { slot.otherCursor -= 1; this.requestRender(); }
+      return;
+    }
+    if (matchesKey(data, 'right')) {
+      if (slot.otherCursor < slot.other.length) { slot.otherCursor += 1; this.requestRender(); }
+      return;
+    }
+    if (matchesKey(data, 'home') || matchesKey(data, 'ctrl+a')) {
+      slot.otherCursor = 0;
+      this.requestRender();
+      return;
+    }
+    if (matchesKey(data, 'end') || matchesKey(data, 'ctrl+e')) {
+      slot.otherCursor = slot.other.length;
+      this.requestRender();
+      return;
+    }
+    if (matchesKey(data, 'ctrl+w')) {
+      const before = slot.other.slice(0, slot.otherCursor);
+      const after = slot.other.slice(slot.otherCursor);
+      const trimmed = before.replace(/\s*\S*\s*$/, '');
+      slot.other = trimmed + after;
+      slot.otherCursor = trimmed.length;
+      this.requestRender();
+      return;
+    }
+    if (matchesKey(data, 'backspace')) {
+      if (slot.otherCursor > 0) {
+        slot.other = slot.other.slice(0, slot.otherCursor - 1) + slot.other.slice(slot.otherCursor);
+        slot.otherCursor -= 1;
+        this.requestRender();
+      }
+      return;
+    }
+    if (matchesKey(data, 'delete')) {
+      if (slot.otherCursor < slot.other.length) {
+        slot.other = slot.other.slice(0, slot.otherCursor) + slot.other.slice(slot.otherCursor + 1);
+        this.requestRender();
+      }
+      return;
+    }
+    if (data.length === 1 && data.charCodeAt(0) >= 32 && !data.startsWith('\x1b')) {
+      slot.other = slot.other.slice(0, slot.otherCursor) + data + slot.other.slice(slot.otherCursor);
+      slot.otherCursor += 1;
+      this.requestRender();
     }
   }
 
@@ -430,16 +483,19 @@ export class QuestionPrompt {
       inner.push(truncateToWidth(`${prefix}${box}[${i + 1}] ${label}${desc}`, innerWidth));
     });
 
-    // 自由输入行：与上方选项同款 [n] label 结构（ink 版显示 [5] 其他，此前 pi 版只画个 [?
-    // 问号，用户看不出这是个可选入口）。选中态对齐选项——黄色标签 + ❯ 粗光标。
+    // 自由输入行：导航态只显示标签（与 ink 版一致），编辑态显示文本 + ▌ 光标
     const onOther = slot.cursor === this.otherIndex;
     const otherLabel = t('question.other');
-    // 空草稿时把「自己写一个答案」作为暗提示跟在标签后，与对照版的占位同效
-    const otherText = slot.other !== '' ? slot.other : c.dim(t('question.otherPlaceholder'));
-    const otherCursor = onOther && slot.other !== '' ? '▌' : '';
     const otherPrefix = onOther ? c.toolName('❯ ') : '  ';
-    const otherLine = `${otherPrefix}[${this.otherIndex + 1}] ${onOther ? c.toolName(otherLabel) : otherLabel} ${otherText}${otherCursor}`;
-    inner.push(truncateToWidth(otherLine, innerWidth));
+    if (this.otherMode) {
+      // 编辑态：显示文本内容 + 光标
+      const text = slot.other !== '' ? slot.other : c.dim(t('question.otherPlaceholder'));
+      const otherLine = `${otherPrefix}[${this.otherIndex + 1}] ${c.toolName(otherLabel)} ${text}${'▌'}`;
+      inner.push(truncateToWidth(otherLine, innerWidth));
+    } else {
+      // 导航态：只显示标签，不显示文本（视觉上区分导航态和编辑态）
+      inner.push(truncateToWidth(`${otherPrefix}[${this.otherIndex + 1}] ${onOther ? c.toolName(otherLabel) : otherLabel}`, innerWidth));
+    }
 
     // 空行分隔
     inner.push('');

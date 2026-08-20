@@ -213,8 +213,9 @@ describe('QuestionPrompt', () => {
   it('自由输入项在最后一项之后，输入文本后 Enter 提交', () => {
     const { block, settled } = mk();
     block.handleInput(UP);
+    block.handleInput(ENTER); // 进入编辑态
     for (const ch of ['C', '方', '案']) block.handleInput(ch);
-    block.handleInput(ENTER);
+    block.handleInput(ENTER); // 提交
     expect(settled).toEqual([{ 用哪个方案: 'C方案' }]);
   });
 
@@ -225,25 +226,22 @@ describe('QuestionPrompt', () => {
     expect(settled).toHaveLength(0);
   });
 
-  it('Other 行上 ←→ 移动文本光标而非切题（渲染画了 ▌ 光标就必须移得动）', () => {
-    // 回归：切题的 ←→ 此前排在 Other 编辑分支之前，Other 行上按 ←→ 变成切题，
-    // 文本光标移动是死代码——渲染层画了 ▌ 却移不动，交互自相矛盾。
+  it('Other 行上 ←→ 移动文本光标而非切题（编辑态下渲染画了 ▌ 光标就必须移得动）', () => {
+    // ink 版模式：导航态 ←→ 切题，编辑态（单题）←→ 移动文本光标。
     const { block, settled } = mk({
       questions: [
         { question: '第一题', options: [{ label: 'A1' }, { label: 'B1' }] },
-        { question: '第二题', options: [{ label: 'A2' }, { label: 'B2' }] },
       ],
     });
     block.handleInput(UP); // 光标到 Other 行
+    block.handleInput(ENTER); // 进入编辑态
     for (const ch of ['a', 'b', 'c']) block.handleInput(ch);
     block.handleInput(LEFT); // 文本光标左移一格
-    block.handleInput(RIGHT); // 关键判别：旧实现在这里切成第二题；新实现移回文本末尾
+    block.handleInput(RIGHT); // 移回文本末尾
     expect(plain(block.render(60)).join('\n')).toContain('第一题'); // 没切走
-    block.handleInput('X'); // 光标回到末尾 → abcX（若被切题则本题草稿不变、答案仍是 abc）
-    block.handleInput(ENTER); // 提交第一题，自动跳到第二题
-    expect(plain(block.render(60)).join('\n')).toContain('第二题');
-    block.handleInput('1'); // 答第二题 → 全部答完 settle
-    expect(settled).toEqual([{ 第一题: 'abcX', 第二题: 'A2' }]);
+    block.handleInput('X'); // 光标回到末尾 → abcX
+    block.handleInput(ENTER); // 提交
+    expect(settled).toEqual([{ 第一题: 'abcX' }]);
   });
 
   it('自由输入行渲染成 [n] 其他 标签，而不是 [？] 问号（否则用户看不出这是个可选入口）', () => {
