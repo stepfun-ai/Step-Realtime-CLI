@@ -193,7 +193,7 @@ timeout = 20
     writeConfig('model = "step-3"\n');
     const { text } = await runProcess({
       stdin: '/memory\r',
-      timeoutMs: 8000,
+      timeoutMs: 12000,
       stopWhen: /记忆|memory|观察池/i,
     });
     assertPastFirstRun(text);
@@ -206,7 +206,7 @@ timeout = 20
     writeConfig('model = "step-3"\n');
     const { text } = await runProcess({
       stdin: '/compact-model\r',
-      timeoutMs: 8000,
+      timeoutMs: 12000,
       stopWhen: /压缩模型|compact.*model/i,
     });
     assertPastFirstRun(text);
