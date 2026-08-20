@@ -72,7 +72,8 @@ export const thinkingMarkdownTheme: MarkdownTheme = {
   code: (s) => chalk.dim(s),
   bold: (s) => chalk.dim(s),
   italic: (s) => chalk.dim(s),
-  listBullet: (s) => chalk.dim(s),
+  /** 列表 bullet 去掉：thinking 只留纯灰色文字，不需要装饰符号 */
+  listBullet: () => '',
   highlightCode: (code) => code.split('\n').map((l) => chalk.dim(l)),
 };
 

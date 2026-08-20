@@ -276,12 +276,12 @@ export class ItemBlock implements Component {
         return [...hanging(md, c.dim('● '), 2), ''];
       }
       case 'thinking': {
-        // 长 thinking 折叠为前 N 行 + 「还有 N 行（Ctrl+O 查看）」，全文进查看器
+        // thinking 只走灰色（dimAll），左侧不带装饰符——与黄色状态栏已足以标识
         const rendered = dimAll(this.renderMarkdown(it.text, width - 2, true));
-        if (rendered.length <= THINKING_FOLD_LINES) return [...hanging(rendered, c.thinking('┊ '), 2), ''];
+        if (rendered.length <= THINKING_FOLD_LINES) return [...hanging(rendered, '  ', 2), ''];
         const head = rendered.slice(0, THINKING_FOLD_LINES);
-        const folded = c.thinking(`┊ … 还有 ${rendered.length - THINKING_FOLD_LINES} 行（Ctrl+O 查看）`);
-        return [...hanging(head, c.thinking('┊ '), 2), folded, ''];
+        const folded = c.dim(`  … 还有 ${rendered.length - THINKING_FOLD_LINES} 行（Ctrl+O 查看）`);
+        return [...hanging(head, '  ', 2), folded, ''];
       }
       case 'note':
         return [...hanging(wrap(c.note(it.text), width - 2), c.note('· '), 2), ''];

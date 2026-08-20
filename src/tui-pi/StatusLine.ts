@@ -283,7 +283,7 @@ export class ActivityLine implements Component {
     const stateText = stalled
       ? c.error(`${state}（${formatElapsed(stalledFor)} 无新输出）`)
       : c.dim(state);
-    const head = `${spin} ${stateText}${c.dim(` · ${elapsed}${tok} · Esc 中断`)}`;
+    const head = `${spin} ${stateText}${c.dim(` ${elapsed}${tok} Esc 中断`)}`;
     const out = [truncateToWidth(head, width)];
     if (this.thinkingActive && this.thinkingPreview !== '') {
       // 思考流式预览：尾部 N 行。预览行只加 indent 不加 spin（spinner 已在 head 行）。
