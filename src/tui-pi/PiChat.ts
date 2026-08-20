@@ -2939,17 +2939,31 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     overlay: PickerOverlay,
     rebuild: () => SelectItem[],
   ): Promise<void> {
-    const name = await askLine(this.tui, `会话 ${id} 的新名字（Esc 取消）`);
-    if (name !== null && name.trim() !== '') {
-      const ok = this.deps.store.rename(this.deps.ctx.cwd, id, name.trim());
-      this.push({ kind: 'note', text: ok ? `已重命名为「${name.trim()}」` : `重命名失败：${id}` });
+    // 拿当前名字作预填：用户改几个字即可，不用凭记忆全名重打。store.list 读索引，开销可忽略。
+    const meta = this.deps.store.list(this.deps.ctx.cwd).find((m) => m.id === id);
+    const currentName = meta?.name ?? meta?.title ?? id.slice(0, 8);
+    const name = await askLine(
+      this.tui,
+      `会话「${currentName}」的新名字`,
+      meta?.name ?? '', // 预填自定义名；无自定义名时为空（用户从头输入）
+      '留空清除自定义名 · Enter 确认 · Esc 取消',
+    );
+    if (name === null) return; // Esc 取消
+    const trimmed = name.trim();
+    if (trimmed === '') {
+      // 留空 = 清除自定义名，回落自动标题（store.rename 内部 delete data.name）
+      const ok = this.deps.store.rename(this.deps.ctx.cwd, id, '');
+      this.push({ kind: 'note', text: ok ? `已清除「${currentName}」的自定义名（回落自动标题）` : `操作失败：${id}` });
+    } else {
+      const ok = this.deps.store.rename(this.deps.ctx.cwd, id, trimmed);
+      this.push({ kind: 'note', text: ok ? `已重命名为「${trimmed}」` : `重命名失败：${id}` });
       // 改的是当前会话时 tab 标题跟着变（name 优先于 title）
       if (ok && id === this.session.id) {
-        this.session.name = name.trim();
+        this.session.name = trimmed;
         this.syncTerminalTitle();
       }
-      overlay.setItems(rebuild());
     }
+    overlay.setItems(rebuild());
     this.tui.setFocus(overlay);
     this.tui.requestRender();
   }
