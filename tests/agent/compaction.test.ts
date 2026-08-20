@@ -781,4 +781,55 @@ describe('fullCompact 闸门层失败的重试策略（2026-08-13 修复）', ()
     const out = await fullCompact(provider as never, thinkingHeavy, 2);
     expect(summaryOf(out).message.content).toContain('早期对话摘要');
   });
+
+  it('3 次均过短但候选达门槛 → 降级接受精简交接（不放弃压缩）', async () => {
+    // 长历史让闸门门槛 = 200（硬上限生效，inputTokens ≥ 10000）；候选约 90 token，3 次都过不了
+    // 闸门但 ≥ 50 降级门槛。中文 1 字 ≈ 1 token，故历史需 ≥ 10000 中文字。
+    const longText = '用户提了一个很长的需求，需要仔细讨论很多细节，包括架构选型、边界条件与测试策略。';
+    const msgs: StoredMessage[] = [
+      stored({ role: 'user', content: longText.repeat(120) }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好的，我分几步做，先调研再落地。'.repeat(120))] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '继续' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('做完了第一步')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+    ];
+    // 3 次都返回同一个偏短但非噪音的交接（≥50 token 但 <200）
+    const short = '用户要建代号 ORION 的系统，已定方案 B，下一步写集成测试。'.repeat(3);
+    const { provider, streamParams } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock(short)] },
+      { textChunks: [], finalContent: [textBlock(short)] },
+      { textChunks: [], finalContent: [textBlock(short)] },
+    ]);
+    const out = await fullCompact(provider as never, msgs, 2);
+    // 不放弃：产物里有 compaction_summary（而非原样返回 = 无摘要）
+    const s = summaryOf(out);
+    expect(s.message.content).toContain('早期对话摘要');
+    // 带精简交接标注：诚实告知模型这次交接偏薄
+    expect(s.message.content).toContain('精简交接');
+    expect(s.message.content).toContain('ORION');
+    // 3 次都调了（耗尽重试后才降级）
+    expect(streamParams()).toHaveLength(3);
+  });
+
+  it('3 次过短且候选是噪音短串（<50 token）→ 仍放弃压缩', async () => {
+    const longText = '用户提了一个很长的需求，需要仔细讨论很多细节，包括架构选型、边界条件与测试策略。';
+    const msgs: StoredMessage[] = [
+      stored({ role: 'user', content: longText.repeat(120) }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('好的，我分几步做，先调研再落地。'.repeat(120))] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '继续' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('做完了第一步')] }, { kind: 'assistant' }),
+      stored({ role: 'user', content: '最近1' }, { kind: 'user' }),
+      stored({ role: 'assistant', content: [textBlock('最近2')] }, { kind: 'assistant' }),
+    ];
+    // 纯噪音短串，trim 后远不到 50 token
+    const { provider } = makeFakeProvider([
+      { textChunks: [], finalContent: [textBlock('好的')] },
+      { textChunks: [], finalContent: [textBlock('继续')] },
+      { textChunks: [], finalContent: [textBlock('嗯')] },
+    ]);
+    const out = await fullCompact(provider as never, msgs, 2);
+    // 无降级 → 无 compaction_summary（原样返回）
+    expect(out.some((sm) => sm.origin.kind === 'compaction_summary')).toBe(false);
+  });
 });

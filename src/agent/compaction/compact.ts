@@ -35,6 +35,20 @@ const COMPACTION_SUMMARY_MIN_RATIO = 0.02;
 const COMPACTION_MAX_RETRIES = 3;
 
 /**
+ * 降级交接的最短 token 门槛：3 次重试都因"过短"失败时，若候选非空且 ≥ 此值，
+ * 接受为精简交接而非放弃压缩。
+ *
+ * 设计依据（2026-08-20 debug 包实证）：模型连续 3 次产出 58/175/132 token 的摘要，
+ * 在 gateHint 下从 58→175 说明已尽力，175 只差 25 到 200 门槛仍被拒 → 放弃压缩。
+ * 短摘要不一定是无效的：交接的价值在"接得上"而非"写够 N token"。132 token 若能
+ * 精准覆盖关键决策与下一步，比放弃压缩（历史原样保留、迟早 overflow）更有价值。
+ *
+ * 50 是保守下限：过滤掉纯噪音短串（如"好的"/"继续"），同时不卡住真实但偏短的交接。
+ * 仍要过 validateSummary 的复述拦截——降级只放宽长度，不放过复述垃圾。
+ */
+const COMPACTION_DEGRADED_MIN_TOKENS = 50;
+
+/**
  * overflow 比例收缩比。
  * 摘要请求因输入太长触发 413 / context overflow 时，按此比例保留最近消息、
  * 丢弃更老消息，而不是直接 drop 一条——比例收缩对大输入更可控。
@@ -724,6 +738,8 @@ export async function fullCompact(
   // 而不是让垃圾摘要吞掉历史。不抛错是刻意的：loop.ts 调用点无 try/catch，抛错会掀翻整个回合。
   const olderTokens = estimateTokens(older);
   let summary: string | undefined;
+  // 降级素材：闸门"过短"失败时的候选，耗尽时若达门槛则接受为精简交接（不放弃压缩）
+  let lastShortCandidate: string | undefined;
   let olderForSummary: StoredMessage[] = older;
   let mediaStripAttempted = false;
   let overflowShrinkCount = 0;
@@ -823,6 +839,8 @@ export async function fullCompact(
         continue;
       }
       // 空白/过短：材料就在上方历史里，是摘要没写够。点明缺口与篇幅要求，原输入重试。
+      // 过短时留一份候选作降级素材：耗尽后若达门槛，接受为精简交接而非放弃压缩。
+      if (reason.includes('too short')) lastShortCandidate = candidate;
       gateHint =
         `\n\n注意：上一次产出的摘要被判不合格（${reason}）。这份笔记要独自接替上方整段历史：` +
         '执行过的确切命令、动过的文件路径、返回的关键结果、已定决策与待定问题、前向计划，都必须写实写够，' +
@@ -830,7 +848,22 @@ export async function fullCompact(
       continue;
     }
   }
-  // 尝试耗尽仍无合格摘要 → 放弃压缩，历史完整保留
+  // 尝试耗尽仍无合格摘要
+  if (summary === undefined) {
+    // 降级交接：3 次都因"过短"失败，但候选非空且达门槛时，接受为精简交接而非放弃压缩。
+    // 比放弃好——压缩生效（上下文下降），同时加标注让模型知道这次交接偏薄，不致误当完整交接。
+    // 仍要过 50 token 门槛 + 非空：纯噪音短串（"好的"/"继续"）仍拒。
+    // 复述候选不在此列——闸门已拒，且复述不记录进 lastShortCandidate。
+    if (lastShortCandidate !== undefined) {
+      const degraded = lastShortCandidate.trim();
+      if (degraded !== '' && estimateTextTokens(degraded) >= COMPACTION_DEGRADED_MIN_TOKENS) {
+        logError(
+          `[compaction] ${COMPACTION_MAX_RETRIES} 次均过短，降级接受精简交接（${estimateTextTokens(degraded)} tokens，未达质量标准但保留压缩）`,
+        );
+        summary = `[精简交接：以下摘要未达质量标准，关键信息如下]\n\n${degraded}`;
+      }
+    }
+  }
   if (summary === undefined) {
     logError(`[compaction] ${COMPACTION_MAX_RETRIES} 次尝试均未产出合格摘要，放弃本次压缩（历史原样保留）`);
     return messages;
