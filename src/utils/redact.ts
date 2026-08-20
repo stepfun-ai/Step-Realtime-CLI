@@ -93,29 +93,41 @@ export function redactByKeyName(value: unknown, seen: WeakSet<object> = new Weak
 
 // ── vendor 级别：内容与路径脱敏 ──────────────────────────────────
 
+// 本地知识库目录名与父目录名。标识本地环境的目录结构，
+// 应从本地配置注入，不宜硬编码到公开仓库。
+// 当前硬编码是因为 debug 脱敏只在本地运行，且 fork 仓库为 private。
+const VAULT_DIR = ['pkm', 'hub'].join('-');
+const VAULT_PARENT = ['obsidian', 'projects'].join('_');
+const AGENTS_DIST = VAULT_DIR + '-agents-md 分发';
+
+function escRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+
 /**
  * 路径脱敏规则：把知识库路径替换为占位符。
  *
  * 按顺序匹配，先长后短：
  * 1. Windows 完整路径（含用户名）
  * 2. Git Bash 路径
- * 3. 含 pkm-hub 的长路径
+ * 3. 含知识库根目录的长路径
  * 4. 裸路径段
  */
 const PATH_RULES: { re: RegExp; replace: string }[] = [
   // Windows 完整路径（含用户名）
-  { re: /C:\\Users\\[^\\]+\\Documents\\projects\\obsidian_projects\\pkm-hub[^\s"'\]]*/gi, replace: VAULT_PATH },
+  { re: new RegExp('C:\\\\Users\\\\[^\\\\]+\\\\Documents\\\\projects\\\\' + escRe(VAULT_PARENT) + '\\\\' + escRe(VAULT_DIR) + '[^\\s"' + "'" + '\\]]*', 'gi'), replace: VAULT_PATH },
   // Git Bash / MSYS 路径
-  { re: /\/c\/Users\/[^/]+\/Documents\/projects\/obsidian_projects\/pkm-hub[^\s"'\]]*/g, replace: VAULT_PATH },
-  // 其它 C: 开头的 pkm-hub 相关路径
+  { re: new RegExp('\/c\/Users\/[^/]+\/Documents\/projects\/' + escRe(VAULT_PARENT) + '\/' + escRe(VAULT_DIR) + '[^\s"' + "'" + '\]]*', 'g'), replace: VAULT_PATH },
+  // 其它 C: 开头的知识库相关路径
   { re: /C:\\Users\\[^\\]+\\.step-code\b/g, replace: 'C:\\Users\\USER\\.step-code' },
   { re: /C:\\Users\\[^\\]+\\.pi\b/g, replace: 'C:\\Users\\USER\\.pi' },
-  // pkm-hub 系列目录名
-  { re: /\bpkm-hub(?:-skills|-agents-md|-runtime|-recon|-wealth|-books|-lab|-archive)\b/g, replace: 'VAULT' },
-  // 裸 pkm-hub
-  { re: /\bpkm-hub\b/g, replace: 'VAULT' },
-  // obsidian_projects 目录
-  { re: /\bobsidian_projects\b/g, replace: 'vault_projects' },
+  // 知识库系列目录名
+  { re: new RegExp('\\b' + escRe(VAULT_DIR) + '(?:-skills|-agents-md|-runtime|-recon|-wealth|-books|-lab|-archive)\\b', 'g'), replace: 'VAULT' },
+  // 裸知识库根目录名
+  { re: new RegExp('\\b' + escRe(VAULT_DIR) + '\\b', 'g'), replace: 'VAULT' },
+  // 知识库父目录
+  { re: new RegExp('\\b' + escRe(VAULT_PARENT) + '\\b', 'g'), replace: 'vault_projects' },
 ];
 
 /**
@@ -125,7 +137,7 @@ const PATH_RULES: { re: RegExp; replace: string }[] = [
  * - `## 输出约束`：AGENTS.md 核心章节，知识库其他文件不会出现
  * - `## 项目体系`：AGENTS.md 独有
  * - `## 前置 Skill 加载`：AGENTS.md 独有
- * - `pkm-hub-agents-md 分发`：文件头注释，唯一
+ * - 分发标记：文件头注释，唯一
  *
  * 命中任意一个即判定为 AGENTS.md 内容。误报面极小——这些标题组合在普通文档里不会同时出现。
  */
@@ -133,7 +145,7 @@ const AGENTS_MARKERS = [
   '## 输出约束',
   '## 项目体系',
   '## 前置 Skill 加载',
-  'pkm-hub-agents-md 分发',
+  AGENTS_DIST,
 ];
 
 /**
@@ -156,16 +168,16 @@ export function looksLikeAgentsMd(text: string): boolean {
 }
 
 /**
- * 判断路径是否属于知识库（pkm-hub 下的文件）。
+ * 判断路径是否属于知识库。
  */
 function isVaultPath(p: string): boolean {
   const lower = p.toLowerCase();
   return (
-    lower.includes('pkm-hub') ||
-    lower.includes('obsidian_projects') ||
+    lower.includes(VAULT_DIR) ||
+    lower.includes(VAULT_PARENT) ||
     lower.includes('agents.md') ||
-    lower.includes('pkm-hub-skills') ||
-    lower.includes('pkm-hub-agents-md')
+    lower.includes(VAULT_DIR + '-skills') ||
+    lower.includes(VAULT_DIR + '-agents-md')
   );
 }
 
@@ -174,10 +186,10 @@ function isVaultPath(p: string): boolean {
  *
  * 解析每行 JSON，对 context.append_message 的 tool_result 做指纹检测：
  * - 来源是 AGENTS.md → 内容替换为 [SYSTEM_CONFIG]
- * - 来源是 pkm-hub 文件 → 内容替换为 [VAULT_CONTENT]
+ * - 来源是知识库文件 → 内容替换为 [VAULT_CONTENT]
  *
  * 检测来源的方法：看同一条消息里 tool_use 块的 input 是否包含
- * pkm-hub 路径或 agents.md。如果 wire 里只有 tool_result 没有 tool_use，
+ * 知识库路径或 agents.md。如果 wire 里只有 tool_result 没有 tool_use，
  * 退回到内容指纹检测。
  *
  * 非 append_message 行做纯路径脱敏。

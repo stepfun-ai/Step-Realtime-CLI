@@ -487,7 +487,7 @@ export class PiChat {
     this.editor.onCtrlO = () => this.openExpandViewer();
     // Ctrl+G 外部编辑器：把当前输入框内容丢进 $EDITOR 编辑，保存后回填。
     // busy 时也允许——编辑的是草稿，不碰在跑的回合。终端输入框写长 prompt 是痛点，
-    // Claude Code / Codex CLI 都具备。找不到编辑器时返回 false（不消费按键）。
+    // 主流 CLI 编辑器普遍提供此能力。找不到编辑器时返回 false（不消费按键）。
     this.editor.onCtrlG = () => this.openExternalEditor();
 
     // cron 装配：到点把 prompt 静默注入跑一轮；isIdle 闸门保证回合进行中不触发
