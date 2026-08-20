@@ -3174,10 +3174,11 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         text: extracted.imageCount > 0 ? `${extracted.displayText} [${extracted.imageCount} 张图]` : text,
       });
     }
-    this.history.push(
-      opts?.prepared ??
-        stored({ role: 'user', content: extracted.content }, { kind: opts?.silent === true ? 'injection' : 'user' }),
-    );
+    const userMsg = opts?.prepared ??
+      stored({ role: 'user', content: extracted.content }, { kind: opts?.silent === true ? 'injection' : 'user' });
+    this.history.push(userMsg);
+    // 用户输入立即持久化：防进程在模型响应期间闪退（OOM/未捕获异常）时输入丢失
+    this.appendWire({ type: 'context.append_message', ts: userMsg.ts, message: userMsg });
 
     this.busy = true;
     this.activity.setBusy(true);
