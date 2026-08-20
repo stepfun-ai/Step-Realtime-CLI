@@ -19,3 +19,5 @@ mcp-test-server/
 .DS_Store
 Thumbs.db
 .idea/
+design/
+test_file.txt

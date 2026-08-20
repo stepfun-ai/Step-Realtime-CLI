@@ -7,9 +7,9 @@ when_to_use: 用户想安装、构建、升级、卸载 Step Code，或安装过
 本 skill 只讲一件事：把 Step Code 装到能跑起来。功能怎么用不在这里，装完见仓库 `docs/`（中文 `docs/zh/`、英文 `docs/en/`）。
 
 > **四种安装方式，按需选择**：
-> - **单文件可执行**（无 Node 环境）：从 [Releases](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest) 下载对应平台产物，改名放进 PATH。
-> - **npm 装 Release tarball**（一条命令，推荐）：`npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code.tgz`，不编译不拉依赖，链接始终指向最新 Release。需 Node 22+。
-> - **npm 装源码分支**（跟最新主干）：`npm i -g github:stepfun-ai/Step-Realtime-CLI#step-code-explore-pi，约 1 分钟，本机编译。需 Node 22+。
+> - **单文件可执行**（无 Node 环境）：从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest) 下载对应平台产物，改名放进 PATH。
+> - **npm 装 Release tarball**（一条命令，推荐）：`npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz`，不编译不拉依赖，链接始终指向最新 Release。需 Node 22+。
+> - **npm 装源码分支**（跟最新主干）：`npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore-pi，约 1 分钟，本机编译。需 Node 22+。
 > - **从源码安装**（参与开发）：clone + `pnpm install && pnpm build && pnpm link --global`。需 Node 22+ 与 pnpm。
 >
 > 详细步骤与故障排查见下方各节。
@@ -35,13 +35,13 @@ Node 版本不够时，用版本管理器装 22（如 fnm、nvm、Volta），不
 
 ### 单文件可执行（无需 Node 环境）
 
-从 [Releases](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest) 下载对应平台产物（链接始终指向最新 Release）：
+从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest) 下载对应平台产物（链接始终指向最新 Release）：
 
 | 平台 | 下载 |
 |------|------|
-| Windows x64 | [step-code-win32-x64.exe](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code-win32-x64.exe) |
-| macOS Apple Silicon | [step-code-darwin-arm64](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code-darwin-arm64) |
-| Linux x64 | [step-code-linux-x64](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code-linux-x64) |
+| Windows x64 | [step-code-win32-x64.exe](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-win32-x64.exe) |
+| macOS Apple Silicon | [step-code-darwin-arm64](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-darwin-arm64) |
+| Linux x64 | [step-code-linux-x64](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-linux-x64) |
 
 每个产物附带同名 `.sha256` 校验文件（同路径加 `.sha256` 后缀）。下载后重命名为 `step`（Windows 为 `step.exe`）放进 PATH 即可。
 
@@ -58,7 +58,7 @@ xattr -d com.apple.quarantine step 2>/dev/null || true
 一条命令装最新版（永久链接，始终解析到最新 Release 的 tarball）：
 
 ```bash
-npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code.tgz
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz
 step --version
 ```
 
@@ -67,7 +67,7 @@ tarball 内含预编译的 `dist/`，`npm i -g <url>` 只解包并链接 `bin.st
 要锁定某个版本、可复现安装时，把 URL 换成该 tag 的带版本号资产，例如：
 
 ```bash
-npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/download/v0.1.2/step-code-0.1.2.tgz
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.2/step-code-0.1.2.tgz
 ```
 
 ### npm 装源码分支（跟随最新主干）
@@ -75,7 +75,7 @@ npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/download/v0.1.
 直接从开发分支装，拿到的是当下最新代码：
 
 ```bash
-npm i -g github:stepfun-ai/Step-Realtime-CLI#step-code-explore
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore-pi
 step --version
 ```
 
@@ -88,7 +88,7 @@ npm 会先克隆仓库、安装构建依赖，再通过 `prepare` 钩子在本�
 要改代码、跑测试、参与开发时走这条。它给的是完整开发环境，`step` 命令来自软链接，改完重新构建即时生效：
 
 ```bash
-git clone -b step-code-explore-pihttps://github.com/stepfun-ai/Step-Realtime-CLI.git
+git clone -b step-code-explore-pi https://github.com/li-xiu-qi/Step-Realtime-CLI.git
 cd Step-Realtime-CLI
 pnpm install
 pnpm build        # tsc 编译到 dist/
@@ -168,8 +168,8 @@ step doctor config      # 校验 ~/.step-code/config.toml，退出码 0 通过�
 重新执行原来那条安装命令，npm 会重新解析 URL 或 git 引用并覆盖安装：
 
 ```bash
-npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code.tgz  # 最新 Release tarball
-npm i -g github:stepfun-ai/Step-Realtime-CLI#step-code-explore-pi                                  # 源码分支
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz  # 最新 Release tarball
+npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore-pi                                  # 源码分支
 ```
 
 `npm update -g step-code` 对这几种形态不生效——它面向 registry 包，而这里的来源是 git 引用或 URL。

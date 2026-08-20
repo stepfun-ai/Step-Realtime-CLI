@@ -36,12 +36,12 @@ Step Code 是一个终端编码 agent CLI，核心是一个 agent 主循环：�
 需要 Node.js >= 22（用单文件可执行版则不需要 Node）。
 
 ```bash
-npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code.tgz
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz
 export STEP_CODE_API_KEY=<your-key>
 step
 ```
 
-装的是预编译好的包，不在本机编译、不拉依赖；链接始终指向最新 Release。不想装 Node 就从 [Releases](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest) 下对应平台的单文件可执行（Windows / macOS / Linux）；要改代码请走源码安装。
+装的是预编译好的包，不在本机编译、不拉依赖；链接始终指向最新 Release。不想装 Node 就从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest) 下对应平台的单文件可执行（Windows / macOS / Linux）；要改代码请走源码安装。
 
 更细的安装与配置见[快速开始](./docs/zh/quickstart.md)，四种安装方式的取舍见[安装](./docs/zh/installation.md)。
 

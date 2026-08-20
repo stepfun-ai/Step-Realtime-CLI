@@ -12,10 +12,10 @@ By the end of this page you will have installed step-code, configured an API key
 The fastest path (requires Node.js >= 22):
 
 ```bash
-npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code.tgz
+npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz
 ```
 
-This installs a pre-built package: nothing is compiled locally and no dependencies are fetched, and the link always points to the latest Release. Without a Node environment, download the standalone executable for your platform from [Releases](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest). To contribute, clone the repository and build it yourself:
+This installs a pre-built package: nothing is compiled locally and no dependencies are fetched, and the link always points to the latest Release. Without a Node environment, download the standalone executable for your platform from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest). To contribute, clone the repository and build it yourself:
 
 ```bash
 git clone https://github.com/stepfun-ai/Step-Realtime-CLI.git
