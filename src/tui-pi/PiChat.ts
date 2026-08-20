@@ -2352,7 +2352,11 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.transcript.reset(items);
     this.syncStatus();
     this.syncTerminalTitle();
-    this.tui.requestRender();
+    // 与 /clear、resumeSession 对齐：newSession 也走 invalidate + renderNow，
+    // 否则只 requestRender 的话，pi-tui 差分渲染可能判定「无变化」跳过重绘，
+    // 导致新会话的 welcome 块不显示（2026-08-19 用户报告）。
+    this.tui.invalidate();
+    this.tui.renderNow(true);
   }
 
   /** 从当前最新点整会话复制：新 id + forkedFrom 记谱系，源会话不动。 */
@@ -2477,12 +2481,13 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
    * - 新会话 create 的任务被打上陈旧 sessionId，下次启动按新 sessionId 过滤加载不到。
    * rebindSession 清空内存表并换 sessionId，再 restore 只装回本会话自己的任务。
    */
-  private reloadCron(): void {
+  private reloadCron(): number {
     this.cron.rebindSession(this.session.id);
     const allJobs = this.cronStore.load(this.deps.ctx.cwd);
     const myJobs = allJobs.filter((j) => j.sessionId === this.session.id);
     const staleIds = this.cron.restore(myJobs);
     for (const id of staleIds) void this.cronStore.remove(this.deps.ctx.cwd, id);
+    return myJobs.length;
   }
 
   /**
@@ -2781,7 +2786,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // 队列跟着目标会话走：当前会话排着的队属于旧现场，切过去要换成目标会话自己的。
     // 直接赋值不落 wire 事件——此刻 this.session 已经是新会话，落事件会把「恢复」这个
     // 读取动作记成新会话的一次队列变更。
-    this.queue = [...(data.queue ?? [])];
+    const restoredQueue = [...(data.queue ?? [])];
+    this.queue = restoredQueue;
     this.notifyPrepared.clear();
     // goal 与 team 跟着目标会话恢复。active goal 会被 restore 降级为 paused：
     // 切过来的瞬间不该自动跑起来，要用户确认后 /goal resume。
@@ -2801,12 +2807,17 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     // 上一个会话的任务目录（这里原先只有下面那句对账，注释写着「换绑后」而实际没换过）。
     this.rebindBackground();
     // cron 跟着目标会话走：旧会话的任务属旧现场，必须清空重装本会话自己的（同 newSession）。
-    this.reloadCron();
+    const restoredCronCount = this.reloadCron();
     // 换绑后立刻对账：这批任务的 onSettle 属于上个会话，本会话从未触发过。
     // 切会话即换了 delivered 集合的作用域，内存里那份属于旧会话，清掉重来。
     this.deliveredWritten = new Set(r.deliveredNotifications);
     this.reconcileBackground(this.deliveredWritten);
     const replay = historyToDisplayItems(data.messages);
+    // 恢复感知：告诉用户 resume 后挂了多少队列消息与定时任务——此前静默换绑，用户根本不知道
+    const restoredParts: string[] = [];
+    if (restoredQueue.length > 0) restoredParts.push(`${restoredQueue.length} 条排队消息`);
+    if (restoredCronCount > 0) restoredParts.push(`${restoredCronCount} 个定时任务`);
+    const restoredHint = restoredParts.length > 0 ? `\n恢复了${restoredParts.join('、')}（切走后保留，回来继续）` : '';
     this.transcript.reset(
       [
         ...replay.items,
@@ -2815,7 +2826,8 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
           text:
             `已切换到会话 ${data.id}（${replay.totalTurns} 轮 / ${data.messages.length} 条消息）` +
             (resumedGoal !== null ? `
-该会话有目标「${resumedGoal.objective}」，已暂停，用 /goal resume 继续` : ''),
+该会话有目标「${resumedGoal.objective}」，已暂停，用 /goal resume 继续` : '') +
+            restoredHint,
         },
       ],
       replay.foldedTurns,
