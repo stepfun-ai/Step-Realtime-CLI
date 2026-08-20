@@ -115,14 +115,14 @@ describe('③ PiChat 接线断言', () => {
     expect(submit).toContain('subagentBrowsing');
   });
 
-  it('pickSubagent 选中回调调 browseSubagentSession', () => {
-    const pick = piChatSrc.slice(piChatSrc.indexOf('private async pickSubagent'), piChatSrc.indexOf('private async pickSubagent') + 2000);
-    expect(pick).toContain('browseSubagentSession');
-  });
-
   it('/resume 的 sub: 分支调 browseSubagentSession', () => {
     const subBranch = piChatSrc.slice(piChatSrc.indexOf("picked.startsWith('sub:')"), piChatSrc.indexOf("picked.startsWith('sub:')") + 200);
     expect(subBranch).toContain('browseSubagentSession');
+  });
+
+  it('/agents 路由调 openAgentsOverlay', () => {
+    const agents = piChatSrc.slice(piChatSrc.indexOf("case 'agents'"), piChatSrc.indexOf("case 'agents'") + 100);
+    expect(agents).toContain('openAgentsOverlay');
   });
 
   it('browseSubagentSession 用 subagentStore.loadFull 且不改 session/history', () => {
