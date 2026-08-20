@@ -1,0 +1,193 @@
+name: Release
+
+# 打 tag 即发布：三端 SEA 可执行文件 + npm tarball 上传到 GitHub Release，
+# tarball 同时附一份不带版本号的固定名资产，供 releases/latest/download/ 永久链接消费。
+# 全程只用 GITHUB_TOKEN，不涉及 npm registry。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # 忘了 bump 版本号就打 tag 是个真实会犯的错：产物与分发分支都会带旧版本号，用户装完
+  # `step --version` 与 Release 名对不上。这一步让它直接发不出去，不靠人工核对清单。
+  guard:
+    name: Tag matches package version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag against package.json
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "tag=${GITHUB_REF_NAME} (去 v 前缀: ${TAG})  package.json=${PKG}"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} 与 package.json 的 version ${PKG} 不一致，先 bump 版本号再打 tag"
+            exit 1
+          fi
+
+  sea:
+    name: SEA (${{ matrix.target }})
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win32-x64
+            asset: step-code-win32-x64.exe
+          - os: macos-latest
+            target: darwin-arm64
+            asset: step-code-darwin-arm64
+          - os: ubuntu-latest
+            target: linux-x64
+            asset: step-code-linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # ESM 入口的 SEA 需要 Node >= 25.7。构建脚本自带下载兜底，但让 runner 直接装够新的
+      # 版本更快，也少一次网络往返。
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SEA
+        run: pnpm run build:sea
+
+      # 三端都用 bash 跑同一条命令：产物起不来的话，别让它进 Release
+      - name: Smoke test
+        shell: bash
+        run: ./dist-sea/${{ matrix.asset }} --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sea-${{ matrix.target }}
+          path: |
+            dist-sea/${{ matrix.asset }}
+            dist-sea/${{ matrix.asset }}.sha256
+          if-no-files-found: error
+
+  tarball:
+    name: npm tarball
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # npm pack 会触发 prepack 再编译一次，确保 tarball 里的 dist/ 与本次 tag 对应
+      - name: Pack
+        run: npm pack
+
+      - name: Checksum
+        run: sha256sum step-code-*.tgz > "$(ls step-code-*.tgz).sha256"
+
+      # 额外复制一份不带版本号的固定名资产，让
+      # releases/latest/download/step-code.tgz 成为永久安装链接，
+      # 文档与安装脚本不必随版本号逐个更新。
+      - name: Stable-name copy for latest/download permalink
+        run: |
+          cp "$(ls step-code-*.tgz)" step-code.tgz
+          cp "$(ls step-code-*.tgz).sha256" step-code.tgz.sha256
+
+      # 装一遍自己打出来的包：tarball 里缺 dist/ 或 bin 指向错误都会在这里暴露
+      - name: Verify tarball installs
+        run: |
+          npm i -g ./"$(ls step-code-*.tgz)"
+          step --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: |
+            step-code-*.tgz
+            step-code-*.tgz.sha256
+            step-code.tgz
+            step-code.tgz.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [sea, tarball]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compose release notes
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          TGZ="$(cd artifacts && ls step-code-*.tgz)"
+          cat > notes.md <<EOF
+          ## 安装
+
+          ### 单文件可执行（无需 Node 环境）
+
+          下载对应平台的产物，重命名为 \`step\`（Windows 为 \`step.exe\`）后放进 PATH：
+
+          | 平台 | 产物 |
+          |------|------|
+          | Windows x64 | \`step-code-win32-x64.exe\` |
+          | macOS Apple Silicon | \`step-code-darwin-arm64\` |
+          | Linux x64 | \`step-code-linux-x64\` |
+
+          每个产物附带同名 \`.sha256\` 校验文件。macOS 与 Linux 产物下载后需要 \`chmod +x\`。
+
+          ### npm（需要 Node 22+）
+
+          \`\`\`bash
+          # latest/download 永久链接：始终装最新 Release 的 tarball，不随版本号失效
+          npm i -g https://github.com/${REPO}/releases/latest/download/step-code.tgz
+
+          # 或锁定本次发布的 tarball
+          npm i -g https://github.com/${REPO}/releases/download/${TAG}/${TGZ}
+          \`\`\`
+
+          安装后执行 \`step --version\` 确认。
+          EOF
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md artifacts/*
+          fi

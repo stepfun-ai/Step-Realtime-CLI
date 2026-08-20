@@ -1,7 +1,23 @@
-node_modules
-dist
-.env
+node_modules/
+dist/
+dist-bundle/
+dist-sea/
+dist-branch/
 *.log
+
+# 环境变量（保留示例文件）
+.env
+.env.*
+!.env.example
+
+# 运行时与本地数据
+.step-code/
+.codegraph/
+mcp-test-server/
+
+# 系统与编辑器
 .DS_Store
-coverage/
-.claude/
+Thumbs.db
+.idea/
+design/
+test_file.txt

@@ -1,0 +1,41 @@
+diff --git a/dist/utils.js b/dist/utils.js
+index 9621f90fa35d800a46107274853c71bbc8c654f6..9588f6598d8046e34164db0fec0a65f4974af382 100644
+--- a/dist/utils.js
++++ b/dist/utils.js
+@@ -42,6 +42,8 @@ const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
+ // Cache for non-ASCII strings
+ const WIDTH_CACHE_SIZE = 512;
+ const widthCache = new Map();
++// 单个 key 的最大长度：超过就不缓存（见下方 widthCache.set 处的说明）。
++const WIDTH_CACHE_MAX_KEY_LENGTH = 512;
+ export const cjkBreakRegex = /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}]/u;
+ function isPrintableAscii(str) {
+     for (let i = 0; i < str.length; i++) {
+@@ -248,7 +250,26 @@ export function visibleWidth(str) {
+             widthCache.delete(firstKey);
+         }
+     }
+-    widthCache.set(str, width);
++    // step-code-pi 补丁（2026-08-16 / 2026-08-17 第二轮）：只缓存短字符串，且缓存前复制 key。
++    //
++    // 第一轮（长度上限）：原实现把整份文本作为 key 存进这个 512 条 LRU。流式渲染时每帧的
++    // 文本都是新版本，于是 512 条各钉住一份完整的历史文本——占用 = 512 x 文本大小，与帧数
++    // 无关。实测：一段 27K 字符的文本流式渲染 2100 帧，堆增长 20.6MB 且线性上升。
++    // 长文本在这里的缓存命中率为零（内容每帧都变），不缓存它没有性能损失：同一场景实测
++    // 16291ms → 16306ms（+0.09%），堆增长 20.6MB → 0.3MB。
++    //
++    // 第二轮（复制 key）：只加长度上限**不足以**止血——2026-08-17 打了补丁的版本仍然 4GB
++    // 崩溃，8.8 分钟、3 轮对话、零后台任务。原因是 V8 的 `slice()` 产出 SlicedString，
++    // 它持有父串指针。调用方从一份多 MB 的累积文本里切出 76 字符的尾部预览，这个短 key
++    // 顺利通过上面的长度检查、被收进缓存，却拖着整份父串不放。512 条各拖一份不同版本的
++    // 父串，照样是 GB 级。实测复刻：1.2M 字符的累积文本 + 512 条 LRU = 677MB。
++    //
++    // 复制成独立扁平串即断开父串引用。key 长度已被上面限到 512 以内，复制成本可忽略，
++    // 而它是**通用防御**：调用方任何位置从长串里切短串都不会再泄漏，不必逐个站点去找。
++    // 实测：677MB → 0.11MB。
++    if (str.length <= WIDTH_CACHE_MAX_KEY_LENGTH) {
++        widthCache.set(str.split("").join(""), width);
++    }
+     return width;
+ }
+ /** Remove ANSI, OSC, and APC control sequences while preserving visible text. */
