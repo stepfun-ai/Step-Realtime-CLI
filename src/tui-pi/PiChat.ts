@@ -3430,7 +3430,9 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         if (ev.name === 'spawn_agent') {
           const inp = ev.input as Record<string, unknown> | null;
           if (inp !== null) {
-            const st = typeof inp.subagent_type === 'string' ? inp.subagent_type : undefined;
+            // 模型省略 subagent_type 时默认 'general'（与 spawnAgent 工具实现同款默认），
+            // 否则卡片没有类型标识，用户分不清 explore/general。
+            const st = typeof inp.subagent_type === 'string' ? inp.subagent_type : 'general';
             const desc = typeof inp.description === 'string' ? inp.description : undefined;
             if (st !== undefined || desc !== undefined) {
               toolItem.subagentType = st;

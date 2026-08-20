@@ -61,8 +61,8 @@ const zh = {
   'question.counter': '(第 {index}/{total} 题) ',
   'question.multiHint': '（空格多选）',
   'question.otherPlaceholder': '自己写一个答案',
-  'question.hint': '↑↓ 移动 · Enter 确认 · Esc 取消',
-  'question.hintMulti': '↑↓ 移动 · Enter 确认 · ←→ 切题 · Esc 取消',
+  'question.hint': '↑↓ 移动 · 数字键直选 · Enter 确认 · Esc 取消',
+  'question.hintMulti': '↑↓ 移动 · ←→ 切题 · 数字键直选 · Enter 确认 · Esc 取消',
 
 
   // --- 底部输入框（PromptInput）---
@@ -854,8 +854,8 @@ const en: Record<keyof typeof zh, string> = {
   'question.counter': '(Question {index}/{total}) ',
   'question.multiHint': '(Space to multi-select)',
   'question.otherPlaceholder': 'Write your own answer',
-  'question.hint': '↑↓ move · Enter confirm · Esc cancel',
-  'question.hintMulti': '↑↓ move · Enter confirm · ←→ switch question · Esc cancel',
+  'question.hint': '↑↓ move · number keys select · Enter confirm · Esc cancel',
+  'question.hintMulti': '↑↓ move · ←→ switch question · number keys select · Enter confirm · Esc cancel',
 
   // --- 选项基类（ChoiceBlock）---
   'choice.hint': '↑↓ select · Enter confirm · number keys direct · Esc cancel',

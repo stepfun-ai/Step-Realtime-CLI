@@ -310,6 +310,23 @@ export class QuestionPrompt {
       this.requestRender();
       return;
     }
+    // 数字键 1-9 直选实选项（对齐 ink 版）：单选直选=确认，多选直选=切换勾选
+    if (/^[1-9]$/.test(data)) {
+      const n = Number(data) - 1;
+      const optionCount = q.options.length;
+      if (n < optionCount) {
+        if (q.multi_select === true) {
+          if (slot.checked.has(n)) slot.checked.delete(n);
+          else slot.checked.add(n);
+          slot.cursor = n;
+        } else {
+          slot.cursor = n;
+          this.commitAndAdvance();
+        }
+        this.requestRender();
+      }
+      return;
+    }
     if (matchesKey(data, 'enter')) {
       this.commitAndAdvance();
       return;
@@ -385,17 +402,6 @@ export class QuestionPrompt {
       else slot.checked.add(slot.cursor);
       this.requestRender();
       return;
-    }
-    const digit = Number(data);
-    if (Number.isInteger(digit) && digit >= 1 && digit <= q.options.length) {
-      slot.cursor = digit - 1;
-      if (q.multi_select === true) {
-        if (slot.checked.has(slot.cursor)) slot.checked.delete(slot.cursor);
-        else slot.checked.add(slot.cursor);
-        this.requestRender();
-      } else {
-        this.commitAndAdvance();
-      }
     }
   }
 
