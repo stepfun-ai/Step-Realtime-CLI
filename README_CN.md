@@ -45,7 +45,7 @@ step
 
 更细的安装与配置见[快速开始](./docs/zh/quickstart.md)，四种安装方式的取舍见[安装](./docs/zh/installation.md)。
 
-如果你手上已经有别的 AI agent（Claude Code、Kimi 等），仓库里的 [`skills/step-code-install/`](./skills/step-code-install/SKILL.md) 是一份安装说明技能：clone 后让你的 agent 读它，它就知道怎么装、怎么配 key、装不上时怎么排查。
+如果你手上已经有别的 AI agent，仓库里的 [`skills/step-code-install/`](./skills/step-code-install/SKILL.md) 是一份安装说明技能：clone 后让你的 agent 读它，它就知道怎么装、怎么配 key、装不上时怎么排查。
 
 ## 文档
 

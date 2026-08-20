@@ -8,7 +8,7 @@ import type { AgentEvent } from '../agent/events.js';
  *
  * 为什么值得：流式输出时模型每吐一个 delta 就是一条 text 事件，一事件一重绘在 CPU 与
  * 终端 I/O 上都很贵（长输出时重绘次数 = delta 数）。合帧后重绘次数与 delta 数解耦，
- * 固定在 ~20 次/秒。参考主流 CLI 的 50ms flush 间隔。
+ * 固定在 ~20 次/秒（50ms flush 间隔）。
  *
  * 正确性三件事：
  * 1. 最后一帧不丢——turn_done / error / drain() 三处强制 flush，循环结束必落屏；

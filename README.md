@@ -4,24 +4,15 @@
 </p>
 
 > [!IMPORTANT]
-> **step-code-pi 是 pi 探索专用副本（私有本地实验仓）。**
-> 本仓从 `step-code` 复制而来（2026-08-13，建仓基线 commit `12af693`；已同步至主仓 `fed85fb`，2026-08-16），
-> git remote 已摘除，不对外发布。
-> 唯一目的：把 UI 层从 Ink 整体替换为 [pi-tui](https://github.com/earendil-works/pi)
-> （差分渲染、非 React），验证其能否承载全部 TUI 需求。迁移设计归档在内部设计仓。
-> 除 `src/tui-pi/`、`src/cli.ts`、`package.json` 外的代码与主仓保持同源，
-> 改动以实验结论为限，不回流代码、只回流结论。
+> **Unofficial — a community-driven exploration.** Step Code Pi is a CLI explored independently by community contributors.
 
-> [!IMPORTANT]
-> **Unofficial — a community-driven exploration.** Step Code is a CLI explored independently by community contributors.
+# Step Code Pi
 
-# Step Code
-
-[![CI](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml/badge.svg?branch=step-code-explore)](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml)
+[![CI](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml/badge.svg?branch=step-code-pi-explore)](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml)
 
 A terminal coding agent CLI, with StepFun's **Step model family** as the primary target and **pi-tui** for the UI. The model layer speaks three protocols—Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses—so any compatible provider works out of the box; Step is the best-tested and default path.
 
-> This repository is the `step-code-explore` exploration branch of [stepfun-ai/Step-Realtime-CLI](https://github.com/stepfun-ai/Step-Realtime-CLI).
+> This repository is the `step-code-explore-pi` exploration branch of [stepfun-ai/Step-Realtime-CLI](https://github.com/stepfun-ai/Step-Realtime-CLI).
 
 ## What it is
 
@@ -54,7 +45,7 @@ That installs a pre-built package: nothing is compiled locally and no dependenci
 
 See [Quick start](./docs/en/quickstart.md) for installation and configuration details, and [Installation](./docs/en/installation.md) for the trade-offs between the four installation methods.
 
-If you already have another AI agent at hand (Claude Code, Kimi, and so on), [`skills/step-code-install/`](./skills/step-code-install/SKILL.md) is an install-instructions skill: clone the repo, point your agent at it, and it will know how to build, where to put the API key, and what to check when the build fails.
+If you already have another AI agent at hand, [`skills/step-code-install/`](./skills/step-code-install/SKILL.md) is an install-instructions skill: clone the repo, point your agent at it, and it will know how to build, where to put the API key, and what to check when the build fails.
 
 ## Documentation
 

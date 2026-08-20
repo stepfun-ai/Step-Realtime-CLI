@@ -492,8 +492,7 @@ export async function* runTurn(
       // 吐字后断连（emittedText）：同样整轮重试。partial 正文只在 UI 的 DisplayItem，
       // 未落盘 messages（见下方 messages.push 仅在流成功后执行），故重发不会造成历史重复。
       // UI 侧靠 retry 事件的 boundary note 隔离：重试后正文另开 assistant 条目，不续接残文。
-      // 这与主流 CLI 的「丢弃 partial 整轮重试」一致——流式单向、partial 无法原子回滚，
-      // 业界普遍不做断点续写，整轮丢弃重试是标准做法。
+      // 流式单向、partial 无法原子回滚，整轮丢弃重试。
       const delay = computeRetryDelay(attempt, e);
       yield {
         type: 'retry',

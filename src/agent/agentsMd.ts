@@ -15,7 +15,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
-/** AGENTS.md 默认总字节预算（按 UTF-8 字节数计）；与同类 CLI agent 的通行默认值一致 */
+/** AGENTS.md 默认总字节预算（按 UTF-8 字节数计） */
 export const DEFAULT_AGENTS_MD_BUDGET_BYTES = 32 * 1024;
 
 /** 截断后在末尾追加的省略标记 */
