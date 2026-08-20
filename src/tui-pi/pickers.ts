@@ -196,7 +196,7 @@ export class PickerOverlay implements Component {
       this.applyFilter();
       return;
     }
-    // 可打印字符进过滤串；空格也进（支持 "kimi flash" 这种多词 AND 过滤）
+    // 可打印字符进过滤串；空格也进（支持 "step flash" 这种多词 AND 过滤）
     if (data.length === 1 && data.charCodeAt(0) >= 32 && !data.startsWith('\x1b')) {
       this.filter += data;
       this.applyFilter();

@@ -26,13 +26,13 @@ All artifacts are hosted on GitHub Releases; they do not go through the npm publ
 
 ## Standalone executable (no Node required)
 
-Download the platform-specific artifact from [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest) (these links always point to the latest Release):
+Download the platform-specific artifact from [Releases](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest) (these links always point to the latest Release):
 
 | Platform | Download |
 |----------|----------|
-| Windows x64 | [step-code-win32-x64.exe](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-win32-x64.exe) |
-| macOS Apple Silicon | [step-code-darwin-arm64](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-darwin-arm64) |
-| Linux x64 | [step-code-linux-x64](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code-linux-x64) |
+| Windows x64 | [step-code-win32-x64.exe](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code-win32-x64.exe) |
+| macOS Apple Silicon | [step-code-darwin-arm64](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code-darwin-arm64) |
+| Linux x64 | [step-code-linux-x64](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code-linux-x64) |
 
 Each artifact comes with a same-name `.sha256` checksum file (append `.sha256` to the same path). After downloading, rename it to `step` (or `step.exe` on Windows) and place it on your PATH.
 
@@ -49,7 +49,7 @@ xattr -d com.apple.quarantine step 2>/dev/null || true
 One command installs the latest version (a permalink that always resolves to the latest Release's tarball):
 
 ```bash
-npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz
+npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code.tgz
 step --version
 ```
 
@@ -58,7 +58,7 @@ The tarball includes a pre-built `dist/`. `npm i -g <url>` only unpacks it and l
 To pin a specific version for reproducible installs, use that tag's versioned asset instead, e.g.:
 
 ```bash
-npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.2/step-code-0.1.2.tgz
+npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/download/v0.1.2/step-code-0.1.2.tgz
 ```
 
 ## npm install source branch (follow main)
@@ -66,7 +66,7 @@ npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/download/v0.1.2
 Install directly from the development branch to get the latest code at the moment:
 
 ```bash
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore
+npm i -g github:stepfun-ai/Step-Realtime-CLI#step-code-explore
 step --version
 ```
 
@@ -76,10 +76,10 @@ This path resolves dependencies via npm's own logic, not the repository's pnpm l
 
 ## Install from source
 
-The current `step-code-explore` branch is iterating quickly, and releases may not catch up to the latest code. To get the newest features, build from source:
+The current `step-code-explore-pi branch is iterating quickly, and releases may not catch up to the latest code. To get the newest features, build from source:
 
 ```bash
-git clone -b step-code-explore https://github.com/li-xiu-qi/Step-Realtime-CLI.git
+git clone -b step-code-explore-pihttps://github.com/stepfun-ai/Step-Realtime-CLI.git
 cd Step-Realtime-CLI
 pnpm install
 pnpm build        # tsc compiles to dist/
@@ -117,8 +117,8 @@ Download the new version and overwrite the file in place.
 Re-run the original install command; npm re-resolves the URL or git reference and overwrites the existing installation:
 
 ```bash
-npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz  # latest Release tarball
-npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore                                   # source branch
+npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code.tgz  # latest Release tarball
+npm i -g github:stepfun-ai/Step-Realtime-CLI#step-code-explore-pi                                  # source branch
 ```
 
 `npm update -g step-code` does not work for these variants—it targets registry packages, while the sources here are git references or URLs.
@@ -128,7 +128,7 @@ npm i -g github:li-xiu-qi/Step-Realtime-CLI#step-code-explore                   
 Source installs are symlink installs. Pull the latest code and rebuild; there is no need to link again. Make sure you are on the recommended branch:
 
 ```bash
-git checkout step-code-explore    # confirm you are on the recommended branch
+git checkout step-code-explore-pi   # confirm you are on the recommended branch
 git pull
 pnpm install    # when dependencies have changed
 pnpm build

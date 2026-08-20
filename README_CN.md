@@ -8,11 +8,11 @@
 
 # Step Code
 
-[![CI](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml/badge.svg?branch=step-code-explore)](https://github.com/li-xiu-qi/Step-Realtime-CLI/actions/workflows/test.yml)
+[![CI](https://github.com/stepfun-ai/Step-Realtime-CLI/actions/workflows/test.yml/badge.svg?branch=step-code-explore-pi](https://github.com/stepfun-ai/Step-Realtime-CLI/actions/workflows/test.yml)
 
 终端里的编码 agent CLI，阶跃星辰 **Step 系列模型**为主要适配目标，UI 层用 **pi-tui**。模型接入层支持三种协议（Anthropic Messages、OpenAI Chat Completions、OpenAI Responses），任何兼容的模型都能直接接入；Step 是默认且经过最充分验证的目标。
 
-> 本仓库是 [stepfun-ai/Step-Realtime-CLI](https://github.com/stepfun-ai/Step-Realtime-CLI) 的 `step-code-explore` 探索分支。
+> 本仓库是 [stepfun-ai/Step-Realtime-CLI](https://github.com/stepfun-ai/Step-Realtime-CLI) 的 `step-code-explore-pi 探索分支。
 
 ## 它是什么
 
@@ -36,12 +36,12 @@ Step Code 是一个终端编码 agent CLI，核心是一个 agent 主循环：�
 需要 Node.js >= 22（用单文件可执行版则不需要 Node）。
 
 ```bash
-npm i -g https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest/download/step-code.tgz
+npm i -g https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest/download/step-code.tgz
 export STEP_CODE_API_KEY=<your-key>
 step
 ```
 
-装的是预编译好的包，不在本机编译、不拉依赖；链接始终指向最新 Release。不想装 Node 就从 [Releases](https://github.com/li-xiu-qi/Step-Realtime-CLI/releases/latest) 下对应平台的单文件可执行（Windows / macOS / Linux）；要改代码请走源码安装。
+装的是预编译好的包，不在本机编译、不拉依赖；链接始终指向最新 Release。不想装 Node 就从 [Releases](https://github.com/stepfun-ai/Step-Realtime-CLI/releases/latest) 下对应平台的单文件可执行（Windows / macOS / Linux）；要改代码请走源码安装。
 
 更细的安装与配置见[快速开始](./docs/zh/quickstart.md)，四种安装方式的取舍见[安装](./docs/zh/installation.md)。
 
