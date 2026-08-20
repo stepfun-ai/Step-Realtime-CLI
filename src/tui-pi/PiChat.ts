@@ -105,6 +105,7 @@ import { ActivityLine, StatusLine } from './StatusLine.js';
 import { Transcript } from './Transcript.js';
 import { ChromePanels } from './ChromePanels.js';
 import { TasksOverlay } from './TasksOverlay.js';
+import { AgentsOverlay } from './AgentsOverlay.js';
 import { openProviderManager, runProviderWizard } from './ProviderManager.js';
 import { allTodosDone } from '../chat/chromePanels.js';
 import { ItemBlock, summarizeInput } from './blocks.js';
@@ -733,6 +734,37 @@ export class PiChat {
           text: `任务 ${task.id}（${task.status}）输出：
 ${task.output === '' ? '（暂无输出）' : task.output}`,
         });
+      },
+      requestRender: () => this.tui.requestRender(),
+      onClose: () => {
+        handle.hide();
+        this.overlayNeedsTick = false;
+        this.tui.setFocus(this.editor);
+        this.tui.requestRender();
+      },
+    });
+    const handle = this.tui.showOverlay(overlay, { width: '90%', maxHeight: '80%', anchor: 'center' });
+    handle.focus();
+    this.overlayNeedsTick = true;
+    this.tui.requestRender();
+  }
+
+  /**
+   * ④ `/agents` 分组面板：当前会话派生的子 agent 总览。
+   *
+   * 数据源：SubagentStore.list 过滤 parentId === 当前会话 id。运行中子 agent 靠 runner
+   * 每轮 saveSnapshot 刷新索引，延迟 ≤ 1 轮。选中后进 browseSubagentSession（只读浏览）。
+   */
+  private openAgentsOverlay(): void {
+    if (this.promptActive) return;
+    const sessionId = this.session.id;
+    const overlay = new AgentsOverlay({
+      getAgents: () => this.deps.subagentStore.list(this.deps.ctx.cwd).filter((m) => m.parentId === sessionId),
+      onBrowse: (id) => {
+        handle.hide();
+        this.overlayNeedsTick = false;
+        this.tui.setFocus(this.editor);
+        this.browseSubagentSession(id);
       },
       requestRender: () => this.tui.requestRender(),
       onClose: () => {
@@ -1493,7 +1525,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         return;
 
       case 'agents':
-        await this.pickSubagent();
+        this.openAgentsOverlay();
         return;
 
       case 'reflect':
@@ -2086,31 +2118,6 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     this.subagentBrowsing = null;
     this.tui.requestRender();
     this.push({ kind: 'note', text: '已退出子 agent 浏览，返回主会话' });
-  }
-
-  /**
-   * /agents：列出当前会话派生的子 agent 会话。
-   *
-   * 这一步只给摘要与进入方式：把子会话历史铺进当前转录区会盖掉主会话现场，
-   * 而弹层滚动浏览是独立一块交互，不在这次范围内。
-   */
-  private async pickSubagent(): Promise<void> {
-    const subs = this.deps.subagentStore.list(this.deps.ctx.cwd).filter((m) => m.parentId === this.session.id);
-    if (subs.length === 0) {
-      this.push({ kind: 'note', text: '本会话还没有派生过子 agent' });
-      return;
-    }
-    const picked = await this.showInlinePicker({
-      title: '本会话的子 agent',
-      items: subs.map((m) => ({
-        value: m.id,
-        label: `${m.agentType ?? 'general'} · ${m.name ?? m.title ?? m.id}`,
-        description: `${m.status ?? '未知'} · ${m.messageCount} 条 · ${m.id.slice(0, 8)}`,
-      })),
-      hint: '↑↓ 选择 · Enter 看摘要 · 输入过滤 · Esc 取消',
-    });
-    if (picked === null) return;
-    this.browseSubagentSession(picked);
   }
 
   /**
