@@ -281,6 +281,8 @@ export class PiChat {
   /** 本轮 run 给出的续接文本（goal 续跑或 Stop hook 兜底），回合收尾时派发。 */
   private continuation: string | null = null;
   private readonly subagentCounter = { spawned: 0 };
+  /** 子 agent 浏览快照：只读查看子会话历史时保存原 transcript，Esc 恢复。null = 不在浏览态。 */
+  private subagentBrowsing: { saved: DisplayItem[] } | null = null;
 
   private busy = false;
   /** 运行期可变（/model 切换会重建）：provider 与它绑定的模型 id、别名、上下文窗口。 */
@@ -933,6 +935,11 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   }
 
   private onEscape(): boolean {
+    // 子 agent 浏览态：Esc 退出浏览返回主会话现场
+    if (this.subagentBrowsing !== null) {
+      this.exitSubagentBrowse();
+      return true;
+    }
     if (this.busy) {
       this.abortTurn();
       return true;
@@ -1250,6 +1257,13 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     const text = (expanded === '' ? raw : expanded).trim();
     this.editor.setText('');
     if (text === '') return;
+    // 浏览子 agent 历史时输入了新内容：先退出浏览恢复主会话视图，再正常发送。
+    // 静默恢复（不 push note）——用户刚看完子会话，追问一句话就该直接进主会话上下文。
+    if (this.subagentBrowsing !== null) {
+      this.transcript.reset(this.subagentBrowsing.saved);
+      this.subagentBrowsing = null;
+      this.tui.requestRender();
+    }
     const isBang = text.startsWith('!') && text.length > 1;
     // 历史隔离：shell 命令不进提示词历史（↑ 取回的是对话草稿，不是一次性命令）
     if (!isBang) this.editor.addToHistory(text);
@@ -2038,6 +2052,43 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   }
 
   /**
+   * 子 agent 会话下钻（只读浏览）：把子会话历史载入 Transcript，Esc 退出恢复原现场。
+   *
+   * 与 resumeSession 的根本区别：不动 this.session / this.history / 持久化，只替换 Transcript
+   * 的显示内容。浏览前保存当前 transcript items（items() 每次 map 出新数组，引用安全），
+   * Esc 或发送消息时恢复。这让用户能在 TUI 内直接回看子 agent 做了什么，不必退出复制 CLI 命令。
+   */
+  private browseSubagentSession(subId: string): void {
+    if (this.subagentBrowsing !== null) return; // 已在浏览态，不嵌套
+    const cwd = this.deps.ctx.cwd;
+    const messages = this.deps.subagentStore.loadFull(cwd, subId);
+    if (messages.length === 0) {
+      this.push({ kind: 'note', text: `子会话 ${subId} 没有历史记录` });
+      return;
+    }
+    const meta = this.deps.subagentStore.list(cwd).find((m) => m.id === subId);
+    const replay = historyToDisplayItems(messages);
+    const label = meta?.name ?? meta?.title ?? subId.slice(0, 8);
+    // 保存当前视图快照（浅拷贝 DisplayItem 数组，reset 后旧数组不受影响）
+    this.subagentBrowsing = { saved: this.transcript.items() };
+    const items: DisplayItem[] = [
+      { kind: 'note', text: `正在浏览子 agent 会话「${label}」(${replay.totalTurns} 轮) — Esc 返回主会话` },
+      ...replay.items,
+    ];
+    this.transcript.reset(items, replay.foldedTurns);
+    this.tui.requestRender();
+  }
+
+  /** 退出子 agent 浏览：恢复保存的 transcript 快照。 */
+  private exitSubagentBrowse(): void {
+    if (this.subagentBrowsing === null) return;
+    this.transcript.reset(this.subagentBrowsing.saved);
+    this.subagentBrowsing = null;
+    this.tui.requestRender();
+    this.push({ kind: 'note', text: '已退出子 agent 浏览，返回主会话' });
+  }
+
+  /**
    * /agents：列出当前会话派生的子 agent 会话。
    *
    * 这一步只给摘要与进入方式：把子会话历史铺进当前转录区会盖掉主会话现场，
@@ -2059,15 +2110,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
       hint: '↑↓ 选择 · Enter 看摘要 · 输入过滤 · Esc 取消',
     });
     if (picked === null) return;
-    const meta = subs.find((m) => m.id === picked);
-    this.push({
-      kind: 'note',
-      text:
-        `子 agent ${picked}\n` +
-        `类型 ${meta?.agentType ?? 'general'} · 状态 ${meta?.status ?? '未知'} · ${meta?.messageCount ?? 0} 条消息\n` +
-        `任务：${meta?.name ?? meta?.title ?? meta?.preview ?? '（无描述）'}\n` +
-        `完整历史用 step-code --session ${picked} 打开（只读回看）`,
-    });
+    this.browseSubagentSession(picked);
   }
 
   /**
@@ -2864,10 +2907,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
     if (picked === null) return;
     if (picked === '__sub_header__') return;
     if (picked.startsWith('sub:')) {
-      this.push({
-        kind: 'note',
-        text: `${picked.slice(4)} 是子 agent 会话，不能恢复成主会话（用 /agents 查看它的产出）`,
-      });
+      this.browseSubagentSession(picked.slice(4));
       return;
     }
     this.resumeSession(picked);
