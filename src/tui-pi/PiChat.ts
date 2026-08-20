@@ -200,8 +200,6 @@ export class PiChat {
   private readonly status: StatusLine;
   private readonly editor: ChatEditor;
   private readonly completion: ChatAutocompleteProvider;
-  /** 审批等弹层的挂载点：常驻容器，内容按需增删（组件树形状不随消息变化）。 */
-  private readonly overlayHost = new Container();
   /** 输入区容器：选择器内联替换模式时，选择器与 editor 在此互换。 */
   private readonly inputSlot = new Container();
 
@@ -549,7 +547,6 @@ export class PiChat {
 
     this.tui.addChild(this.transcript);
     this.tui.addChild(this.activity);
-    this.tui.addChild(this.overlayHost);
     // 常驻 chrome（待办 + 队列预览）挂在输入框正上方，不参与高度预算协商——差分渲染无超屏清屏问题，面板按内容占行
     this.tui.addChild(this.chrome);
     // inputSlot 包住 editor：选择器内联模式下，editor 与 PickerOverlay 在此容器内互换，
@@ -3065,24 +3062,24 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   }
 
   /**
-   * 弹层挂载的统一路径：把块挂进常驻 overlayHost、焦点交给它，结算后恢复编辑器焦点。
-   * 三桥（工具审批 / 计划确认 / 向用户提问）共用，弹层互斥由「同一个 host 只放一个」保证。
+   * 弹层挂载的统一路径：审批三桥（工具审批 / 计划确认 / 提问）共用一个 showOverlay。
+   * 审批是独占的（promptActive 防重复），showOverlay 的栈顶唯一焦点语义天然契合。
+   * 此前走常驻 overlayHost（Container + clear/addChild），现收敛到 showOverlay——审批无需常驻容器。
    */
   private showPrompt<T>(make: (settle: (value: T) => void) => Component): Promise<T> {
     return new Promise<T>((resolve) => {
       const block = make((value) => {
         this.promptActive = false;
         this.activity.setTip('');
-        this.overlayHost.clear();
+        handle.hide();
         this.tui.setFocus(this.editor);
         this.tui.requestRender();
         resolve(value);
       });
       this.promptActive = true;
       this.activity.setTip('等待你确认');
-      this.overlayHost.clear();
-      this.overlayHost.addChild(block);
-      this.tui.setFocus(block);
+      const handle = this.tui.showOverlay(block, { width: '90%', maxHeight: '80%', anchor: 'center' });
+      handle.focus();
       this.tui.requestRender();
     });
   }
@@ -3482,7 +3479,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
 
   /** 测试用：暴露组件树根（FakeTerminal 下断言渲染输出）。 */
   rootComponents(): Component[] {
-    return [this.transcript, this.activity, this.overlayHost, this.editor, this.status];
+    return [this.transcript, this.activity, this.editor, this.status];
   }
 
   /**
