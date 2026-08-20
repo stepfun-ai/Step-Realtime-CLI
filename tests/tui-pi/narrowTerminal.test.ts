@@ -20,6 +20,7 @@ import { InlineApproval, PlanApproval, QuestionPrompt } from '../../src/tui-pi/p
 import { PickerOverlay } from '../../src/tui-pi/pickers.js';
 import { ExpandOverlay } from '../../src/tui-pi/ExpandOverlay.js';
 import { TasksOverlay } from '../../src/tui-pi/TasksOverlay.js';
+import { AgentsOverlay } from '../../src/tui-pi/AgentsOverlay.js';
 import { collectExpandable } from '../../src/chat/expandable.js';
 import type { DisplayItem } from '../../src/chat/types.js';
 import type { AskUserRequest } from '../../src/tools/askUser.js';
@@ -147,6 +148,19 @@ describe('窄终端：弹层组件 render 不超宽', () => {
       requestRender: noop,
       onClose: noop,
       now: () => Date.parse('2026-08-19T10:01:30Z'),
+    }));
+
+    // ④ 新增的 AgentsOverlay 必须进窄终端回归（否则新增组件漏截断 = 新的崩溃点）
+    const agents = [
+      { id: 'agent-run-001', cwd: '/w', model: 'm', createdAt: '2026-08-19T00:00:00Z', updatedAt: '2026-08-19T00:05:00Z', messageCount: 42, status: 'running', agentType: 'explore', name: '很长的子agent任务名称'.repeat(8) },
+      { id: 'agent-done-002', cwd: '/w', model: 'm', createdAt: '2026-08-19T00:00:00Z', updatedAt: '2026-08-19T00:03:00Z', messageCount: 18, status: 'done', agentType: 'general', title: '已完成的代码修改任务' },
+      { id: 'agent-err-003', cwd: '/w', model: 'm', createdAt: '2026-08-19T00:00:00Z', updatedAt: '2026-08-19T00:04:00Z', messageCount: 7, status: 'error', agentType: 'custom-reviewer', name: '审查失败的长任务' },
+    ];
+    checkWidth('agents', () => new AgentsOverlay({
+      getAgents: () => agents,
+      onBrowse: noop,
+      requestRender: noop,
+      onClose: noop,
     }));
   });
 
