@@ -11,7 +11,7 @@
  * 写盘走既有的 appendProviderConfig（备份 + doctor 校验 + 失败回滚），本文件不碰文件格式。
  */
 import type { TUI } from '@earendil-works/pi-tui';
-import { PROVIDER_PRESETS, type StepCodeConfig } from '../config/config.js';
+import { PROVIDER_PRESETS, type ProviderEntry, type StepCodeConfig } from '../config/config.js';
 import { appendProviderConfig, removeProviderConfig, type ModelDraft, type ProviderDraft } from '../config/tomlAppend.js';
 import { askLine, askValidated, showPicker } from './pickers.js';
 import { t } from '../i18n.js';
@@ -116,6 +116,35 @@ export async function runProviderWizard(
   notify: (text: string) => void,
 ): Promise<ProviderPickResult> {
   const existing = config.providers ?? {};
+
+  // ⑤ 从已有渠道复制：有现成渠道时先问入口方式。复制模式预填 type/baseUrl，
+  // 用户只改差异项（id 必须新取、apiKey 按源渠道惯例重新给）。
+  let clone: ProviderEntry | null = null;
+  if (Object.keys(existing).length > 0) {
+    const mode = await showPicker(tui, {
+      title: t('providerWizard.ask.entryMode'),
+      items: [
+        { value: 'clone', label: t('providerWizard.entry.clone'), description: t('providerWizard.entry.cloneDesc') },
+        { value: 'manual', label: t('providerWizard.entry.manual'), description: t('providerWizard.entry.manualDesc') },
+      ],
+      hint: t('providerWizard.hint.pick'),
+    });
+    if (mode === null) return { kind: 'cancelled' };
+    if (mode === 'clone') {
+      const source = await showPicker(tui, {
+        title: t('providerWizard.ask.cloneSource'),
+        items: Object.entries(existing).map(([id, ch]) => ({
+          value: id,
+          label: id,
+          description: ch.type,
+        })),
+        hint: t('providerWizard.hint.pick'),
+      });
+      if (source === null) return { kind: 'cancelled' };
+      clone = existing[source]!;
+    }
+  }
+
   // id 重复当场重问，而不是 notify 一句就把整个流程取消掉——用户想要的是换个 id 继续
   const id = await askValidated(tui, t('providerWizard.ask.id'), (v) => {
     if (v === '') return t('providerWizard.err.empty');
@@ -124,27 +153,30 @@ export async function runProviderWizard(
     return null;
   });
   if (id === null) return { kind: 'cancelled' };
-  const type = await showPicker(tui, {
-    title: t('providerWizard.ask.type'),
-    items: Object.keys(PROVIDER_PRESETS).map((name) => {
-      const descKey = PROTOCOL_DESC_KEY[PROVIDER_PRESETS[name]!.protocol];
-      return {
-        value: name,
-        label: name,
-        // 协议说明比「按 X 预设的协议与默认地址」有信息量：它直接回答 base_url 要不要带 /v1
-        description: descKey !== undefined ? t(descKey) : t('providerWizard.type.presetDesc', { name }),
-      };
-    }),
-    hint: t('providerWizard.hint.pick'),
-  });
+  // clone 模式跳过 type 选择（源渠道已定协议）；手动模式走正常 picker
+  const type =
+    clone !== null
+      ? clone.type
+      : await showPicker(tui, {
+          title: t('providerWizard.ask.type'),
+          items: Object.keys(PROVIDER_PRESETS).map((name) => {
+            const descKey = PROTOCOL_DESC_KEY[PROVIDER_PRESETS[name]!.protocol];
+            return {
+              value: name,
+              label: name,
+              description: descKey !== undefined ? t(descKey) : t('providerWizard.type.presetDesc', { name }),
+            };
+          }),
+          hint: t('providerWizard.hint.pick'),
+        });
   if (type === null) return { kind: 'cancelled' };
-  // base_url 允许留空（此时继承 preset 的默认地址），但一旦填了就必须是合法 URL：
-  // 'https://' 这个初始值等于没填，不能当成用户的输入
+  // base_url 允许留空（此时继承 preset 的默认地址），但一旦填了就必须是合法 URL。
+  // clone 模式用源渠道地址作 initial；'https://' 这个初始值等于没填
   const baseUrl = await askValidated(
     tui,
     t('providerWizard.ask.baseUrl'),
     (v) => (v === '' || v === 'https://' || /^https?:\/\//i.test(v) ? null : t('providerWizard.err.url')),
-    { initial: 'https://' },
+    { initial: clone?.baseUrl !== undefined && clone.baseUrl !== '' ? clone.baseUrl : 'https://' },
   );
   if (baseUrl === null) return { kind: 'cancelled' };
   // 密钥可留空：pi 版还没做 keyMode 三选，空值等价于「暂不配置」，运行时按 type 的惯例环境变量找
