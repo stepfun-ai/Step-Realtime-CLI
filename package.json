@@ -52,7 +52,7 @@
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
-    "@earendil-works/pi-tui": "^0.84.1",
+    "@earendil-works/pi-tui": "0.84.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
     "adm-zip": "^0.6.0",

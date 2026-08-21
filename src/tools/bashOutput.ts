@@ -85,14 +85,19 @@ const MAX_OVERFLOW_FILES = 20;
 const OVERFLOW_SUBDIR = join('.step-code', 'tool-output');
 
 export interface OutputCollectorOptions {
-  /** stdout 内存预算（字符）。默认 9MB。 */
-  stdoutBudget?: number;
-  /** stderr 内存预算（字符）。默认 1MB。 */
-  stderrBudget?: number;
+  /** 该流保底额（字节）：即使另一条流占满共享池，这部分也 guaranteed。 */
+  stdoutReserve?: number;
+  /** 该流保底额（字节）：即使另一条流占满共享池，这部分也 guaranteed。 */
+  stderrReserve?: number;
+  /** 两条流共享的池子（字节）：先到先得，用完后各自退守保底额。 */
+  sharedBudget?: number;
   /** 溢出落盘的基准目录（通常是 cwd）。传 null 关闭落盘（测试与不可写环境）。 */
   cwd?: string | null;
   /** 覆盖时间戳来源，仅测试用（保证文件名可预期）。 */
   now?: () => Date;
+  /** 向后兼容：若传了 flat budget，退化为无共享池的硬切分。 */
+  stdoutBudget?: number;
+  stderrBudget?: number;
 }
 
 export interface OutputSnapshot {
@@ -157,10 +162,16 @@ let seqCounter = 0;
  * 但仍如实计数）。
  */
 export function createOutputCollector(opts: OutputCollectorOptions = {}): OutputCollector {
-  const stdoutBudget = opts.stdoutBudget ?? STDOUT_BUDGET;
-  const stderrBudget = opts.stderrBudget ?? STDERR_BUDGET;
   const cwd = opts.cwd === undefined ? process.cwd() : opts.cwd;
   const nowFn = opts.now ?? ((): Date => new Date());
+
+  const stdoutReserve = opts.stdoutReserve ?? PER_STREAM_RESERVE;
+  const stderrReserve = opts.stderrReserve ?? PER_STREAM_RESERVE;
+  const sharedPool = opts.sharedBudget ?? SHARED_BUDGET;
+
+  const flatMode = opts.stdoutBudget !== undefined || opts.stderrBudget !== undefined;
+  const flatStdBudget = opts.stdoutBudget ?? (SHARED_BUDGET + PER_STREAM_RESERVE);
+  const flatErrBudget = opts.stderrBudget ?? PER_STREAM_RESERVE;
 
   /** 内存保留的原始块（仅预算内的）。close() 后释放，解码结果留在 cachedText。 */
   let chunks: Buffer[] = [];
@@ -168,6 +179,9 @@ export function createOutputCollector(opts: OutputCollectorOptions = {}): Output
   let cachedText: string | null = null;
   let stdoutBytes = 0;
   let stderrBytes = 0;
+  /** 共享池消耗：每条流各占多少 */
+  let stdoutSharedBytes = 0;
+  let stderrSharedBytes = 0;
   /** 统一解码：一次性拼接全部字节再解码，chunk 边界不会切碎多字节字符。 */
   const decode = (): string => (cachedText ??= Buffer.concat(chunks).toString('utf8'));
   let droppedStdout = 0;
@@ -226,22 +240,49 @@ export function createOutputCollector(opts: OutputCollectorOptions = {}): Output
     append(chunk, stream) {
       const isErr = stream === 'stderr';
       const used = isErr ? stderrBytes : stdoutBytes;
-      const budget = isErr ? stderrBudget : stdoutBudget;
-      const overBudget = used >= budget;
+      const reserve = isErr ? stderrReserve : stdoutReserve;
+      let keepSize: number;
 
-      // 任一流首次触顶即开始落盘，此后所有 chunk 都进文件（含仍在预算内的另一条流）
-      if (overBudget) ensureOverflowFile();
+      if (flatMode) {
+        const budget = isErr ? flatErrBudget : flatStdBudget;
+        keepSize = used < budget ? chunk.length : 0;
+      } else {
+        const spaceInReserve = Math.max(0, reserve - used);
+        const sharedRemaining = sharedPool - stdoutSharedBytes - stderrSharedBytes;
+        const totalSpace = spaceInReserve + sharedRemaining;
+        keepSize = Math.min(chunk.length, totalSpace);
+      }
+
+      const dropSize = chunk.length - keepSize;
+
+      // 任一流首次触顶即开始落盘
+      if (dropSize > 0) ensureOverflowFile();
       if (fd !== null) writeOverflow(chunk);
 
-      if (overBudget) {
-        if (isErr) droppedStderr += chunk.length;
-        else droppedStdout += chunk.length;
+      if (dropSize > 0) {
+        if (isErr) droppedStderr += dropSize;
+        else droppedStdout += dropSize;
+        if (keepSize > 0) {
+          // 部分保留：先吃保底额剩余，再吃共享池
+          const useReserve = Math.min(keepSize, Math.max(0, reserve - used));
+          const useShared = keepSize - useReserve;
+          chunks.push(chunk.slice(0, keepSize));
+          cachedText = null;
+          if (isErr) { stderrBytes += keepSize; stderrSharedBytes += useShared; }
+          else { stdoutBytes += keepSize; stdoutSharedBytes += useShared; }
+        }
         return;
       }
+
       chunks.push(chunk);
       cachedText = null;
-      if (isErr) stderrBytes += chunk.length;
-      else stdoutBytes += chunk.length;
+      if (isErr) {
+        stderrBytes += chunk.length;
+        if (stderrBytes > reserve) stderrSharedBytes += chunk.length - Math.max(0, reserve - (stderrBytes - chunk.length));
+      } else {
+        stdoutBytes += chunk.length;
+        if (stdoutBytes > reserve) stdoutSharedBytes += chunk.length - Math.max(0, reserve - (stdoutBytes - chunk.length));
+      }
     },
     snapshot() {
       return { text: decode(), droppedStdout, droppedStderr, overflowPath, overflowBytes };

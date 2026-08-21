@@ -149,7 +149,7 @@ Worker 在独立 git worktree 里干活：
 - **门③ tip 未移动**：先 git rev-parse <branch> 拿到 tip，审完 diff 后原样传 reviewedCommit。若 tip 已移动（worker 又改了），会被拒绝并要求重新审阅
 - **门④ 依赖全部已 merged**：任务 deps 中必须全部是 merged 状态
 - **门⑤ diff 无 scope 外文件**：git diff --name-only <base>...<branch> 的每个文件必须落在任务 scope 内；越界文件会被列出并拒绝
-- **typecheck 门**：build 任务在合并前于工作间跑 \`tsc --noEmit\`（非 TS 仓或无 typescript 自动跳过），把类型错误挡在合并之前。\`--force\` 可绕过本门（确认是环境差异等误报时），其余硬门不可 --force
+- **typecheck 门**：build 任务在合并前于工作间跑 'tsc --noEmit'（非 TS 仓或无 typescript 自动跳过），把类型错误挡在合并之前。'--force' 可绕过本门（确认是环境差异等误报时），其余硬门不可 --force
 - --no-ff 是 git merge 的执行方式，不是一道门：门禁全过后才执行 git merge --no-ff 合入，保留 merge commit
 - 合并成功后自动清理 worktree：干净则删除，dirty 则保留并写入日志，同时通过返回值 worktreeKept 告知协调者
 - 删除失败不会阻塞 merge 成功：兜底保留 worktree，worktreeKept 注明「清理失败，保留」
