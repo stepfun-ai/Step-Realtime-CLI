@@ -5,7 +5,7 @@
  * - init 的拒绝条件（非 git 仓 / 空仓）
  * - plan 的 scope 互斥检查（build 类两两不重叠）
  * - spawn 的依赖硬化门控（deps 未全 merged 直接拒绝）
- * - merge 的五道门（reviewedCommit 声明 + tip 未动 + deps 全并 + 无越界文件 + --no-ff）
+ * - merge 的门禁（reviewedCommit 声明 + tip 未动 + deps 全并 + 无越界文件 + typecheck + --no-ff）
  * - teardown 的 dirty 保留
  */
 import { randomUUID } from 'node:crypto';
@@ -26,6 +26,7 @@ import {
   refExists,
   removeWorktree,
   resolveRepoRoot,
+  typecheck,
 } from './git.js';
 import { TeamError, type TeamMessage, type TeamMission, type TeamMissionStatus, type TeamState } from './types.js';
 
@@ -271,7 +272,7 @@ export class TeamStore {
    * 全过才 git merge --no-ff。
    * survey 任务不受门〇限制（本来就不产生提交）。
    */
-  async merge(missionId: string, reviewedCommit: string): Promise<{ conflictsWith: string[]; worktreeKept?: string }> {
+  async merge(missionId: string, reviewedCommit: string, force = false): Promise<{ conflictsWith: string[]; worktreeKept?: string; typecheckSkipped?: boolean }> {
     const state = await this.load();
     const m = state.missions.find((x) => x.id === missionId);
     if (m === undefined) throw new TeamError(`任务 ${missionId} 不存在。`);
@@ -308,6 +309,24 @@ export class TeamStore {
     if (cur !== base) {
       throw new TeamError(`合并目标是基准分支 ${base}，但 ${m.repo} 当前 checkout 的是 ${cur}——先切回 ${base} 再收编。`);
     }
+
+    // typecheck 门：build 任务在 worktree 跑 tsc --noEmit（非 TS 仓自动跳过）。
+    // 与 worktree.mjs 四道门对齐，提前把类型错误挡在合并之前，而非留到 merge 后手动抓。
+    // survey 无提交，跳过；force 可绕过（确认是环境差异等误报时）。
+    let typecheckSkipped = false;
+    if (m.kind === 'build') {
+      const wtDir = this.worktreePath(m);
+      const tc = await typecheck(wtDir);
+      if (tc.skipped) {
+        typecheckSkipped = true;
+      } else if (!tc.ok && !force) {
+        throw new TeamError(
+          `typecheck 未通过：\n${tc.detail}\n` +
+            '修复后重新提交并收编；确认是环境差异等误报时加 --force 跳过本门（仅本门，其余硬门不可绕过）。',
+        );
+      }
+    }
+
     try {
       await mergeNoFf(m.repo, m.branch);
     } catch (e) {
@@ -346,7 +365,9 @@ export class TeamStore {
       .filter((x) => x.kind === 'build' && x.status !== 'merged' && x.id !== m.id)
       .filter((x) => x.scope.some((s) => changed.some((f) => scopeMatches(s, f))))
       .map((x) => x.id);
-    return { conflictsWith, worktreeKept };
+    const result: { conflictsWith: string[]; worktreeKept?: string; typecheckSkipped?: boolean } = { conflictsWith, worktreeKept };
+    if (typecheckSkipped) result.typecheckSkipped = true;
+    return result;
   }
 
   /** 发信：往信箱目录写一个 md 文件（frontmatter + 正文）。 */

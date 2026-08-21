@@ -8,6 +8,7 @@ import type { AskUserQuestion, AskUserRequest, QuestionAnswers } from '../tools/
 import { t } from '../i18n.js';
 import { ChoiceBlock, type Choice } from './ChoiceBlock.js';
 import { c, markdownTheme } from './theme.js';
+import { renderScrolledInput } from './scrollInput.js';
 import { markdownTransform } from '../chat/markdownPrep.js';
 
 /** 预览折叠行数上限。 */
@@ -488,10 +489,18 @@ export class QuestionPrompt {
     const otherLabel = t('question.other');
     const otherPrefix = onOther ? c.toolName('❯ ') : '  ';
     if (this.otherMode) {
-      // 编辑态：显示文本内容 + 光标
-      const text = slot.other !== '' ? slot.other : c.dim(t('question.otherPlaceholder'));
-      const otherLine = `${otherPrefix}[${this.otherIndex + 1}] ${c.toolName(otherLabel)} ${text}${'▌'}`;
-      inner.push(truncateToWidth(otherLine, innerWidth));
+      // 编辑态：横向滚动显示文本 + 反显光标，光标始终在可视区，长文本不被截断成省略号
+      const prefix = `${otherPrefix}[${this.otherIndex + 1}] ${c.toolName(otherLabel)} `;
+      const prefixWidth = visibleWidth(prefix);
+      const textWidth = Math.max(1, innerWidth - prefixWidth);
+      let text: string;
+      if (slot.other !== '') {
+        text = renderScrolledInput(slot.other, slot.otherCursor, textWidth);
+      } else {
+        // 空输入：反显光标 + 暗色占位符
+        text = `\x1b[7m \x1b[27m${c.dim(t('question.otherPlaceholder'))}`;
+      }
+      inner.push(`${prefix}${text}`);
     } else {
       // 导航态：只显示标签，不显示文本（视觉上区分导航态和编辑态）
       inner.push(truncateToWidth(`${otherPrefix}[${this.otherIndex + 1}] ${onOther ? c.toolName(otherLabel) : otherLabel}`, innerWidth));

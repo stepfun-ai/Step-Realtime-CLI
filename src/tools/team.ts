@@ -254,22 +254,26 @@ export const teamStatusTool: ToolDef<z.infer<typeof statusSchema>> = {
 const mergeSchema = z.object({
   mission_id: z.string().describe('要合并的任务 id。任务须为 completed 状态。'),
   reviewed_commit: z.string().describe('你审阅时的分支 tip commit（先 git rev-parse <branch> 拿到，审完 diff 后原样传入）。tip 若已移动会被拒绝并要求重审。'),
+  force: z.boolean().optional().describe('跳过 typecheck 门（确认是环境差异等误报时用）。仅此一门可绕过，其余硬门不可 --force。'),
 });
 
 export const teamMergeTool: ToolDef<z.infer<typeof mergeSchema>> = {
   name: 'team_merge',
   description:
-    '收编任务：五道门检查（已审阅 / tip 未移动 / 依赖全部已合并 / diff 无范围外文件 / --no-ff 合并）全过才合回基准分支。仅协调者调用。合并前请先自行审阅 diff。',
+    '收编任务：过门禁后 --no-ff 合回基准分支。门禁含已审阅（tip 未移动）/ 依赖全部已合并 / diff 无范围外文件 / typecheck（build 任务在工作间跑 tsc --noEmit，非 TS 仓跳过）。仅协调者调用。合并前请先自行审阅 diff。',
   schema: mergeSchema,
   async execute(input, ctx) {
     const deny = coordinatorOnly(ctx);
     if (deny !== null) return fail(deny);
     if (ctx.team === undefined) return fail('当前上下文不支持 team。');
     try {
-      const { conflictsWith, worktreeKept } = await ctx.team.getStore().merge(input.mission_id, input.reviewed_commit);
+      const { conflictsWith, worktreeKept, typecheckSkipped } = await ctx.team
+        .getStore()
+        .merge(input.mission_id, input.reviewed_commit, input.force ?? false);
       const warn = conflictsWith.length > 0 ? `\n注意：本次改动波及未合并任务 ${conflictsWith.join('、')} 的范围——它们需要 rebase 后重审。` : '';
       const kept = worktreeKept ? `\n工作间保留：${worktreeKept}（有未提交改动，merge 后需手动处理）` : '';
-      return ok(`任务 ${input.mission_id} 已合并到基准分支。${warn}${kept}`);
+      const skipped = typecheckSkipped ? '\ntypecheck 已跳过（非 TS 仓或无 typescript）。' : '';
+      return ok(`任务 ${input.mission_id} 已合并到基准分支。${warn}${kept}${skipped}`);
     } catch (e) {
       return fail((e as Error).message);
     }

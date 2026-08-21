@@ -396,6 +396,75 @@ describe('TeamStore.merge 五道门', () => {
     await expect(store.merge('M1', tip)).rejects.toThrow('门〇');
     await expect(store.merge('M1', tip)).rejects.toThrow('提交到了错误的地方');
   });
+
+  describe('typecheck 门', () => {
+    /** 在工作间里造一个假 tsc（node 脚本）：pass=true 退出 0，否则退出 1 并输出错误。 */
+    async function plantFakeTsc(wt: string, pass: boolean): Promise<void> {
+      const bin = join(wt, 'node_modules', 'typescript', 'bin');
+      await mkdir(bin, { recursive: true });
+      await writeFile(join(wt, 'tsconfig.json'), '{ "include": ["src"] }\n');
+      const body = pass ? 'process.exit(0);\n' : 'process.stderr.write("src/x.ts(1,5): error TS2322: fake type error\\n"); process.exit(1);\n';
+      await writeFile(join(bin, 'tsc'), body);
+    }
+
+    it('build 任务 typecheck 失败 → merge 拒绝', async () => {
+      const { repo, store, wt } = await setupMission();
+      await commitInWorktree(wt, join('src', 'data', 'a.ts'), 'export const x = 1;\n'); // 过门〇/门⑤
+      await plantFakeTsc(wt, false);
+      await store.setStatus('M1', 'completed');
+      const tip = await branchTip(repo, (await store.load()).missions[0].branch);
+      await expect(store.merge('M1', tip)).rejects.toThrow('typecheck');
+    });
+
+    it('build 任务 typecheck 失败 + force → 绕过本门正常合并', async () => {
+      const { repo, store, wt } = await setupMission();
+      await commitInWorktree(wt, join('src', 'data', 'a.ts'), 'export const x = 1;\n');
+      await plantFakeTsc(wt, false);
+      await store.setStatus('M1', 'completed');
+      const branch = (await store.load()).missions[0].branch;
+      const tip = await branchTip(repo, branch);
+      const { conflictsWith } = await store.merge('M1', tip, true);
+      expect(conflictsWith).toEqual([]);
+      expect((await store.load()).missions[0].status).toBe('merged');
+    });
+
+    it('survey 任务跳过 typecheck（即使假 tsc 会失败）', async () => {
+      const repo = await makeRepo();
+      const store = new TeamStore(join(repo, '.teams'), repo);
+      await store.init();
+      await store.plan([{ title: '查文档', kind: 'survey', scope: [], deps: [] }]);
+      await store.spawn('M1', 'worker-M1');
+      const wt = join(repo, '.teams', 'worktrees', 'wt-1');
+      await plantFakeTsc(wt, false);
+      await store.setStatus('M1', 'completed');
+      const tip = await branchTip(repo, (await store.load()).missions[0].branch);
+      const { conflictsWith } = await store.merge('M1', tip);
+      expect(conflictsWith).toEqual([]);
+    });
+
+    it('无 tsconfig → typecheck 跳过（不误拦），merge 正常', async () => {
+      const { repo, store, wt } = await setupMission();
+      await commitInWorktree(wt, join('src', 'data', 'a.ts'), 'export const x = 1;\n');
+      await store.setStatus('M1', 'completed');
+      const branch = (await store.load()).missions[0].branch;
+      const tip = await branchTip(repo, branch);
+      const { conflictsWith, typecheckSkipped } = await store.merge('M1', tip);
+      expect(conflictsWith).toEqual([]);
+      expect(typecheckSkipped).toBe(true);
+    });
+
+    it('假 tsc 通过 → merge 正常，不标记 skipped', async () => {
+      const { repo, store, wt } = await setupMission();
+      await commitInWorktree(wt, join('src', 'data', 'a.ts'), 'export const x = 1;\n');
+      await plantFakeTsc(wt, true);
+      await store.setStatus('M1', 'completed');
+      const branch = (await store.load()).missions[0].branch;
+      const tip = await branchTip(repo, branch);
+      const { conflictsWith, typecheckSkipped } = await store.merge('M1', tip);
+      expect(conflictsWith).toEqual([]);
+      expect(typecheckSkipped).toBeUndefined();
+    });
+  });
 });
 
 describe('wrapWriteGuard（per-worker 写隔离）', () => {

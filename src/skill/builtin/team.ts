@@ -139,17 +139,18 @@ Worker 在独立 git worktree 里干活：
 
 在基准仓内审阅 diff。确认 scope 内改动干净后，执行 merge。
 
-### 3.6 merge（team_merge）——五道门
+### 3.6 merge（team_merge）——门禁
 
 合并前协调者必须先审阅 diff（非 merge 工具本身的要求，是纪律），然后调用 team_merge 传入 reviewedCommit。
 
-五道门全部通过才合入：
+门禁全部通过才合入：
 
 - **门①② 已审阅**：协调者传入 reviewedCommit，声明已看过 diff
 - **门③ tip 未移动**：先 git rev-parse <branch> 拿到 tip，审完 diff 后原样传 reviewedCommit。若 tip 已移动（worker 又改了），会被拒绝并要求重新审阅
 - **门④ 依赖全部已 merged**：任务 deps 中必须全部是 merged 状态
 - **门⑤ diff 无 scope 外文件**：git diff --name-only <base>...<branch> 的每个文件必须落在任务 scope 内；越界文件会被列出并拒绝
-- --no-ff 是 git merge 的执行方式，不是一道门：五道门全过后才执行 git merge --no-ff 合入，保留 merge commit
+- **typecheck 门**：build 任务在合并前于工作间跑 \`tsc --noEmit\`（非 TS 仓或无 typescript 自动跳过），把类型错误挡在合并之前。\`--force\` 可绕过本门（确认是环境差异等误报时），其余硬门不可 --force
+- --no-ff 是 git merge 的执行方式，不是一道门：门禁全过后才执行 git merge --no-ff 合入，保留 merge commit
 - 合并成功后自动清理 worktree：干净则删除，dirty 则保留并写入日志，同时通过返回值 worktreeKept 告知协调者
 - 删除失败不会阻塞 merge 成功：兜底保留 worktree，worktreeKept 注明「清理失败，保留」
 
@@ -170,9 +171,7 @@ Worker 在独立 git worktree 里干活：
 
 ### 3.9 收编后验证
 
-merge 通过 ≠ 完成。merge 后必须在**主仓**跑全量测试（worker 工作间无 node_modules，跑不了测试——这是机制性缺口）。
-
-今天四轮收编后验证都抓到了 worker 遗留问题（白名单测试没更新、测试硬编码 Windows 路径、截断逻辑放错位置、return 漏带字段）。处理策略：
+merge 通过 ≠ 完成。merge 后必须在**主仓**跑全量测试（typecheck 轻量门已在合并前于工作间执行，但全量测试耗时长、不适合放门禁，且需真实运行环境）。工作间经 junction 共享主仓 node_modules、可跑 tsc；今天四轮收编后验证都抓到了 worker 遗留问题（白名单测试没更新、测试硬编码 Windows 路径、截断逻辑放错位置、return 漏带字段）。处理策略：
 
 - 小问题（漏测、路径硬编码）→ 派修补任务（新 task，scope 精确）
 - 大问题（逻辑错位、接口不兼容）→ rework：重新 team_spawn 同一任务（completed → rework），worker 带已知问题清单返工
@@ -251,7 +250,7 @@ teardown / exit 后，state.json 里的 closedAt 被写入：
 export const TEAM_SKILL: SkillDefinition = {
   name: 'team',
   description:
-    '教模型正确使用 step-code team 多 agent 团队工具。覆盖：什么时候用 team vs 不用、team_init 三个参数的正确用法（repo/dir/base 缺省与常见错误）、工作流全流程（init → plan → spawn → 审阅 → merge 五道门 → teardown）、rework/respawn 两种重派机制、merge 后自动清理 worktree、worker 失联 lost 联动、工作期用法、收编后验证（主仓全量测试）、三条退出通道、协调者纪律、已知边界（dist 错位）。当模型需要调用 team_init / team_plan / team_spawn / team_merge / team_teardown / team_send / team_inbox / team_status 前必须读取本 skill。',
+    '教模型正确使用 step-code team 多 agent 团队工具。覆盖：什么时候用 team vs 不用、team_init 三个参数的正确用法（repo/dir/base 缺省与常见错误）、工作流全流程（init → plan → spawn → 审阅 → merge 门禁 → teardown）、rework/respawn 两种重派机制、merge 后自动清理 worktree、worker 失联 lost 联动、工作期用法、收编后验证（主仓全量测试 + 合并前 typecheck 门）、三条退出通道、协调者纪律、已知边界（dist 错位）。当模型需要调用 team_init / team_plan / team_spawn / team_merge / team_teardown / team_send / team_inbox / team_status 前必须读取本 skill。',
   content: TEAM_SKILL_BODY,
   dir: 'builtin://team',
   source: 'builtin',

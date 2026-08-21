@@ -3094,24 +3094,29 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
   }
 
   /**
-   * 弹层挂载的统一路径：审批三桥（工具审批 / 计划确认 / 提问）共用一个 showOverlay。
-   * 审批是独占的（promptActive 防重复），showOverlay 的栈顶唯一焦点语义天然契合。
-   * 此前走常驻 overlayHost（Container + clear/addChild），现收敛到 showOverlay——审批无需常驻容器。
+   * 弹层挂载的统一路径：审批三桥（工具审批 / 计划确认 / 提问）共用一个内联挂载。
+   * 审批是独占的（promptActive 防重复）。
+   *
+   * 落位方式：内联替换输入区（editor replacement），与内联选择器同一条路径——
+   * 把交互块挂进 inputSlot 替换 editor，出现在对话最底部、状态栏之上，不遮挡历史消息；
+   * 结算时恢复 editor。此前走 tui.showOverlay(anchor:'center') 浮层，会盖住两侧消息历史。
    */
   private showPrompt<T>(make: (settle: (value: T) => void) => Component): Promise<T> {
     return new Promise<T>((resolve) => {
       const block = make((value) => {
         this.promptActive = false;
         this.activity.setTip('');
-        handle.hide();
+        this.inputSlot.clear();
+        this.inputSlot.addChild(this.editor);
         this.tui.setFocus(this.editor);
         this.tui.requestRender();
         resolve(value);
       });
       this.promptActive = true;
       this.activity.setTip('等待你确认');
-      const handle = this.tui.showOverlay(block, { width: '90%', maxHeight: '80%', anchor: 'center' });
-      handle.focus();
+      this.inputSlot.clear();
+      this.inputSlot.addChild(block);
+      this.tui.setFocus(block);
       this.tui.requestRender();
     });
   }

@@ -151,7 +151,9 @@ export async function mergeAbort(repoRoot: string): Promise<void> {
   await git(repoRoot, ['merge', '--abort']);
 }
 
-/** 把团队目录写进 `.git/info/exclude`（仓本地排除，不动可追踪的 .gitignore）。 */
+/**
+ * 把团队目录写进 `.git/info/exclude`（仓本地排除，不动可追踪的 .gitignore）。
+ */
 export async function ensureGitExclude(repoRoot: string, entry: string): Promise<void> {
   const { mkdir, readFile, appendFile } = await import('node:fs/promises');
   const { join, dirname, resolve } = await import('node:path');
@@ -172,4 +174,39 @@ export async function ensureGitExclude(repoRoot: string, entry: string): Promise
   }
   if (existing.split(/\r?\n/).some((line) => line.trim() === entry)) return;
   await appendFile(excludePath, `${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${entry}\n`, 'utf8');
+}
+
+/** typecheck 结果：ok 是否通过、skipped 是否跳过、detail 细节。 */
+export interface TypecheckResult {
+  ok: boolean;
+  skipped: boolean;
+  detail: string;
+}
+
+/**
+ * 在指定目录跑 tsc --noEmit（team 收编的 typecheck 门）。
+ *
+ * 跨仓通用性的取舍：只在「有 tsconfig.json 且本地装了 typescript」时真跑，否则跳过
+ * （不误拦非 TS 仓、或未装 typescript 的仓）。worktree 通过 junction 共享主仓 node_modules，
+ * 故本地 typescript 通常可达。用 node 直跑 typescript/bin/tsc，避开 npx / shell 的跨平台问题。
+ *
+ * @param dir 待检查目录（通常是 team worktree）
+ */
+export async function typecheck(dir: string): Promise<TypecheckResult> {
+  if (!existsSync(join(dir, 'tsconfig.json'))) {
+    return { ok: true, skipped: true, detail: '无 tsconfig.json，跳过 typecheck' };
+  }
+  // 优先用本地 node_modules/typescript（junction 共享主仓依赖），避免依赖全局 npx
+  const tscBin = join(dir, 'node_modules', 'typescript', 'bin', 'tsc');
+  if (!existsSync(tscBin)) {
+    return { ok: true, skipped: true, detail: '未找到 typescript，跳过 typecheck' };
+  }
+  try {
+    await run(process.execPath, [tscBin, '--noEmit'], { cwd: dir, maxBuffer: 8 * 1024 * 1024 });
+    return { ok: true, skipped: false, detail: 'typecheck 通过' };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string };
+    const out = ((err.stdout ?? '') + (err.stderr ?? '')).trim().split('\n').slice(-15).join('\n');
+    return { ok: false, skipped: false, detail: out || 'typecheck 失败（无输出）' };
+  }
 }

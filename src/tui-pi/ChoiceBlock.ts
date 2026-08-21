@@ -9,9 +9,10 @@
  * 键位与 Ink 版逐项对齐（跨工具共享的终端肌肉记忆优先于创新，见迁移设计的「可比」目标）。
  */
 import type { Component } from '@earendil-works/pi-tui';
-import { matchesKey, parseKey, truncateToWidth } from '@earendil-works/pi-tui';
+import { matchesKey, parseKey, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { c } from './theme.js';
 import { t } from '../i18n.js';
+import { renderScrolledInput } from './scrollInput.js';
 
 export interface Choice<T> {
   label: string;
@@ -151,8 +152,17 @@ export abstract class ChoiceBlock<T> implements Component {
       const on = i === this.selected;
       const prefix = on ? c.toolName('▶ ') : '  ';
       if (on && this.feedbackMode) {
-        const text = this.feedbackText === '' ? c.dim(t('choice.feedbackPlaceholder')) : this.feedbackText;
-        return truncateToWidth(`${prefix}${i + 1}. ${choice.label}: ${text}▌`, width);
+        // 反馈输入：横向滚动，光标（在末尾）始终在可视区，长文本不被截断成省略号
+        const fbPrefix = `${prefix}${i + 1}. ${choice.label}: `;
+        const prefixWidth = visibleWidth(fbPrefix);
+        const textWidth = Math.max(1, width - prefixWidth);
+        let text: string;
+        if (this.feedbackText !== '') {
+          text = renderScrolledInput(this.feedbackText, this.feedbackText.length, textWidth);
+        } else {
+          text = `\x1b[7m \x1b[27m${c.dim(t('choice.feedbackPlaceholder'))}`;
+        }
+        return `${fbPrefix}${text}`;
       }
       const label = on ? c.toolName(choice.label) : choice.label;
       return truncateToWidth(`${prefix}${i + 1}. ${label}`, width);

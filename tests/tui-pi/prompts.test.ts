@@ -255,6 +255,27 @@ describe('QuestionPrompt', () => {
     expect(lines.some((l) => l.includes('[?]')), '不应再用 [?] 问号占位').toBe(false);
   });
 
+  it('Other 编辑态超长输入不截断成省略号、光标始终在可视区（横向滚动）', () => {
+    // 缺口：此前 Other 编辑态把整段输入拼一行后 truncateToWidth，长文本末尾被砍成 …，
+    // 光标 ▌ 第一个被吃掉。修复后横向滚动，行不超宽、末尾字符可见、无省略号。
+    const { block } = mk({
+      questions: [{ question: '输入点什么', options: [{ label: 'A' }] }],
+    });
+    block.handleInput(DOWN); // 光标到 Other 行
+    block.handleInput(ENTER); // 进入编辑态
+    const long = '需要一段超过终端宽度的自由输入内容来触发横向滚动'.repeat(2);
+    for (const ch of long) block.handleInput(ch); // 逐字符输入，光标停在末尾
+    const width = 40;
+    const lines = block.render(width);
+    for (const l of lines) {
+      expect(visibleWidth(l), `行超宽: ${plain([l]).join('')}`).toBeLessThanOrEqual(width);
+    }
+    const otherLine = lines.find((l) => plain([l]).join('').includes('Other'));
+    expect(otherLine, '应找到 Other 行').toBeDefined();
+    expect(plain([otherLine!]).join('')).not.toContain('...'); // 无省略号截断
+    expect(plain([otherLine!]).join('')).toContain(long.slice(-1)); // 末尾字符可见
+  });
+
   it('多选：空格勾选，Enter 一次提交数组', () => {
     const { block, settled } = mk({
       questions: [
