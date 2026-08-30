@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { ChatCompletionClient } from "../model-client.js";
 import { isUnlimitedMaxSteps } from "../max-steps.js";
 import type {
@@ -52,6 +52,7 @@ import {
   type AgentWorkspaceMode,
 } from "./harness-context.js";
 import { AgentStateMachine, type AgentStateSnapshot } from "./state-machine.js";
+import { createToolCallFingerprint } from "./tool-fingerprint.js";
 
 export interface AgentLoopOptions {
   model: string;
@@ -1200,7 +1201,7 @@ function blockedRepeatedToolCallResult(
     summary: `Suppressed repeated tool call '${toolName}' after ${limit} identical attempts`,
     error: {
       code: "REPEATED_TOOL_CALL",
-      message: `Attempt ${attempts} exceeded repeatedToolCallLimit=${limit}. Adjust arguments or produce a final response.`,
+      message: `Attempt ${attempts} exceeded repeatedToolCallLimit=${limit}. This call keeps being suppressed even when only numeric arguments change (e.g. a larger timeout). Diagnose why the identical call keeps failing, switch to a different approach, or produce a final response.`,
     },
     data: {
       toolName,
@@ -1258,21 +1259,6 @@ function toRunMetadata(
     memoryMode: context?.executionProfile.memoryMode,
     priority: context?.executionProfile.priority,
   };
-}
-
-function createToolCallFingerprint(toolName: string, rawArgs: string): string {
-  const normalizedArgs = normalizeToolArguments(rawArgs);
-  const hash = createHash("sha1").update(normalizedArgs).digest("hex");
-  return `${toolName}:${hash}`;
-}
-
-function normalizeToolArguments(rawArgs: string): string {
-  try {
-    const parsed = JSON.parse(rawArgs) as unknown;
-    return stableStringify(parsed);
-  } catch {
-    return rawArgs.replace(/\s+/g, " ").trim();
-  }
 }
 
 function stableStringify(value: unknown): string {

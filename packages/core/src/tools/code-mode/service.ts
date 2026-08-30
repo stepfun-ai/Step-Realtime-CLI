@@ -17,9 +17,9 @@ const MAX_RENDER_CHARS = 120_000;
 const MIN_RENDER_CHARS = 200;
 const RUNTIME_BOOT_TIMEOUT_MS = 1_000;
 
-type CellStatus = "running" | "completed" | "failed" | "terminated";
+export type CellStatus = "running" | "completed" | "failed" | "terminated";
 
-interface NestedToolCall {
+export interface NestedToolCall {
   toolName: string;
   identifier: string;
   ok: boolean;
@@ -59,7 +59,7 @@ interface CodeModeSandbox {
   TextDecoder: typeof TextDecoder;
 }
 
-interface RunningCell {
+export interface RunningCell {
   id: string;
   startedAt: number;
   code: string;
@@ -547,16 +547,24 @@ function createAbortError(signal?: AbortSignal): Error {
   );
 }
 
-function renderCellResult(input: {
+export function renderCellResult(input: {
   cell: RunningCell;
   status: CellStatus;
   commandOutputLimit: number;
   maxTokens?: number;
-}): ToolExecutionResult {
+}): ToolExecutionResult<{
+  cell_id: string;
+  status: CellStatus;
+  running: boolean;
+  failedToolCalls: number;
+}> {
   const prefixLines: string[] = [];
   const tailLines: string[] = [];
   let summary = "";
   let ok = true;
+  const failedToolCalls = input.cell.nestedCalls.filter(
+    (call) => !call.ok,
+  ).length;
 
   switch (input.status) {
     case "running": {
@@ -570,9 +578,18 @@ function renderCellResult(input: {
     }
     case "completed": {
       const toolCount = input.cell.nestedCalls.length;
+      const parts: string[] = [];
+      if (toolCount > 0) {
+        parts.push(`${toolCount} tool call${toolCount === 1 ? "" : "s"}`);
+      }
+      if (failedToolCalls > 0) {
+        parts.push(
+          `${failedToolCalls} failed tool call${failedToolCalls === 1 ? "" : "s"}`,
+        );
+      }
       summary =
-        toolCount > 0
-          ? `Script completed · ${toolCount} tool call${toolCount === 1 ? "" : "s"}`
+        parts.length > 0
+          ? `Script completed · ${parts.join(", ")}`
           : "Script completed";
       break;
     }
@@ -608,7 +625,8 @@ function renderCellResult(input: {
         const hintStr = hint
           ? ` ${hint.length > 60 ? hint.slice(0, 57) + "..." : hint}`
           : "";
-        tailLines.push(`${mark} ${call.toolName}${hintStr}`);
+        const reason = !call.ok && call.summary ? ` — ${call.summary}` : "";
+        tailLines.push(`${mark} ${call.toolName}${hintStr}${reason}`);
       }
     } else {
       // Many calls: group by tool, show count and key details
@@ -642,6 +660,14 @@ function renderCellResult(input: {
           const short = h.length > 68 ? h.slice(0, 65) + "..." : h;
           tailLines.push(`  ${short}`);
         }
+        if (info.ok < info.count) {
+          const firstFailed = calls.find(
+            (call) => call.toolName === name && !call.ok,
+          );
+          if (firstFailed?.summary) {
+            tailLines.push(`  ✗ ${firstFailed.summary}`);
+          }
+        }
         if (info.hints.length < info.count && info.count > info.hints.length) {
           const more = info.count - info.hints.length;
           if (more > 0 && info.hints.length > 0)
@@ -668,6 +694,11 @@ function renderCellResult(input: {
   if (input.status === "completed" && input.cell.result === undefined) {
     tailLines.push("Diagnostic:");
     tailLines.push("Script completed without a returned result.");
+    if (failedToolCalls > 0) {
+      tailLines.push(
+        `${failedToolCalls} tool call(s) above failed — the script itself ran to completion, so these are tool-level failures, not timeouts. Read the ✗ lines for the actual error before retrying.`,
+      );
+    }
     tailLines.push(
       "Return the final value directly from the top-level exec body if you need it in the model context.",
     );
@@ -746,6 +777,7 @@ function renderCellResult(input: {
       cell_id: input.cell.id,
       status: input.status,
       running: input.status === "running",
+      failedToolCalls,
     },
   };
 }

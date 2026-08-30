@@ -275,6 +275,39 @@ export class ToolRuntime implements ToolRuntimeApi {
     this.baseSignal = signal;
   }
 
+  private unknownToolError(
+    name: string,
+    scope: "top-level" | "nested",
+  ): ToolExecutionResult {
+    if (scope === "nested") {
+      const nestedTools = this.codeModeEnabled
+        ? this.getCodeModeToolBindings().map((binding) => binding.identifier)
+        : [...this.nestedSpecsByName.keys()];
+      return unknownToolResult(name, {
+        scope,
+        availableTools: nestedTools,
+      });
+    }
+
+    if (this.codeModeEnabled) {
+      return unknownToolResult(name, {
+        scope,
+        availableTools: this.listToolNames(),
+        nestedToolBindings: this.getCodeModeToolBindings().map(
+          (binding) => binding.identifier,
+        ),
+      });
+    }
+
+    return unknownToolResult(name, {
+      scope,
+      availableTools: [
+        ...this.listToolNames(),
+        ...this.nestedSpecsByName.keys(),
+      ],
+    });
+  }
+
   async executeTool(
     name: string,
     rawArgs: string,
@@ -284,7 +317,7 @@ export class ToolRuntime implements ToolRuntimeApi {
     if (internalName) {
       const visible = this.visibleSpecsByName.get(name);
       if (!visible) {
-        return unknownToolResult(name);
+        return this.unknownToolError(name, "top-level");
       }
 
       return this.dispatchTool({
@@ -301,12 +334,12 @@ export class ToolRuntime implements ToolRuntimeApi {
     }
 
     if (this.codeModeEnabled) {
-      return unknownToolResult(name);
+      return this.unknownToolError(name, "top-level");
     }
 
     const rawSpec = this.nestedSpecsByName.get(name);
     if (!rawSpec) {
-      return unknownToolResult(name);
+      return this.unknownToolError(name, "top-level");
     }
 
     return this.dispatchTool({
@@ -330,12 +363,12 @@ export class ToolRuntime implements ToolRuntimeApi {
       ? name
       : this.nestedInternalNameByExternalName.get(name);
     if (!internalName) {
-      return unknownToolResult(name);
+      return this.unknownToolError(name, "nested");
     }
 
     const spec = this.nestedSpecsByName.get(internalName);
     if (!spec) {
-      return unknownToolResult(name);
+      return this.unknownToolError(name, "nested");
     }
 
     return this.dispatchTool({
@@ -770,15 +803,127 @@ function getExecutionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function unknownToolResult(name: string): ToolExecutionResult {
+export function formatUnknownToolMessage(input: {
+  name: string;
+  scope: "top-level" | "nested";
+  availableTools: string[];
+  nestedToolBindings?: string[];
+}): string {
+  const { name, scope, nestedToolBindings } = input;
+  const available = dedupeNames(input.availableTools).filter(
+    (item) => item !== name,
+  );
+  const bindings = nestedToolBindings ? dedupeNames(nestedToolBindings) : [];
+  const nestedSuggestion =
+    scope === "top-level" && bindings.length > 0
+      ? bestToolSuggestion(name, bindings)
+      : undefined;
+  const directSuggestion =
+    available.length > 0 ? bestToolSuggestion(name, available) : undefined;
+
+  const parts: string[] = [`Tool '${name}' is not registered.`];
+  if (available.length > 0) {
+    const label =
+      scope === "nested" ? "Available nested tools" : "Available tools";
+    parts.push(`${label}: ${formatToolNameList(available)}`);
+  }
+  if (nestedSuggestion) {
+    parts.push(
+      `Code Mode: nested tool '${nestedSuggestion}' exists — call exec and use tools.${nestedSuggestion}(...) inside it instead of retrying this top-level call.`,
+    );
+  } else if (scope === "top-level" && bindings.length > 0) {
+    parts.push(
+      `Code Mode: nested tools are callable only inside exec as tools.<name>(...). Nested bindings: ${formatToolNameList(bindings)} Do not retry this top-level call.`,
+    );
+  }
+  if (!nestedSuggestion && directSuggestion) {
+    parts.push(`Did you mean '${directSuggestion}'?`);
+  }
+  return parts.join(" ");
+}
+
+function unknownToolResult(
+  name: string,
+  hints: {
+    scope: "top-level" | "nested";
+    availableTools: string[];
+    nestedToolBindings?: string[];
+  },
+): ToolExecutionResult {
   return {
     ok: false,
     summary: `Unknown tool: ${name}`,
     error: {
       code: "UNKNOWN_TOOL",
-      message: `Tool '${name}' is not registered`,
+      message: formatUnknownToolMessage({ name, ...hints }),
     },
   };
+}
+
+function bestToolSuggestion(
+  name: string,
+  candidates: string[],
+): string | undefined {
+  let nearest: { name: string; distance: number } | undefined;
+  for (const candidate of candidates) {
+    const distance = levenshtein(name.toLowerCase(), candidate.toLowerCase());
+    if (distance <= 2 && (!nearest || distance < nearest.distance)) {
+      nearest = { name: candidate, distance };
+    }
+  }
+  if (nearest) {
+    return nearest.name;
+  }
+
+  let best: { name: string; score: number } | undefined;
+  for (const candidate of candidates) {
+    const score = scoreFuzzyMatch(name, [{ text: candidate, weight: 1 }]);
+    if (score >= 60 && (!best || score > best.score)) {
+      best = { name: candidate, score };
+    }
+  }
+  return best?.name;
+}
+
+function levenshtein(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+  if (left.length === 0) {
+    return right.length;
+  }
+  if (right.length === 0) {
+    return left.length;
+  }
+
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const substitution =
+        previous[rightIndex - 1] +
+        (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1);
+      current[rightIndex] = Math.min(
+        previous[rightIndex] + 1,
+        current[rightIndex - 1] + 1,
+        substitution,
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length];
+}
+
+function dedupeNames(items: string[]): string[] {
+  return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
+}
+
+function formatToolNameList(items: string[]): string {
+  const maxItems = 24;
+  if (items.length <= maxItems) {
+    return `${items.join(", ")}.`;
+  }
+  return `${items.slice(0, maxItems).join(", ")} (+${items.length - maxItems} more).`;
 }
 
 function inspectToolCall(
