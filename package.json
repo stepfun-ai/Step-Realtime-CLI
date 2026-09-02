@@ -11,6 +11,7 @@
     "dist",
     "licenses",
     "scripts/prepare.mjs",
+    "scripts/run-step.mjs",
     "README.md",
     "README_CN.md"
   ],
@@ -37,6 +38,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node dist/main.js",
+    "step": "node scripts/run-step.mjs",
+    "step:fresh": "node scripts/run-step.mjs --full",
     "prepare": "node scripts/prepare.mjs",
     "prepublishOnly": "npm run build",
     "prepack": "npm run build"
@@ -72,6 +75,7 @@
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^26.1.1",
     "esbuild": "^0.28.1",
+    "expect": "^30.5.1",
     "postject": "1.0.0-alpha.6",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",

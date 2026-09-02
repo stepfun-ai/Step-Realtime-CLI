@@ -46,6 +46,8 @@ export type DisplayItem =
       /** 子 agent 终态统计：工具调用次数与墙钟耗时（end 事件带回）。 */
       subagentToolUses?: number;
       subagentDurationMs?: number;
+      /** 结构化错误码（可选）。TUI 可按 code 做特殊渲染，如 PLAN_MODE_BLOCKED。 */
+      errorCode?: string;
     }
   | {
       kind: 'note';

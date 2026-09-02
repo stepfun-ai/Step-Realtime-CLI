@@ -366,6 +366,67 @@ describe('ItemBlock 渲染', () => {
     expect(lines).toContain('还有 2 行');
   });
 
+  it('PLAN_MODE_BLOCKED 渲染为黄色标记 + [plan mode] 标记', () => {
+    const prev = chalk.level;
+    chalk.level = 3;
+    try {
+      const blocked = new ItemBlock({
+        kind: 'tool',
+        id: 't4',
+        name: 'write_file',
+        input: { path: 'src/x.ts' },
+        status: 'error',
+        result: '计划模式（plan mode）已开启：当前只能做只读调查，不能修改文件或执行命令（write_file 被拦截）。请完成调查后调用 exit_plan_mode 提交计划供用户确认。',
+        errorCode: 'PLAN_MODE_BLOCKED',
+      } as never).render(60);
+      const head = blocked[0]!;
+      // 状态符是黄色（SGR 33）而非红色（SGR 31）
+      expect(head).toContain('\x1b[33m✗\x1b[39m');
+      // 工具名后紧跟 [plan mode] 标记
+      expect(head).toContain('[plan mode]');
+      // 结果体也是黄色
+      const body = blocked.slice(1).join('\n');
+      expect(body).toContain('\x1b[33m');
+      expect(body).not.toContain('\x1b[31m');
+      // Ctrl+O 展开态同样如此
+      const expanded = ItemBlock.renderExpanded({
+        kind: 'tool',
+        id: 't4',
+        name: 'write_file',
+        input: { path: 'src/x.ts' },
+        status: 'error',
+        result: '计划模式（plan mode）已开启：当前只能做只读调查，不能修改文件或执行命令（write_file 被拦截）。请完成调查后调用 exit_plan_mode 提交计划供用户确认。',
+        errorCode: 'PLAN_MODE_BLOCKED',
+      } as never, 60);
+      expect(expanded[0]!).toContain('\x1b[33m✗\x1b[39m');
+      expect(expanded[0]!).toContain('[plan mode]');
+    } finally {
+      chalk.level = prev;
+    }
+  });
+
+  it('普通错误工具仍为红色 ✗，不受 errorCode 映射影响', () => {
+    const prev = chalk.level;
+    chalk.level = 3;
+    try {
+      const err = new ItemBlock({
+        kind: 'tool',
+        id: 't5',
+        name: 'bash',
+        input: { command: 'npm test' },
+        status: 'error',
+        result: 'command not found',
+      } as never).render(60);
+      const head = err[0]!;
+      expect(head).toContain('\x1b[31m✗\x1b[39m');
+      expect(head).not.toContain('[plan mode]');
+      const body = err.slice(1).join('\n');
+      expect(body).toContain('\x1b[31m');
+    } finally {
+      chalk.level = prev;
+    }
+  });
+
   it('内容未变时复用缓存数组（同一引用），换内容后失效', () => {
     const b = new ItemBlock({ kind: 'assistant', text: 'x' });
     const first = b.render(40);

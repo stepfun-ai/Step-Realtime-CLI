@@ -8,7 +8,7 @@ export interface ToolCallRequest {
 }
 
 /** 授权结果：放行，或拒绝并附原因（原因会作为 tool_result 回灌给模型）。 */
-export type Authorization = { decision: 'allow' } | { decision: 'deny'; reason: string };
+export type Authorization = { decision: 'allow' } | { decision: 'deny'; reason: string; errorCode?: string };
 
 /** 停止后续接描述：inject 为下一轮要注入的用户消息文本。 */
 export interface StopContinuation {

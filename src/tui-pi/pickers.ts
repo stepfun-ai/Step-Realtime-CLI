@@ -202,6 +202,13 @@ export class PickerOverlay implements Component {
       this.applyFilter();
       return;
     }
+    // Windows 终端 Enter 兼容：部分配置下 Enter 送来 \r/\n/\r\n 或 SS3-OM，
+    // pi-tui 的 matchesKey 可能漏认或误判为方向键。这里在最外层显式确认。
+    if (data.includes('\r') || data.includes('\n') || data === '\x1bOM') {
+      const sel = this.list.getSelectedItem();
+      if (sel !== null) this.onSelectItem(sel);
+      return;
+    }
     // ↑↓ 钳制：SelectList 内部回绕（到顶跳到底），这里在外层拦截钳制
     if (matchesKey(data, 'up') || matchesKey(data, 'down')) {
       if (this.filteredCount > 0) {
@@ -215,7 +222,11 @@ export class PickerOverlay implements Component {
       }
       return;
     }
-    this.list.handleInput(data);
+    // 兼容 Windows 终端 Enter 键：pi-tui 的 matchesKey 在 Kitty protocol 激活时只认 \r，
+    // 但部分 Windows 终端配置下 Enter 送来 \n。归一化后避免按 Enter 没反应。
+    // Shift+Enter 已在上方被 onShiftSelect 拦截，这里只影响普通 Enter。
+    const inputForList = data === '\n' ? '\r' : data;
+    this.list.handleInput(inputForList);
     this.requestRender();
   }
 

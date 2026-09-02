@@ -20,7 +20,7 @@ export type AgentEvent =
   | { type: 'tool_forming'; id: string; name: string }
   /** 工具参数的流式增量（半截 JSON 片段）。UI 只抠关键字段做预览，不解析全量。 */
   | { type: 'tool_args_delta'; id: string; partialJson: string }
-  | { type: 'tool_end'; id: string; name: string; result: string; isError: boolean }
+  | { type: 'tool_end'; id: string; name: string; result: string; isError: boolean; errorCode?: string }
   /**
    * 重试。hadPartial 为 true 表示本次失败尝试已吐过正文（屏幕上有残文条目），
    * UI 据此在重试前移除该残文（B 方案：撤回气泡，只留重发的完整版）；

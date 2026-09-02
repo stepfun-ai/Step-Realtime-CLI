@@ -188,6 +188,7 @@ type PlanValue = 'approve' | 'reject-feedback' | 'reject';
 export class PlanApproval extends ChoiceBlock<PlanValue> {
   private readonly done: (outcome: PlanOutcome) => void;
   private readonly markdown: Markdown;
+  private expanded = false;
 
   constructor(plan: string, requestRender: () => void, done: (outcome: PlanOutcome) => void) {
     super(
@@ -210,12 +211,31 @@ export class PlanApproval extends ChoiceBlock<PlanValue> {
     this.done({ approved: false });
   }
 
+  protected override onOtherKey(data: string): void {
+    if (matchesKey(data, 'ctrl+e')) {
+      this.expanded = !this.expanded;
+      this.render(0);
+    }
+  }
+
   protected override hintLine(): string {
-    return t('plan.hint');
+    const base = t('plan.hint');
+    const lines = this.markdown.render(10000);
+    if (lines.length <= PREVIEW_LIMIT) return base;
+    const action = t(this.expanded ? 'approval.hint.collapse' : 'approval.hint.expand');
+    return base + t('approval.hint.previewToggle', { action });
   }
 
   protected renderBody(width: number): string[] {
-    return [c.accent(t('plan.confirmTitle')), ...this.markdown.render(Math.max(1, width - 2)).map((l) => `  ${l}`)];
+    const lines = this.markdown.render(Math.max(1, width - 2));
+    const shown = this.expanded ? lines : lines.slice(0, PREVIEW_LIMIT);
+    const out = [c.accent(t('plan.confirmTitle')), ...shown.map((l) => `  ${l}`)];
+    if (!this.expanded && lines.length > PREVIEW_LIMIT) {
+      out.push(c.dim(t('approval.preview.more', { rest: lines.length - PREVIEW_LIMIT })));
+    } else if (this.expanded && lines.length > PREVIEW_LIMIT) {
+      out.push(c.dim(t('approval.preview.collapse', { total: lines.length })));
+    }
+    return out;
   }
 }
 

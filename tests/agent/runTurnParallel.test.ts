@@ -180,6 +180,34 @@ describe('runTurn 并行工具执行', () => {
     expect(events.at(-1)!.type).toBe('turn_done');
   });
 
+  it('授权拒绝可带 errorCode：plan mode 下返回 PLAN_MODE_BLOCKED', async () => {
+    const hooks: LoopHooks = {
+      authorizeToolCall: (req) =>
+        req.name === 'write_file'
+          ? { decision: 'deny', reason: 'plan mode blocked', errorCode: 'PLAN_MODE_BLOCKED' }
+          : { decision: 'allow' },
+    };
+    const { provider } = makeFakeProvider([
+      {
+        textChunks: [],
+        finalContent: [
+          toolUseBlock('c1', 'write_file', { path: 'should-not-exist.txt', content: 'x' }),
+        ],
+      },
+      { textChunks: ['好的'], finalContent: [textBlock('好的')] },
+    ]);
+    const messages: StoredMessage[] = [sm('go')];
+    const events = await collect(runAgent(base(provider, messages, { hooks })));
+
+    const blocks = toolResultBlocks(messages);
+    expect(blocks[0]!.is_error).toBe(true);
+    expect(String(blocks[0]!.content)).toContain('plan mode blocked');
+    const ends = events.filter((e) => e.type === 'tool_end') as { id: string; isError: boolean; errorCode?: string }[];
+    const end = ends.find((e) => e.id === 'c1');
+    expect(end?.isError).toBe(true);
+    expect(end?.errorCode).toBe('PLAN_MODE_BLOCKED');
+  });
+
   it('异常隔离：单个工具的结果后处理抛异常 → 该槽转 is_error，兄弟任务照常', async () => {
     const hooks: LoopHooks = {
       finalizeToolResult: (req, result) => {

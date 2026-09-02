@@ -68,6 +68,17 @@ const DIFF_MAX_LINES = 200;
  */
 const CTRL_B_TOOLS = new Set(['bash', 'spawn_agent', 'dynamic_workflow']);
 
+/**
+ * 按工具错误码返回视觉样式。不同错误码用不同颜色/标记，帮助用户一眼区分错误性质。
+ * 目前只区分 PLAN_MODE_BLOCKED（计划模式拦截）和普通执行错误。
+ */
+function toolErrorStyle(errorCode?: string): { mark: string; color: (s: string) => string; badge?: string } {
+  if (errorCode === 'PLAN_MODE_BLOCKED') {
+    return { mark: c.warn('✗'), color: c.warn, badge: c.accent('[plan mode]') };
+  }
+  return { mark: c.error('✗'), color: c.error };
+}
+
 /** 工具入参的单行摘要（折叠态标题行与 Ctrl+O 条目标题共用）。字段顺序即优先级。 */
 export function summarizeInput(input: unknown): string {
   if (input === null || typeof input !== 'object') return '';
@@ -307,7 +318,8 @@ export class ItemBlock implements Component {
   }
 
   private renderTool(it: Extract<DisplayItem, { kind: 'tool' }>, width: number): string[] {
-    const mark = it.status === 'running' ? c.warn(spinnerFrame()) : it.status === 'ok' ? c.ok('✓') : c.error('✗');
+    const errStyle = toolErrorStyle(it.errorCode);
+    const mark = it.status === 'running' ? c.warn(spinnerFrame()) : it.status === 'ok' ? c.ok('✓') : errStyle.mark;
     const elapsed =
       it.status === 'running' && it.startedAt !== undefined
         ? c.dim(t('toolCall.elapsed', { s: Math.max(0, Math.round((Date.now() - it.startedAt) / 1000)) }))
@@ -319,7 +331,8 @@ export class ItemBlock implements Component {
       it.subagentType !== undefined || it.description !== undefined
         ? c.dim(` ${[it.subagentType, it.description].filter((x) => x !== undefined).join(' · ')}`)
         : '';
-    const head = `${mark} ${c.toolName(it.name)}${toolArgText(it)}${subagent}${elapsed}${bgHint}`;
+    const badge = errStyle.badge ? `${errStyle.badge} ` : '';
+    const head = `${mark} ${c.toolName(it.name)}${badge}${toolArgText(it)}${subagent}${elapsed}${bgHint}`;
     const out = visibleWidth(head) > width ? wrap(head, width) : [head];
 
     // dynamic_workflow 阶段：运行中逐个列出（● 当前 / ✓ 已完成），终态坍缩成一行计数
@@ -355,8 +368,9 @@ export class ItemBlock implements Component {
       const lines = it.result.split('\n');
       if (it.status === 'error') {
         // 错误：预览前若干行，其余折叠
+        const color = errStyle.color;
         for (const l of lines.slice(0, ERROR_PREVIEW_LINES)) {
-          out.push(...indent(wrap(c.error(l), width - 4), '    '));
+          out.push(...indent(wrap(color(l), width - 4), '    '));
         }
         if (lines.length > ERROR_PREVIEW_LINES) {
           out.push(c.dim(`    ↳ 还有 ${lines.length - ERROR_PREVIEW_LINES} 行（Ctrl+O 查看）`));
@@ -427,17 +441,20 @@ export function extractArgsPreview(partialJson: string): string {
  * 头部状态行/子工具列表沿用 renderTool 的口径，这里只重做结果体。
  */
 function renderToolExpanded(it: Extract<DisplayItem, { kind: 'tool' }>, width: number): string[] {
-  const mark = it.status === 'running' ? c.warn(spinnerFrame()) : it.status === 'ok' ? c.ok('✓') : c.error('✗');
+  const errStyle = toolErrorStyle(it.errorCode);
+  const mark = it.status === 'running' ? c.warn(spinnerFrame()) : it.status === 'ok' ? c.ok('✓') : errStyle.mark;
   const subagent =
     it.subagentType !== undefined || it.description !== undefined
       ? c.dim(` ${[it.subagentType, it.description].filter((x) => x !== undefined).join(' · ')}`)
       : '';
-  const head = `${mark} ${c.toolName(it.name)}${toolArgText(it)}${subagent}`;
+  const badge = errStyle.badge ? `${errStyle.badge} ` : '';
+  const head = `${mark} ${c.toolName(it.name)}${badge}${toolArgText(it)}${subagent}`;
   const out = visibleWidth(head) > width ? wrap(head, width) : [head];
   if (it.result !== undefined && it.result !== '') {
     const lines = it.result.split('\n');
     if (it.status === 'error') {
-      for (const l of lines) out.push(...indent(wrap(c.error(l), width - 4), '    '));
+      const color = errStyle.color;
+      for (const l of lines) out.push(...indent(wrap(color(l), width - 4), '    '));
     } else if (looksLikeDiff(lines)) {
       for (const l of lines) {
         out.push(...indent(wrap(colorDiffLine(l), width - 4), '    '));

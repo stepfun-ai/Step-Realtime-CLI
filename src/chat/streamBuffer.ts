@@ -42,7 +42,7 @@ function isStreamDelta(ev: AgentEvent): ev is Extract<AgentEvent, StreamDeltaEve
 }
 
 export interface StreamBufferOptions {
-  /** 合帧间隔（毫秒）。默认 50。 */
+  /** 合帧间隔（毫秒）。默认 40。 */
   flushMs?: number;
   /** 测试注入时间源；缺省用 setTimeout/clearTimeout。 */
   now?: () => number;

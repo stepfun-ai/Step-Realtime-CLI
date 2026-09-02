@@ -78,4 +78,10 @@ describe('planModeDenyReason', () => {
     expect(planModeDenyReason('get_goal')).toBeNull();
     expect(planModeDenyReason('cron_list')).toBeNull();
   });
+
+  it('plan mode deny reason 文案包含 exit_plan_mode 引导', () => {
+    const reason = planModeDenyReason('write_file');
+    expect(reason).toContain('exit_plan_mode');
+    expect(reason).toContain('write_file');
+  });
 });

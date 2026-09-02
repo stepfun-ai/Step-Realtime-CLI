@@ -190,6 +190,19 @@ describe('PickerOverlay', () => {
     expect(picked).toEqual(['beta']);
   });
 
+  it('Windows 终端的 Enter 变体均可确认：\\r / \\n / \\r\\n / SS3-OM', () => {
+    const cases: string[] = ['\r', '\n', '\x1bOM'];
+    for (const key of cases) {
+      const { overlay, picked } = mk();
+      overlay.handleInput(key);
+      expect(picked, `Enter variant ${JSON.stringify(key)}`).toEqual(['alpha']);
+    }
+    // CRLF 序列整体送入时也应确认
+    const crlf = mk();
+    crlf.overlay.handleInput('\r\n');
+    expect(crlf.picked).toEqual(['alpha']);
+  });
+
   it('可打印字符进过滤串并显示在标题行，退格删字', () => {
     const { overlay, picked } = mk();
     overlay.handleInput('g');

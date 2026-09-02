@@ -3038,7 +3038,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         // plan 模式守卫：写与执行一律拒（exit_plan_mode 例外，走下方确认）
         if (this.planMode) {
           const deny = planModeDenyReason(req.name);
-          if (deny !== null) return { decision: 'deny', reason: deny };
+          if (deny !== null) return { decision: 'deny', reason: deny, errorCode: 'PLAN_MODE_BLOCKED' };
         }
         // exit_plan_mode：展示计划请用户确认，批准后退出 plan 并恢复原权限模式
         if (req.name === 'exit_plan_mode') {
@@ -3459,7 +3459,7 @@ ${task.output === '' ? '（暂无输出）' : task.output}`,
         this.activity.noteToolActivity();
         this.transcript.updateLastWhere(
           (it) => it.kind === 'tool' && it.id === ev.id,
-          (it) => ({ ...(it as Extract<DisplayItem, { kind: 'tool' }>), status: ev.isError ? 'error' : 'ok', result: ev.result }),
+          (it) => ({ ...(it as Extract<DisplayItem, { kind: 'tool' }>), status: ev.isError ? 'error' : 'ok', result: ev.result, errorCode: ev.errorCode }),
         );
         // todo_list 工具改的是 this.todos，面板要跟着刷；其它工具走这一路开销是两次赋值
         this.chrome.setTodos(this.todos.items);

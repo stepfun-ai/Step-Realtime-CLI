@@ -101,6 +101,8 @@ export interface ToolResult {
    * anthropic → 同形状 video 扩展块），能力不支持时由投影层换占位文本。
    */
   videos?: ToolResultVideo[];
+  /** 结构化错误码（可选）。TUI / 协议层可按 code 区分错误类型，不再只靠 content 文本推断。 */
+  errorCode?: string;
 }
 
 /**

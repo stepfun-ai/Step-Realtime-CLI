@@ -172,6 +172,28 @@ describe('PlanApproval', () => {
     escaped.block.handleInput(ESC);
     expect(escaped.settled).toEqual([{ approved: false }]);
   });
+
+  it('短计划不折叠，底部无折叠提示', () => {
+    const { block } = mk('# 计划\n\n- 第一步');
+    const body = plain(block.render(70)).join('\n');
+    expect(body).toContain('计划');
+    expect(body).toContain('第一步');
+    expect(body).not.toContain('Ctrl+E');
+  });
+
+  it('超长计划默认折叠到前 10 行，Ctrl+E 展开', () => {
+    const longPlan = '# 计划\n\n' + Array.from({ length: 20 }, (_, i) => `- 步骤 ${i + 1}`).join('\n');
+    const { block } = mk(longPlan);
+    const collapsed = plain(block.render(70)).join('\n');
+    expect(collapsed).toContain('步骤 1');
+    expect(collapsed).not.toContain('步骤 11');
+    expect(collapsed).toContain('Ctrl+E');
+
+    block.handleInput('\x05'); // Ctrl+E
+    const expanded = plain(block.render(70)).join('\n');
+    expect(expanded).toContain('步骤 11');
+    expect(expanded).toContain('步骤 20');
+  });
 });
 
 describe('QuestionPrompt', () => {

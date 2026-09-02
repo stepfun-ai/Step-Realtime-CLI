@@ -572,7 +572,9 @@ export async function* runTurn(
     // 授权（Phase 3 权限系统挂在这里）
     const auth = await resolveAuthorization(hooks, req);
     if (auth.decision === 'deny') {
-      prepared.push({ tu, access: { kind: 'all' }, preset: { content: `工具调用被拒绝：${auth.reason}`, isError: true } });
+      const preset: ToolResult = { content: `工具调用被拒绝：${auth.reason}`, isError: true };
+      if (auth.errorCode !== undefined) preset.errorCode = auth.errorCode;
+      prepared.push({ tu, access: { kind: 'all' }, preset });
       continue;
     }
     prepared.push({
@@ -644,7 +646,7 @@ export async function* runTurn(
       continue;
     }
     const result = p.result!;
-    yield { type: 'tool_end', id: p.tu.id, name: p.tu.name, result: result.content, isError: result.isError };
+    yield { type: 'tool_end', id: p.tu.id, name: p.tu.name, result: result.content, isError: result.isError, errorCode: result.errorCode };
     toolResults.push(makeToolResult(p.tu.id, result));
     // 完成放行：被本任务卡住的后续任务现在启动，其 tool_start 排在本 tool_end 之后
     scheduler.drain();
